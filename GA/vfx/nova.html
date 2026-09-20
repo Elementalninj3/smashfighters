@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nova Ring Explosion VFX</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background-color: #070b12; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { background: #0a1220; box-shadow: 0 12px 35px rgba(0,0,0,0.8), 0 0 15px rgba(90, 170, 255, 0.25); border: 3px solid #16233d; border-radius: 16px; cursor: pointer; }
+        .info { margin-top: 14px; color: #8fa8d4; font-size: 15px; font-weight: 600; letter-spacing: 0.5px; user-select: none; }
+    </style>
+</head>
+<body>
+
+    <canvas id="vfxCanvas" width="800" height="500"></canvas>
+    <div class="info">Self-firing nova burst — click to re-centre</div>
+
+<script>
+const canvas = document.getElementById('vfxCanvas');
+const ctx = canvas.getContext('2d');
+const CX = canvas.width / 2;
+const CY = canvas.height / 2;
+let frame = 0;
+let flash = 0;
+
+canvas.addEventListener('mousedown', () => {
+    const r = canvas.getBoundingClientRect();
+    // move emitter to click point using a stored offset
+    offsetX = (event.clientX - r.left) - CX;
+    offsetY = (event.clientY - r.top) - CY;
+});
+let offsetX = 0, offsetY = 0;
+
+function easeOut(t) { const x = Math.max(0, Math.min(1, t)); return 1 - Math.pow(1 - x, 3); }
+
+function render() {
+    frame++;
+    flash -= 0.12;
+    if (flash <= 0) { frame = 0; flash = 1; }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.translate(CX + offsetX, CY + offsetY);
+
+    const t = frame / 18;
+    const r = easeOut(t) * 220;
+    ctx.globalAlpha = (1 - t) * flash;
+    ctx.globalCompositeOperation = 'lighter';
+
+    ctx.strokeStyle = 'rgba(150, 220, 255, 0.95)';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const t2 = Math.max(0, Math.min(1, (frame - 6) / 18));
+    const r2 = easeOut(t2) * 220;
+    ctx.globalAlpha = (1 - t2) * flash * 0.7;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.arc(0, 0, r2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.globalAlpha = flash;
+    const flare = ctx.createRadialGradient(0, 0, 2, 0, 0, 60);
+    flare.addColorStop(0, 'rgba(255,255,255,0.95)');
+    flare.addColorStop(0.4, 'rgba(120,210,255,0.5)');
+    flare.addColorStop(1, 'rgba(60,120,255,0)');
+    ctx.fillStyle = flare;
+    ctx.beginPath();
+    ctx.arc(0, 0, 60, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(200,235,255,0.85)';
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+        const a = frame * 0.03 * Math.PI + (i * Math.PI * 2) / 8;
+        ctx.moveTo(r * 0.2 * Math.cos(a), r * 0.2 * Math.sin(a));
+        ctx.lineTo(r * Math.cos(a), r * Math.sin(a));
+    }
+    ctx.stroke();
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(render);
+}
+
+render();
+</script>
+
+</body>
+</html>

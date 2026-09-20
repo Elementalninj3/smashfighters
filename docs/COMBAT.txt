@@ -1,0 +1,263 @@
+===============================================================================
+                    SUPER SMASH BALLS - COMBAT DOCUMENTATION
+===============================================================================
+
+1. CONTROLS
+===============================================================================
+
+Player 1 (keyboard left side):
+  Movement      WASD / Arrow Keys
+  Jump          W / Up / Space
+  Attack        J / Z
+  Special       K / X
+  Shield        L / C
+  Dodge/roll    Shift
+  Grab          I / V
+
+Player 2 (numpad):
+  Movement      Numpad 4(left) 6(right) 8(up)
+  Attack        Numpad 1
+  Special       Numpad 2  [NOTE: shares binding with down - see known bugs]
+  Shield        Numpad 3
+  Dodge         Numpad 0
+
+
+2. CORE DESIGN
+===============================================================================
+
+This is a 1v1 Super Smash Bros.-style platform fighter. Characters are balls
+(skins from public/assets/). The key principle:
+
+  - Attacking does NOT launch your body (unlike a "body-ram" system).
+  - The ball stays roughly in place and emits a strike hitbox around itself.
+  - Movement and attacking are SEPARATE input layers.
+  - Attacks have 3 phases: WINDUP -> ACTIVE -> ENDLAG (like Smash).
+  - During windup you can be hit (whiff punish window).
+  - During endlag you are vulnerable before you can act again.
+
+The exception is DASH ATTACK, which commits the body forward briefly.
+
+
+3. ATTACK INPUTS (4-directional)
+===============================================================================
+
+  Attack + Up      =  Tilt Up  (grounded)  /  Up Air   (airborne)
+  Attack + Down    =  Tilt Down (grounded) /  Down Air (airborne)
+  Attack + Left    =  Tilt Back or Tilt Forward (depends on facing)
+  Attack + Right   =  Tilt Forward or Tilt Back (depends on facing)
+  Attack (no dir)  =  Jab (grounded) / Neutral Air (airborne)
+
+  Hold Attack 0.14s+ = SMASH variant (same direction, heavier)
+  Attack while running forward = Dash Attack
+
+
+3a. ATTACK FAMILIES
+===============================================================================
+
+TILTS (tap Attack + direction):
+  Quick, low commitment. Good for combos and pokes.
+
+  Move           Damage  KB Base  KB Scale  Angle   Hitstun  Frames  Active   Lunge
+  -------------- ------  -------  --------  ------  -------  ------  ------   -----
+  tilt_forward      7      45       2.0      0.35pi  0.20s    20      4-8     120
+  tilt_back         7      44       1.9      0.60pi  0.20s    20      4-8      30
+  tilt_up           6      40       1.7      0.50pi  0.18s    20      4-8      60
+  tilt_down         6      40       1.8      0.15pi  0.18s    18      3-7      40
+  jab               3      20       0.5      0.40pi  0.14s    14      2-5      90
+
+SMASHES (hold Attack 0.14s+ then release, or hold through windup):
+  Heavy, high knockback. Chargeable during windup. KO moves.
+
+  Move             Damage  KB Base  KB Scale  Angle   Hitstun  Frames  Active   Lunge  KO Power
+  ---------------- ------  -------  --------  ------  -------  ------  ------   -----  --------
+  smash_forward      18      90       4.0     0.33pi  0.42s    42     12-16    160     1.25
+  smash_back         17      85       3.7     0.62pi  0.40s    42     12-16    120     1.20
+  smash_up           17      88       3.8     0.55pi  0.42s    44     10-14    100     1.20
+  smash_down         16      80       3.4     0.10pi  0.38s    42     10-14     80     1.15
+
+  Charge builds at 2.2x/sec during windup while holding attack.
+  Damage boost: atk.damage * (1 + charge * 0.6)
+
+DASH ATTACK (attack while running forward):
+  The only "body commits" normal. Lunges forward 260px, damps out fast.
+
+  Move           Damage  KB Base  KB Scale  Angle   Hitstun  Frames  Active   Lunge
+  -------------- ------  -------  --------  ------  -------  ------  ------   -----
+  dash_attack       12      60       2.6     0.30pi  0.30s    30      4-12    260
+
+
+4. AERIAL ATTACKS (used while airborne)
+===============================================================================
+
+  Move   Damage  KB Base  KB Scale  Angle   Hitstun  Frames  Active    Lunge
+  ------ ------  -------  --------  ------  -------  ------  ------    -----
+  nair      9      50       2.2     0.40pi  0.22s    34      4-16     (none)
+  fair     11      58       2.6     0.30pi  0.26s    34      5-14     140
+  bair     12      62       2.8     0.62pi  0.28s    34      5-13      80
+  uair     10      54       2.4     0.50pi  0.24s    32      4-12     (none)
+  dair     11      56       2.5     0.15pi  0.24s    36      6-16     160 (spike)
+
+
+5. SPECIAL ATTACKS (K / Numpad2)
+===============================================================================
+
+  Special + Up     = Up Special (recovery, 200px upward lunge)
+  Special + Down   = Down Special (spike, 280px downward lunge)
+  Special + Left/Right = Side Special (260px forward lunge)
+  Special (no dir) = Neutral Special (180px forward lunge)
+
+  Move            Damage  KB Base  KB Scale  Angle   Hitstun  Frames  Active   Lunge
+  --------------- ------  -------  --------  ------  -------  ------  ------   -----
+  special_neutral    13      70       3.0     0.35pi  0.36s    40      8-18     180
+  special_side       12      66       2.8     0.28pi  0.32s    40      6-18     260
+  special_up         10      60       2.4     0.50pi  0.28s    32      4-14     200
+  special_down       12      62       2.6     0.12pi  0.32s    34      6-14     280
+
+  FREE-FALL: Using up-special while airborne consumes your recovery.
+  You enter "free-fall" and cannot attack, special, or double-jump until
+  you land on a platform, grab the ledge, or tech off the ground.
+  Free-fall is indicated by a pulsing red outline on your character.
+
+
+6. KNOCKBACK AND DAMAGE
+===============================================================================
+
+  Damage accumulates as a percentage (like Smash). Higher % = more knockback.
+
+  Knockback formula:
+    kb = (damage * 7 + (baseKnockback + knockbackScaling * defenderPercent))
+         * (1 + defenderPercent / 80) * koPower / defenderWeight
+
+  - Knockback angle determines launch direction (0 = horizontal, pi/2 = up).
+  - Angle flips if defender is on the opposite side of the attacker.
+  - Hitstun scales with percent: hitstun * (1 + damagePercent / 150).
+  - Weight (per-character, 0.85-1.25) reduces knockback for heavier characters.
+
+  Hit pause: on hit, the game freezes briefly (0.03-0.11s) proportional to
+  knockback for game feel. Higher KB = longer freeze.
+
+
+7. DEFENSIVE MECHANICS
+===============================================================================
+
+SHIELD (hold L/C / Numpad3):
+  - Grounded only. Blocks incoming attacks.
+  - Shield HP drains at 80/sec while held, regens at 40/sec when released.
+  - Shield break = 0.8s stun.
+  - Cannot move while shielding.
+
+DODGE / ROLL (Shift / Numpad0):
+  Ground dodge:
+    - Forward roll with 0.25s invulnerability.
+    - Dodge cooldown: 0.4s.
+    - Velocity damped to 30% at end.
+
+  Air dodge:
+    - 0.3s invulnerability, directional.
+    - If angled down + near ground = WAVEDASH:
+      - 0.1s invuln, 520px/s horizontal burst, snaps to ground.
+      - Cooldown: 0.6s.
+
+  Air dodge passing through fighters (dodging = true skips body collision).
+
+TECH (press shield during hitstun):
+  - Set a tech window (0.18s) while being hit.
+  - If you hit the ground while stunned and tech window is active:
+    - Bounce up at 160 units.
+    - 50% hitstun reduction.
+    - Tech animation: 0.1s.
+  - Tech particles spawn at impact point.
+
+DI (Directional Influence):
+  - Hold a direction during hitstun to influence knockback angle.
+  - Shifts knockback angle by up to 18 degrees.
+  - Survival DI: hold toward center of stage to reduce blast zone risk.
+
+
+8. MOVEMENT
+===============================================================================
+
+Ground movement:
+  Run speed:   154 px/s (varies per character, range ~119-196)
+  Acceleration: 1400 px/s^2
+  Deceleration: 1260 px/s^2
+
+Air movement:
+  Air speed:    126 px/s (varies per character, range ~103-150)
+  Air accel:    980 px/s^2
+  Air drag:     0.97 per frame (gradual slowdown)
+
+Physics:
+  Gravity:       2200 px/s^2
+  Max fall speed: 1200 px/s
+  Fast fall:     1.8x gravity (hold down while falling past apex)
+
+Jump:
+  Full hop:     680 velocity (varies per character, range 620-760)
+  Shorthop:     420 velocity (hold down while jumping)
+  Double jump:  580 velocity (1 air jump, reset on landing)
+  Jump cut:     multiply vy by 0.4 on early release (short hop pressure)
+
+Lunge system (attack movement):
+  Lunges are short committed steps that decay per frame:
+    Grip:  0.86 per frame (friction)
+    Break: ignored below 150 velocity
+  This gives attacks a visible forward commit without free flight.
+
+
+9. STAGE
+===============================================================================
+
+Layout ("Battlefield"):
+  - Main ground: centered, 65% of canvas width, at 78% height.
+  - One floating platform: center, 14% width, 140px above ground.
+  - Floating platform bobs gently (sin wave, 3px amplitude).
+  - Drop-through platforms: hold Down to fall through.
+  - Platform tolerance: 8px vertical snap window (fixed from old vy-inflated bug).
+
+Blast zones:
+  - 300px beyond visible stage on all sides.
+  - Top zone 1.5x margin (450px).
+  - Crossing a blast zone = KO (lose a stock).
+
+Ledge:
+  - Grab range: 42px horizontal, 26px vertical from ground edge.
+  - 0.8s invulnerability on grab.
+  - Ledge options:
+      Jump (W/Up)       - inward hop, 600 up, 300 horizontal
+      Get-up (Up)       - low commit, 260 up, 160 horizontal, 0.35s invuln
+      Drop (Down)       - fall away from stage
+      Attack (J)        - inward attack, 200 horizontal
+      Stay (no input)   - remain on ledge
+
+Wall tech:
+  - Tech window: 0.12s (press shield before hitting ground).
+  - Bounce: -200 velocity, 50% stun reduction.
+  - Tech particles: green sparkles.
+
+
+10. MATCH RULES
+===============================================================================
+
+  - 1v1 stock battle.
+  - Default: 3 stocks each.
+  - KO = lose a stock, respawn at center after 2s.
+  - 1.5s spawn invulnerability.
+  - Game over when one player has 0 stocks.
+
+
+11. KNOWN ISSUES
+===============================================================================
+
+  - Player 2's "down" and "special" both map to Numpad2.
+    Pressing special always registers as "down" too.
+    Fix: rebind one of them (e.g., down = Numpad0, or special = NumpadPeriod).
+
+  - Smash charge doesn't visually show charge level (no glow/animation).
+
+  - No off-stage ledge grab for floating platform (only main ground has ledges).
+
+  - The `getCardinalDir` uses 'jump' key for up-direction, which means pressing
+    jump during an attack charge starts charging rather than jumping.
+    This is by design (Smash uses the same stick for jump and up-tilt),
+    but may feel unintuitive on keyboard.

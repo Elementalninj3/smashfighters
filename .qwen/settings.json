@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node *)",
+      "Bash(cd *)",
+      "Bash(echo *)",
+      "Bash(findstr *)",
+      "Bash(npm test)",
+      "Bash(npm run *)"
+    ]
+  },
+  "$version": 4
+}

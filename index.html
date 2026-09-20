@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Smash Fighters</title>
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=" />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { overflow: hidden; background: #000; font-family: Consolas, "Courier New", monospace; color: #111; }
+      canvas { display: block; }
+      #select-overlay {
+        display: none;
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        z-index: 10; pointer-events: none; background: #f3ead1;
+      }
+      #overlay-row {
+        width: 100%; height: 100%;
+        display: flex; align-items: center; justify-content: center; gap: 18px;
+      }
+      #hand-preview {
+        pointer-events: auto;
+        flex: 0 0 auto;
+        width: 340px; height: 480px;
+        border: 2px solid #111; background: #f3ead1;
+        cursor: crosshair;
+      }
+      #term-window {
+        pointer-events: auto;
+        flex: 0 0 auto;
+        width: 640px; max-width: 58vw; max-height: 92vh; overflow-y: auto;
+        background: #f3ead1; border: 2px solid #111;
+        padding: 18px 22px; text-align: left;
+      }
+      .term-row.head { color: #555; font-size: 12px; padding: 2px 8px; }
+      .term-row.sep { color: #111; font-size: 12px; font-weight: bold; padding: 6px 8px 2px; }
+      .term-line { font-size: 15px; line-height: 1.5; }
+      .term-title { font-size: 20px; letter-spacing: 2px; color: #111; }
+      .term-sub { color: #555; font-size: 13px; }
+      #term-lines { margin: 12px 0; }
+      .term-row {
+        font-size: 15px; padding: 4px 8px; cursor: pointer; user-select: none;
+        display: flex; align-items: center; gap: 12px;
+      }
+      .term-row .k { color: #111; }
+      .term-row .v { color: #111; font-weight: bold; width: 52px; text-align: right; white-space: nowrap; }
+      .term-row .btn {
+        border: 1px solid #111; background: #fffdf5; color: #111;
+        padding: 1px 8px; cursor: pointer; user-select: none;
+        font-family: inherit; font-size: 13px; line-height: 1.3;
+      }
+      .term-row .btn:hover { background: #ddd3b5; }
+      .term-row input[type="range"] {
+        flex: 1; min-width: 80px; max-width: 260px; height: 16px;
+        accent-color: #111; cursor: pointer;
+      }
+      .term-row select {
+        flex: 1; min-width: 90px; max-width: 260px;
+        background: #fffdf5; color: #111; font-family: inherit; font-size: 13px;
+        border: 1px solid #111; padding: 1px 4px; cursor: pointer;
+      }
+      .term-row input.num {
+        width: 58px; background: #fffdf5; color: #111; font-family: inherit; font-size: 13px;
+        border: 1px solid #111; padding: 1px 3px; text-align: right;
+      }
+      .term-row.on { background: #111; color: #f3ead1; }
+      .term-row.on .k, .term-row.on .v { color: #f3ead1; }
+      .term-row.off { color: #a09880; cursor: default; }
+      .term-row.off .k, .term-row.off .v { color: #a09880; }
+      #term-hints { color: #555; font-size: 12px; line-height: 1.7; border-top: 1px solid #111; padding-top: 8px; }
+      #anim-modal {
+        display: none;
+        position: fixed; inset: 0; z-index: 30;
+        align-items: center; justify-content: center;
+        background: rgba(0, 0, 0, 0.5);
+      }
+      #anim-modal-box {
+        width: 380px; background: #101010; border: 1px solid #2a2a2a;
+        padding: 14px; color: #f3ead1; font-family: Consolas, "Courier New", monospace;
+      }
+      #anim-modal-title { font-size: 14px; margin-bottom: 8px; color: #f3ead1; font-weight: bold; }
+      #anim-modal-input {
+        width: 100%; background: #1a1a1a; border: 1px solid #2f2f2f; color: #f3ead1;
+        font-family: inherit; font-size: 14px; padding: 4px 6px; margin-bottom: 10px;
+      }
+      #anim-modal-btns { display: flex; gap: 8px; justify-content: flex-end; }
+      #anim-modal-btns button {
+        background: #1a1a1a; color: #f3ead1; border: 1px solid #2f2f2f;
+        font-family: inherit; font-size: 12px; padding: 3px 12px; cursor: pointer;
+      }
+      #anim-modal-btns button:hover { background: #2e2e2e; color: #fff; }
+    </style>
+  </head>
+  <body>
+    <div id="anim-modal">
+      <div id="anim-modal-box">
+        <div id="anim-modal-title"></div>
+        <input id="anim-modal-input" type="text" />
+        <div id="anim-modal-btns">
+          <button data-act="ok">OK</button>
+          <button data-act="cancel">CANCEL</button>
+        </div>
+      </div>
+    </div>
+    <div id="select-overlay">
+      <div id="overlay-row">
+        <canvas id="hand-preview" width="340" height="480"></canvas>
+        <div id="term-window">
+          <div class="term-line term-title">SMASH FIGHTERS</div>
+          <div class="term-line term-sub">> ball platform fighter - movement sandbox</div>
+          <div id="term-lines"></div>
+          <div id="term-hints"></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

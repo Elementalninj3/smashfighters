@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laser Beam VFX</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background-color: #070b14; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { background: #0a1222; box-shadow: 0 12px 35px rgba(0,0,0,0.8), 0 0 15px rgba(80, 200, 255, 0.3); border: 3px solid #15233f; border-radius: 16px; cursor: pointer; }
+        .info { margin-top: 14px; color: #8fb3d6; font-size: 15px; font-weight: 600; letter-spacing: 0.5px; user-select: none; }
+    </style>
+</head>
+<body>
+
+    <canvas id="vfxCanvas" width="800" height="500"></canvas>
+    <div class="info">Self-firing laser beam — thin round glow, no hard edges</div>
+
+<script>
+const canvas = document.getElementById('vfxCanvas');
+const ctx = canvas.getContext('2d');
+const CX = canvas.width / 2;
+const CY = canvas.height / 2;
+let frame = 0;
+let flash = 0;
+
+function render() {
+    frame++;
+    flash -= 0.12;
+    if (flash <= 0) { frame = 0; flash = 1; }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.translate(CX, CY);
+    ctx.globalCompositeOperation = 'lighter';
+
+    const t = Math.min(1, frame / 16);
+    const len = 420 * Math.min(1, t * 1.4);
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = flash;
+
+    const outer = ctx.createLinearGradient(0, 0, len, 0);
+    outer.addColorStop(0, 'rgba(255,255,255,0.9)');
+    outer.addColorStop(0.45, 'rgba(110,220,255,0.55)');
+    outer.addColorStop(1, 'rgba(0,170,255,0)');
+    ctx.strokeStyle = outer;
+    ctx.lineWidth = 14;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(len, 0);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(len, 0);
+    ctx.stroke();
+
+    if (t >= 0.92) {
+        const head = ctx.createRadialGradient(len, 0, 1, len, 0, 22);
+        head.addColorStop(0, 'rgba(255,255,255,0.95)');
+        head.addColorStop(1, 'rgba(120,220,255,0)');
+        ctx.fillStyle = head;
+        ctx.beginPath();
+        ctx.arc(len, 0, 22, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(render);
+}
+
+render();
+</script>
+
+</body>
+</html>

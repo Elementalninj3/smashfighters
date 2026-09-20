@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sweeping Arc Slash VFX</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background-color: #120b07; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { background: #20100a; box-shadow: 0 12px 35px rgba(0,0,0,0.8), 0 0 15px rgba(255, 170, 60, 0.25); border: 3px solid #3d2516; border-radius: 16px; cursor: pointer; }
+        .info { margin-top: 14px; color: #d4a880; font-size: 15px; font-weight: 600; letter-spacing: 0.5px; user-select: none; }
+    </style>
+</head>
+<body>
+
+    <canvas id="vfxCanvas" width="800" height="500"></canvas>
+    <div class="info">Self-firing arc slash — white-hot crescent sweep</div>
+
+<script>
+const canvas = document.getElementById('vfxCanvas');
+const ctx = canvas.getContext('2d');
+const CX = canvas.width / 2;
+const CY = canvas.height / 2;
+let frame = 0;
+let flash = 0;
+
+function render() {
+    frame++;
+    flash -= 0.12;
+    if (flash <= 0) { frame = 0; flash = 1; }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.translate(CX, CY);
+    ctx.globalCompositeOperation = 'lighter';
+
+    const sweep = Math.min(1, frame / 10);
+    const r0 = 160;
+    const r1 = 400;
+    const a0 = -Math.PI * 0.5;
+    const a1 = a0 + Math.PI * 1.0 * sweep;
+
+    ctx.globalAlpha = flash;
+    const grad = ctx.createRadialGradient(0, 0, r0, 0, 0, r1);
+    grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+    grad.addColorStop(0.35, 'rgba(255,214,90,0.75)');
+    grad.addColorStop(0.7, 'rgba(255,120,30,0.4)');
+    grad.addColorStop(1, 'rgba(255,60,10,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, r1, a0, a1);
+    ctx.arc(0, 0, r0, a1, a0, true);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.arc(0, 0, r1, a0, a1);
+    ctx.stroke();
+
+    ctx.globalAlpha = flash * (1 - sweep * 0.4);
+    ctx.beginPath();
+    ctx.arc(0, 0, r1 * 0.82, a1 - 0.28, a1);
+    ctx.strokeStyle = 'rgba(255,235,180,0.95)';
+    ctx.lineWidth = 5;
+    ctx.stroke();
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(render);
+}
+
+render();
+</script>
+
+</body>
+</html>
