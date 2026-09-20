@@ -95,7 +95,7 @@ const DEFAULT_ATTACKS = {
   // the target UP (the attack's angle) into a normal hitstun. `dive` drives the
   // attacker down while the hitbox is live, so the move is a real descending
   // stomp instead of a hover.
-  dair:   { name: 'Down Air',     anim: 'fair',   startup: 7,  active: 7,  recovery: 17, dmg: 10, kbBase: 170, kbGrowth: 1.6, angle: 80,  w: 60, h: 46, ox: 6,   oy: 48, hitConfirm: 0.12, dive: 950, air: true },
+  dair:   { name: 'Down Air',     anim: 'fair',   startup: 7,  active: 7,  recovery: 17, dmg: 10, kbBase: 170, kbGrowth: 1.6, angle: 88, koPower: 3, w: 60, h: 46, ox: 6,   oy: 48, hitConfirm: 0.12, dive: 950, air: true },
   dash:   { name: 'Dash',         anim: 'dash',   startup: 0,  active: 8,  recovery: 10, dmg: 5,  kbBase: 130, kbGrowth: 0.9, angle: 20,  w: 100, h: 50, ox: 50,  oy: 0 },
 };
 
@@ -667,6 +667,24 @@ export function applyAbilityHit(attacker, target, def, facing) {
   deliverHit(attacker, target, def, facing);
 }
 
+// ── Cowboy launcher (per-character knockback override) ───────────────────
+// Every one of the Cowboy's hits is a launcher: on a confirmed (unshielded)
+// connect the target is knocked SHARPLY upward with very high vertical
+// knockback, like a Smash-style launcher. This is a purely per-character
+// override applied INSIDE the central knockback path (launchFromHit), so there
+// is no second knockback implementation:
+//   - the fully-computed knockback (damage/base/growth/percent/weight already
+//     folded into `kb`) is boosted by kbMul,
+//   - the launch angle is forced to COWBOY_LAUNCH.angle (near-vertical up),
+//   - %-scaling, weight, hitstun, hit effects and hit-confirm timing all keep
+//     working exactly as the shared calculator defines them.
+// Any other fighter has no entry here and keeps its raw per-attack angles.
+const COWBOY_LAUNCH = { angle: 85, kbMul: 2.1 };
+function cowboyLaunchFor(attacker) {
+  if (attacker && attacker._fighterDef && attacker._fighterDef.id === 'cowboy') return COWBOY_LAUNCH;
+  return null;
+}
+
 // ── Damage + knockback calculator (central) ──────────────────────────────
 // One shared rule for every hit in the game — melee hitboxes and ability
 // projectiles all resolve through deliverHit. The shape follows COMBAT.txt §6:
@@ -705,6 +723,7 @@ function resolveHitDir(attacker, target, def, hitboxFacing) {
 function computeKnockbackVector(target, def, opts) {
   const hitDir = opts.hitDir || 1;
   const kbMul = opts.kbMul || 1;
+  const angle = opts.angle != null ? opts.angle : def.angle; // launch-angle override (Cowboy launcher)
   const percent = target.percent;
   const dmg = def.dmg || 0;
   const base = def.kbBase || 0;
@@ -713,7 +732,7 @@ function computeKnockbackVector(target, def, opts) {
   const weight = targetWeight(target);
   const raw = (dmg * 7 + (base + growth * percent)) * (1 + percent / 80) * ko / weight;
   const kb = Math.max(0, raw) * kbMul;
-  const rad = ((def.angle || 0) * Math.PI) / 180;
+  const rad = ((angle || 0) * Math.PI) / 180;
   let vx = Math.cos(rad) * kb * hitDir;
   // Canvas Y increases downward, so a positive angle is an upward launch.
   let vy = -Math.sin(rad) * kb;
@@ -816,8 +835,16 @@ function deliverHit(attacker, target, def, facing) {
 
 // Apply the launch portion of a hit: knockback vector + hitstun + air state.
 function launchFromHit(attacker, target, def, hitDir, shielded) {
-  const kbMul = shielded ? 0.08 : 1;
-  const { vx, vy, kb } = computeKnockbackVector(target, def, { hitDir, kbMul });
+  let kbMul = shielded ? 0.08 : 1;
+  let angle = def.angle;
+  // Cowboy launcher: unshielded connects pop the target sharply upward. The
+  // shared calculator still owns the math — this only swaps in the Cowboy's
+  // near-vertical angle and a high-magnitude multiplier on the computed kb.
+  if (!shielded) {
+    const launch = cowboyLaunchFor(attacker);
+    if (launch) { kbMul *= launch.kbMul; angle = launch.angle; }
+  }
+  const { vx, vy, kb } = computeKnockbackVector(target, def, { hitDir, kbMul, angle });
   const groundedBefore = target.grounded;
   interruptTarget(target);
   // A downward launch on a grounded fighter would slam straight into the floor,

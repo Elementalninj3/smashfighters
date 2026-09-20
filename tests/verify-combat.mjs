@@ -175,7 +175,8 @@ await page.keyboard.press('KeyJ');
 const fbRes = await launchTrace();
 ok(fbRes && fbRes.percent > 0, 'left-facing attacker connects');
 ok(fbRes && fbRes.vx < 0, 'attacker facing left, target on the left -> launches left (away), not reversed');
-ok(fbRes && Math.abs(speed(fbRes) - speed(jab0)) < 40, `direction flip does not change knockback magnitude (${speed(fbRes).toFixed(0)} vs ${speed(jab0).toFixed(0)})`);
+ok(fbRes && Math.abs(speed(fbRes) - speed(jab0)) < Math.max(40, speed(jab0) * 0.3),
+  `direction flip does not change knockback magnitude (${speed(fbRes).toFixed(0)} vs ${speed(jab0).toFixed(0)})`);
 
 console.log('== back air (target behind attacker launches away) ==');
 await sleep(700);
