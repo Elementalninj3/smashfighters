@@ -95,7 +95,7 @@ const DEFAULT_ATTACKS = {
   // the target UP (the attack's angle) into a normal hitstun. `dive` drives the
   // attacker down while the hitbox is live, so the move is a real descending
   // stomp instead of a hover.
-  dair:   { name: 'Down Air',     anim: 'fair',   startup: 7,  active: 7,  recovery: 17, dmg: 10, kbBase: 170, kbGrowth: 1.6, angle: 88, koPower: 3, w: 60, h: 46, ox: 6,   oy: 48, hitConfirm: 0.12, dive: 950, air: true },
+  dair:   { name: 'Down Air',     anim: 'fair',   startup: 7,  active: 12, recovery: 17, dmg: 10, kbBase: 170, kbGrowth: 1.6, angle: 88, koPower: 3, w: 70, h: 60, ox: 6,   oy: 48, hitConfirm: 0.12, dive: 1300, air: true },
   dash:   { name: 'Dash',         anim: 'dash',   startup: 0,  active: 8,  recovery: 10, dmg: 5,  kbBase: 130, kbGrowth: 0.9, angle: 20,  w: 100, h: 50, ox: 50,  oy: 0 },
 };
 
