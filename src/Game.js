@@ -507,8 +507,21 @@ function renderTermMenu() {
     termLinesEl.appendChild(line);
   });
 
+  // Last-build changelog footnote: proves the current build's changes are live
+  // and records when they were applied (local time at boot). Update the text
+  // whenever the combat/movement behavior ships a visible change.
+  const changelog = document.createElement('div');
+  changelog.className = 'term-line term-sub';
+  changelog.textContent = `${termBuildStamp}  COWBOY DOWN-AIR: only the dair now launches targets sharply upward (85°, 2.1× kb) — every other move stays normal.`;
+  termLinesEl.appendChild(changelog);
+
   drawMainPreview();
 }
+
+// When the build was applied (local time, computed once at boot) — shown in the
+// terminal menu so it is always obvious the latest combat changes are live.
+const _termBootTime = new Date();
+const termBuildStamp = `[BUILD ${_termBootTime.getFullYear()}-${String(_termBootTime.getMonth() + 1).padStart(2, '0')}-${String(_termBootTime.getDate()).padStart(2, '0')} ${String(_termBootTime.getHours()).padStart(2, '0')}:${String(_termBootTime.getMinutes()).padStart(2, '0')}]`;
 
 function updateTermHints() {
   const h = document.getElementById('term-hints');

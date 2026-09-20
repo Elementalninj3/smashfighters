@@ -668,20 +668,26 @@ export function applyAbilityHit(attacker, target, def, facing) {
 }
 
 // ── Cowboy launcher (per-character knockback override) ───────────────────
-// Every one of the Cowboy's hits is a launcher: on a confirmed (unshielded)
-// connect the target is knocked SHARPLY upward with very high vertical
-// knockback, like a Smash-style launcher. This is a purely per-character
-// override applied INSIDE the central knockback path (launchFromHit), so there
-// is no second knockback implementation:
+// ONLY the Cowboy's down-air is a launcher: on a confirmed (unshielded) connect
+// the target is knocked SHARPLY upward with very high vertical knockback, like
+// a Smash-style launcher. Every other move keeps its raw per-attack angle and
+// knockback — the down-air is identified by its defining fields (hitConfirm
+// lock + dive), which nothing else on the roster uses.
+// This is a purely per-character override applied INSIDE the central knockback
+// path (launchFromHit), so there is no second knockback implementation:
 //   - the fully-computed knockback (damage/base/growth/percent/weight already
 //     folded into `kb`) is boosted by kbMul,
 //   - the launch angle is forced to COWBOY_LAUNCH.angle (near-vertical up),
 //   - %-scaling, weight, hitstun, hit effects and hit-confirm timing all keep
 //     working exactly as the shared calculator defines them.
-// Any other fighter has no entry here and keeps its raw per-attack angles.
+// Any other fighter — or any other Cowboy move — has no entry and keeps its raw
+// per-attack angles.
 const COWBOY_LAUNCH = { angle: 85, kbMul: 2.1 };
-function cowboyLaunchFor(attacker) {
-  if (attacker && attacker._fighterDef && attacker._fighterDef.id === 'cowboy') return COWBOY_LAUNCH;
+function isDownAirHit(def) {
+  return !!(def && def.hitConfirm > 0 && def.dive > 0);
+}
+function cowboyLaunchFor(attacker, def) {
+  if (attacker && attacker._fighterDef && attacker._fighterDef.id === 'cowboy' && isDownAirHit(def)) return COWBOY_LAUNCH;
   return null;
 }
 
@@ -837,11 +843,12 @@ function deliverHit(attacker, target, def, facing) {
 function launchFromHit(attacker, target, def, hitDir, shielded) {
   let kbMul = shielded ? 0.08 : 1;
   let angle = def.angle;
-  // Cowboy launcher: unshielded connects pop the target sharply upward. The
-  // shared calculator still owns the math — this only swaps in the Cowboy's
-  // near-vertical angle and a high-magnitude multiplier on the computed kb.
+  // Cowboy launcher: an unshielded DOWN-AIR connect pops the target sharply
+  // upward. The shared calculator still owns the math — this only swaps in the
+  // Cowboy's near-vertical angle and a high-magnitude multiplier on the
+  // computed kb. All other moves (Cowboy or not) keep their raw angles.
   if (!shielded) {
-    const launch = cowboyLaunchFor(attacker);
+    const launch = cowboyLaunchFor(attacker, def);
     if (launch) { kbMul *= launch.kbMul; angle = launch.angle; }
   }
   const { vx, vy, kb } = computeKnockbackVector(target, def, { hitDir, kbMul, angle });

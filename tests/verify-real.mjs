@@ -118,15 +118,14 @@ console.log('== menu keys (other than M) inert after real movement ==');
 
 console.log('== repeated attacks: no runaway physics / resets ==');
 {
-  // Park P2 close to P1 and mash light attacks for ~3s. The Cowboy launcher pops
-  // the target nearly straight UP (tiny horizontal drift), so a stationary mash
-  // keeps reconnecting every time the target lands back beside the attacker —
-  // no chasing required. This still proves the API survives rapid hits.
+  // Park P2 close to P1 and mash light attacks for ~3s, CHASING forward so the
+  // knocked-back target stays in reach (jab pushes P2 right, P1 keeps walking right).
   await place(2, { x: 560, y: 826.8, grounded: true, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false });
   await place(1, { x: 500, y: 826.8, grounded: true, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true });
   let minY = Infinity, maxY = -Infinity, badSpeed = 0;
   let minX = Infinity, maxX = -Infinity;
   let pct = 0, hits = 0;
+  await page.keyboard.down('KeyD'); // chase right while mashing
   for (let i = 0; i < 140; i++) {
     if (i % 3 === 0) await page.keyboard.press('KeyJ');
     await sleep(22);
@@ -140,7 +139,8 @@ console.log('== repeated attacks: no runaway physics / resets ==');
     }
     if (st.fighters[1].percent > pct) { pct = st.fighters[1].percent; hits++; }
   }
-  ok(hits >= 3, `repeated jabs landed multiple times (launcher pops airborne, ${hits} connect frames, final ${pct.toFixed(0)}%)`);
+  await page.keyboard.up('KeyD');
+  ok(hits >= 3, `repeated jabs landed multiple times while chasing (${hits} connect frames, final ${pct.toFixed(0)}%)`);
   ok(badSpeed === 0, 'no runaway velocity magnitude (all speeds < 4000 px/s)');
   ok(maxY - minY < 1600, `no runaway vertical physics (y span ${(maxY - minY).toFixed(0)}px)`);
 }

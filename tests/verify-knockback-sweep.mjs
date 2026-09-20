@@ -137,7 +137,7 @@ const groundPlans = [
   { name: 'jab',     def: 'jab',     dir: [],          attack: 'KeyJ', expected: { vx: 1, vy: -1 }, floor: 60 },
   { name: 'ftilt',   def: 'ftilt',   dir: ['ArrowRight'], attack: 'KeyJ', expected: { vx: 1, vy: -1 }, floor: 120 },
   { name: 'utilt',   def: 'utilt',   dir: ['ArrowUp'], attack: 'KeyJ', probe: 'utilt', expected: { vx: 0, vy: -1 }, floor: 110 },
-  { name: 'dtilt',   def: 'dtilt',   dir: ['ArrowDown'], attack: 'KeyJ', expected: { vx: 1, vy: -1 }, floor: 90 },
+  { name: 'dtilt',   def: 'dtilt',   dir: ['ArrowDown'], attack: 'KeyJ', expected: { vx: 1, vy: 0 }, floor: 90 },
   { name: 'nsmash',  def: 'nsmash',  dir: [],          attack: 'KeyK', expected: { vx: 1, vy: -1 }, floor: 200 },
   { name: 'fsmash',  def: 'fsmash',  dir: ['ArrowRight'], attack: 'KeyK', expected: { vx: 1, vy: -1 }, floor: 250 },
 ];
@@ -171,15 +171,15 @@ console.log('== usmash (up) / dsmash (down) ==');
   ok(b && b.vy < 0 && Math.abs(b.vx) < Math.abs(b.vy), 'usmash launches nearly straight up');
   ok(r100.launched && speed(r100.launched) > speed(b) * 1.3, `usmash scales (${speed(b).toFixed(0)} -> ${r100.launched ? speed(r100.launched).toFixed(0) : '?'})`);
 
-  // Every Cowboy strike is a launcher: dsmash pops a grounded opponent straight
-  // up instead of skidding them along the floor.
+  // Down smash hits a grounded opponent: the down component is flattened so the
+  // hit skids them along the floor instead of slamming straight into the ground.
   const d = stdG(540, 555);
   const d0 = await fire({ p1: d.p1, p2: d.p2, dir: ['ArrowDown'], attack: 'KeyK' });
   const d100 = await fire({ p1: d.p1, p2: withPercent(d, 100).p2, dir: ['ArrowDown'], attack: 'KeyK' });
   const db = d0.launched;
   ok(d0.launched, 'dsmash connects');
   ok(db && speed(db) >= 230, `dsmash has real knockback (${speed(db).toFixed(0)})`);
-  ok(db && db.vy < 0 && Math.abs(db.vx) < Math.abs(db.vy), 'dsmash launches the grounded target straight up (launcher, not floor slide)');
+  ok(db && db.vx > 0 && Math.abs(db.vy) < speed(db) * 0.2, 'dsmash on a grounded target slides them along the floor (not wasted into the ground)');
   ok(d100.launched && speed(d100.launched) > speed(db) * 1.3, `dsmash scales (${speed(db).toFixed(0)} -> ${d100.launched ? speed(d100.launched).toFixed(0) : '?'})`);
 }
 
@@ -200,7 +200,7 @@ console.log('== aerial attacks ==');
 const airPlans = [
   { name: 'nair', dir: [], attack: 'KeyJ', setup: stdAir(700, 540, 540), floor: 110, vx: 1, vy: -1 },
   { name: 'fair', dir: ['ArrowRight'], attack: 'KeyJ', setup: stdAir(700, 540, 600), floor: 140, vx: 1, vy: -1 },
-  { name: 'bair', dir: ['ArrowLeft'], attack: 'KeyJ', probe: 'bair', setup: { p1: { x: 760, y: 700, grounded: false, vx: 0, vy: -20, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 700, y: 700, grounded: false, vx: 0, vy: -20, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false } }, floor: 160, vx: -1, vy: -1 },
+  { name: 'bair', dir: ['ArrowLeft'], attack: 'KeyJ', probe: 'bair', setup: { p1: { x: 760, y: 700, grounded: false, vx: 0, vy: -20, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 700, y: 700, grounded: false, vx: 0, vy: -20, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false } }, floor: 160, vx: -1, vy: 1 },
   { name: 'uair', dir: ['ArrowUp'], attack: 'KeyJ', probe: 'uair', setup: { p1: { x: 540, y: 760, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 540, y: 700, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false } }, floor: 130, vx: 0, vy: -1 },
   { name: 'dair', dir: ['ArrowDown'], attack: 'KeyJ', setup: { p1: { x: 430, y: 660, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 430, y: 730, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true } }, floor: 130, vx: 0, vy: -1 },
 ];
