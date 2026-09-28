@@ -8,14 +8,14 @@
 import { createEditorSubject } from './editor.js';
 import { getAnimationRaw } from './library.js';
 import { sampleAnimator } from './animator.js';
-import { drawFighter } from '../Effects.js';
-import { ALL_FIGHTERS } from '../Menu.js';
+import { drawFighter } from '../render/Effects.js';
+import { ALL_FIGHTERS } from '../content/Menu.js';
 import {
   resolveAnimDef, resolveAttackDef, getAttackDefForAnimId, hitboxRectFor, hitboxList,
-} from '../combat.js';
+} from '../fighter/combat.js';
 import {
   setCustomHitboxes, clearCustomHitboxes, getCustomHitboxes,
-} from '../hitboxData.js';
+} from '../fighter/hitboxData.js';
 import { showModal, cancelModal, modalActive } from './modal.js';
 
 const CREAM      = '#f3ead1';
@@ -53,20 +53,17 @@ function fmt(v) {
 }
 
 const MOVES = [
-  { id: 'jab',    label: 'NEUTRAL LIGHT · JAB' },
-  { id: 'ftilt',  label: 'FORWARD LIGHT · FTILT' },
-  { id: 'utilt',  label: 'UP LIGHT · UTILT' },
-  { id: 'dtilt',  label: 'DOWN LIGHT · DTILT' },
-  { id: 'nsmash', label: 'NEUTRAL HEAVY · NSMASH' },
-  { id: 'fsmash', label: 'FORWARD HEAVY · FSMASH' },
-  { id: 'usmash', label: 'UP HEAVY · USMASH' },
-  { id: 'dsmash', label: 'DOWN HEAVY · DSMASH' },
-  { id: 'nair',   label: 'NEUTRAL AIR · NAIR' },
-  { id: 'fair',   label: 'FORWARD AIR · FAIR' },
-  { id: 'bair',   label: 'BACK AIR · BAIR' },
-  { id: 'uair',   label: 'UP AIR · UAIR' },
-  { id: 'dair',   label: 'DOWN AIR · DAIR' },
-  { id: 'dash',   label: 'DASH' },
+  { id: 'jab',        label: 'NEUTRAL LIGHT · JAB' },
+  { id: 'ftilt',      label: 'FORWARD LIGHT · FTILT' },
+  { id: 'utilt',      label: 'UP LIGHT · UTILT' },
+  { id: 'dtilt',      label: 'DOWN LIGHT · DTILT' },
+  { id: 'nsmash',     label: 'NEUTRAL HEAVY · NSMASH' },
+  { id: 'fsmash',     label: 'SIDE SMASH · FSMASH' },
+  { id: 'usmash',     label: 'UP HEAVY · USMASH' },
+  { id: 'dsmash',     label: 'DOWN HEAVY · DSMASH' },
+  { id: 'aerialLight', label: 'AERIAL LIGHT' },
+  { id: 'aerialHeavy', label: 'AERIAL HEAVY' },
+  { id: 'dash',       label: 'DASH' },
 ];
 
 const FIELD_LABEL = {
@@ -74,6 +71,7 @@ const FIELD_LABEL = {
   w: 'W', h: 'H', ox: 'OX', oy: 'OY',
   startFrame: 'START', duration: 'DUR', range: 'RANGE', end: 'END',
   dmg: 'DMG', kbBase: 'KB', kbGrowth: 'GROW', angle: 'ANGLE',
+  recoveryX: 'REC.X', recoveryY: 'REC.Y', recoveryDuration: 'REC.DUR',
 };
 
 const ROW_STEP = {
@@ -81,9 +79,15 @@ const ROW_STEP = {
   w: 2, h: 2, ox: 2, oy: 2, range: 2,
   startFrame: 1, duration: 1, end: 1,
   dmg: 0.5, kbBase: 5, kbGrowth: 0.05, angle: 5,
+  recoveryX: 1, recoveryY: 1, recoveryDuration: 1,
 };
 
-const INT_KEYS = ['startFrame', 'duration', 'end'];
+const INT_KEYS = ['startFrame', 'duration', 'end', 'recoveryDuration'];
+
+// Attacker recovery is attack-level, not per-hitbox: these keys always read and
+// write box 0 (mergeHitboxDef takes recovery from the first stored box), no
+// matter which hitbox is currently selected.
+const RECOVERY_KEYS = ['recoveryX', 'recoveryY', 'recoveryDuration'];
 
 const HC = {
   open: false,
@@ -126,6 +130,11 @@ export function boxesFromDef(def) {
     kbBase: hb.kbBase != null ? hb.kbBase : ((def && def.kbBase != null) ? def.kbBase : 0),
     kbGrowth: hb.kbGrowth != null ? hb.kbGrowth : ((def && def.kbGrowth != null) ? def.kbGrowth : 0),
     angle: hb.angle != null ? hb.angle : ((def && def.angle != null) ? def.angle : 0),
+    // Attack recovery (attack-level) surfaces from the base def so the panel
+    // shows the real in-game values even before anything is customized.
+    recoveryX: hb.recoveryX != null ? hb.recoveryX : ((def && def.recoveryX != null) ? def.recoveryX : 0),
+    recoveryY: hb.recoveryY != null ? hb.recoveryY : ((def && def.recoveryY != null) ? def.recoveryY : 0),
+    recoveryDuration: hb.recoveryDuration != null ? hb.recoveryDuration : ((def && def.recoveryDuration != null) ? def.recoveryDuration : 0),
   }));
 }
 
@@ -212,7 +221,7 @@ export function getWorkingBoxes() {
 
 export function workingBoxValue(i, key) {
   if (key === 'frame') return round3(HC.previewFrame);
-  const b = HC.boxes[i];
+  const b = HC.boxes[RECOVERY_KEYS.includes(key) ? 0 : i];
   if (!b) return 0;
   if (key === 'range') return round3((b.ox || 0) + (b.w || 0) / 2);
   if (key === 'end') return Math.round((b.startFrame || 0) + Math.max(1, b.duration || 4));
@@ -221,7 +230,7 @@ export function workingBoxValue(i, key) {
 
 export function setWorkingBoxValue(i, key, v) {
   if (key === 'frame') { setPreviewFrame(v); return; }
-  const b = HC.boxes[i];
+  const b = HC.boxes[RECOVERY_KEYS.includes(key) ? 0 : i];
   if (!b) return;
   const nv = INT_KEYS.includes(key) ? Math.round(v) : round3(v);
   if (key === 'range') b.ox = round3(nv - (b.w || 0) / 2);
@@ -699,6 +708,19 @@ function drawPanel(ctx) {
     y += 16;
     for (const key of ['dmg', 'kbBase', 'kbGrowth', 'angle']) {
       y = drawNumRow(ctx, r, y, key, workingBoxValue(i, key));
+    }
+    // Attack-level recovery settings — ALWAYS shown, read/write box 0 (they
+    // are attack-wide, not per-hitbox), so the attacker's recoil is tunable
+    // independently of any single hitbox.
+    ctx.strokeStyle = LINE;
+    ctx.beginPath(); ctx.moveTo(lx, y + 4); ctx.lineTo(cx, y + 4); ctx.stroke();
+    y += 16;
+    ctx.fillStyle = CREAM_MUT;
+    ctx.font = `11px ${MONO}`;
+    ctx.fillText('ATTACK RECOVERY', lx, y + 13);
+    y += 18;
+    for (const key of RECOVERY_KEYS) {
+      y = drawNumRow(ctx, r, y, key, workingBoxValue(0, key));
     }
   }
 

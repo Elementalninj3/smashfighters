@@ -13,7 +13,7 @@ import {
   propPath, animationFrameCount,
 } from './core.js';
 import { getWeapon } from './weapons.js';
-import { updateFighterVfx, resetFighterVfx } from '../vfx.js';
+import { updateFighterVfx, resetFighterVfx } from '../effects/vfx.js';
 
 const SIDES = ['left', 'right'];
 
@@ -175,6 +175,17 @@ function resolveWeapon(fighter, side, handOut, flat, cfg, def, mEff, weapon) {
 const _flatHand = {};
 const _flatWeapon = {};
 
+// Copy a sampled flat pose into a pooled target (same TRANSFORM_PROPS keys
+// flattenObject writes). Replaces the per-side-per-frame `{ ...fh }` spreads.
+function copyFlat(dst, src) {
+  dst.x = src.x; dst.y = src.y; dst.rot = src.rot;
+  dst.scaleX = src.scaleX; dst.scaleY = src.scaleY;
+  dst.width = src.width; dst.height = src.height;
+  dst.opacity = src.opacity; dst.visible = src.visible;
+  dst.flipX = src.flipX; dst.flipY = src.flipY; dst.z = src.z;
+  return dst;
+}
+
 function flattenObject(anim, side, group, frame, out) {
   for (const p of TRANSFORM_PROPS) {
     const tr = anim ? anim.tracks[propPath(group, side, p)] : null;
@@ -202,7 +213,8 @@ function sampleInto(fighter, out) {
     resolveHand(fighter.x, fighter.y, fh, mGlobal, hand);
     // Remember this frame's effective flat pose — the next playAnimation/stop
     // crossfade blends FROM here (world-space out has px/py, not x/y).
-    A._flat.hands[side] = { ...fh };
+    // Field copy into the pooled flat object instead of a spread alloc.
+    copyFlat(A._flat.hands[side] || (A._flat.hands[side] = {}), fh);
 
     const wcfg = (cfg[side] || null);
     const def = wcfg ? getWeapon(wcfg.id) : null;
@@ -212,7 +224,7 @@ function sampleInto(fighter, out) {
       const b = A.blendFrom.weapons ? A.blendFrom.weapons[side] : null;
       if (b) for (const p of TRANSFORM_PROPS) fw[p] = b[p] + (fw[p] - b[p]) * easeOutC(A.blendProgress);
     }
-    A._flat.weapons[side] = { ...fw };
+    copyFlat(A._flat.weapons[side] || (A._flat.weapons[side] = {}), fw);
     // Reuse the pooled weapon object (no per-frame weapon allocation).
     const wm = wcfg.mirror === false ? 1 : mGlobal;
     if (!out.weapons[side] || out.weapons[side].type !== 'weapon') out.weapons[side] = {};
@@ -220,7 +232,13 @@ function sampleInto(fighter, out) {
   }
 }
 
-function easeOutC(t) { return 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3); }
+// 1-(1-t)^3 expanded: identical curve, three multiplies instead of a pow call
+// on every blended component every animated frame.
+function easeOutC(t) {
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const u = 1 - t;
+  return 1 - u * u * u;
+}
 
 function updateBlend(A, dt) {
   if (A.blendFrom && A.blendProgress < 1) {

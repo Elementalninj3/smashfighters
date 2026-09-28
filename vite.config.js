@@ -5,9 +5,11 @@ import { resolve } from 'node:path';
 // Media served with Cache-Control: no-store so the browser never caches or
 // revalidates them. Prevents net::ERR_CACHE_READ_FAILURE (corrupted HTTP-cache
 // reads) that vite's default "no-cache" + ETag responses trigger in dev.
-// sirv preserves an already-set Cache-Control header, so this pre-middleware
-// reliably wins over its default.
-const NO_STORE_MEDIA_RE = /\.(mp3|wav|ogg|m4a|aac|flac|png|jpe?g|webp|gif|webm|mp4)$/i;
+// Font files are in the list for the same reason: the self-hosted Milker face is
+// fetched by the browser exactly like an <audio> element, so it hits the very
+// same corrupted-cache path. sirv preserves an already-set Cache-Control header,
+// so this pre-middleware reliably wins over its default.
+const NO_STORE_MEDIA_RE = /\.(mp3|wav|ogg|m4a|aac|flac|png|jpe?g|webp|gif|webm|mp4|otf|woff2?|ttf|eot)$/i;
 
 function noStoreMedia() {
   return {

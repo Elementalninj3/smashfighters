@@ -9,6 +9,9 @@
     "preview": "vite preview",
     "test": "node tests/perf-smoke.mjs",
     "test:combat": "node tests/verify-combat.mjs",
+    "test:side-smash": "node tests/verify-side-smash-animstore.mjs",
+    "test:ninja": "node tests/verify-ninja-dtilt-teleport.mjs && node tests/verify-ninja-shadow-dash-shuriken.mjs && node tests/verify-shadow-strike-vfx.mjs",
+    "test:all": "node tests/perf-smoke.mjs && node tests/verify-combat.mjs && node tests/verify-ninja-dtilt-teleport.mjs && node tests/verify-ninja-shadow-dash-shuriken.mjs && node tests/verify-shadow-strike-vfx.mjs && node tests/verify-aerial-light-recovery.mjs && node tests/verify-ninja-variety.mjs && node tests/verify-side-smash-animstore.mjs",
     "omniroute": "omniroute"
   },
   "devDependencies": {

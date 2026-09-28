@@ -89,6 +89,40 @@ const DEFAULT_WEAPONS = [
       center: ANCHOR(0, 0), custom: [],
     },
   },
+  {
+    id: 'katana', name: 'Katana', type: 'sword', w: 16, h: 80,
+    color: '#34495e', accent: '#7f8c8d', mirror: true,
+    pivot: { x: 0, y: 30 },
+    anchors: {
+      grip: ANCHOR(0, 30), tip: ANCHOR(0, -40),
+      center: ANCHOR(0, -5), custom: [ANCHOR(0, 25)],
+    },
+  },
+  // Ninja sword (GA sprite): the blade is authored diagonally (guard near
+  // bottom-left, tip top-right), so grip/tip anchors sit at the handle middle
+  // and the tip in sprite space. The hand-attachment math is identical to
+  // every other weapon (grip glued to the hand) — only the art + anchors are
+  // new, no second weapon system.
+  {
+    id: 'ninjaSword', name: 'Ninja Sword', type: 'sword', w: 132, h: 88,
+    color: '#d8d8d8', accent: '#e8b53a', mirror: true,
+    sprite: '/GA/weapons/sword.png',
+    pivot: { x: -43, y: 24 },
+    anchors: {
+      grip: ANCHOR(-43, 24), tip: ANCHOR(62, -42),
+      center: ANCHOR(10, -9), custom: [],
+    },
+  },
+  {
+    id: 'shuriken', name: 'Shuriken', type: 'throwing', w: 32, h: 32,
+    color: '#2c3e50', accent: '#3498db', mirror: true,
+    sprite: '/GA/weapons/shuriken.png',
+    pivot: { x: 0, y: 0 },
+    anchors: {
+      grip: ANCHOR(0, 0), tip: ANCHOR(0, -12),
+      center: ANCHOR(0, 0), custom: [],
+    },
+  },
 ];
 
 let weaponLib = new Map();
@@ -324,6 +358,27 @@ export function drawWeapon(ctx, def, overrides = {}) {
       ctx.arc(0, -h / 2 + 6, 9, 0, Math.PI * 2);                  // orb
       ctx.fill();
       ctx.strokeRect(-4, -h / 2, 8, h);
+      break;
+    }
+    case 'throwing': {
+      // Shuriken fallback (used only while the GA sprite is loading or on
+      // error — the registered sprite above is the real art): a 4-point star
+      // so the hand never holds an empty/generic box.
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const ang = (i * Math.PI) / 4 - Math.PI / 2;
+        const r = i % 2 === 0 ? Math.min(w, h) / 2 : Math.min(w, h) / 5;
+        const x = Math.cos(ang) * r, y = Math.sin(ang) * r;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = a;
+      ctx.beginPath();
+      ctx.arc(0, 0, Math.min(w, h) / 8, 0, Math.PI * 2);
+      ctx.fill();
       break;
     }
     default: { // generic box

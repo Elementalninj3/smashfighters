@@ -45,7 +45,10 @@ await page.evaluate(() => {
   if (start) { start.click(); return true; }
   return false;
 });
-await page.keyboard.press('Enter');
+// Space, not Enter: START MATCH now only ARMS the match and waits for a
+// confirming press, and Enter is not bound to any action so it cannot open the
+// gate. Space is P1's jump key, which the gate accepts.
+await page.keyboard.press('Space');
 await new Promise(r => setTimeout(r, 3000));
 const hudText2 = await page.evaluate(() => {
   const huds = [...document.querySelectorAll('div')].filter(d => (d.style.cssText || '').includes('99999'));

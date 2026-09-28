@@ -58,6 +58,11 @@ ok(s && s.gameState === 'menu' && s.overlay === 'flex', 'boots into the MENU sta
 await page.evaluate(() => {
   const r = [...document.querySelectorAll('#term-lines .term-row')].find(x => x.textContent.includes('START'));
   if (r) r.click();
+  // The start gate needs a confirming press before the match begins: dispatch a
+  // real Space keydown/keyup AFTER the click (startNewMatch flushes edges, so the
+  // press must come after it) to open the gate.
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }));
+  window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space', bubbles: true }));
 });
 await sleep(400);
 s = await state();
@@ -110,6 +115,10 @@ async function fire({ p1, p2, dir, attack, probe }) {
 }
 
 const speed = p => Math.hypot(p.vx, p.vy);
+// Render helper: a launch that was never observed is reported as '?', not a
+// crash. `speed(b)` is interpolated into these messages for a FAILING case too,
+// where b is null, so it has to tolerate a null snapshot.
+const spd = p => (p ? speed(p).toFixed(0) : '?');
 const GROUND = 826.8;
 
 // Standard setups: P1 attacks with facing right (+1), P2 on the RIGHT.
@@ -133,13 +142,14 @@ function withPercent(setup, percent, pn = 2) {
 
 // ── Ground light attacks ───────────────────────────────────────────────
 console.log('== ground attacks ==');
+// Balance (2026-09): knockback ×0.50 → floors halved (same assertions, new scale).
 const groundPlans = [
-  { name: 'jab',     def: 'jab',     dir: [],          attack: 'KeyJ', expected: { vx: 1, vy: -1 }, floor: 60 },
-  { name: 'ftilt',   def: 'ftilt',   dir: ['ArrowRight'], attack: 'KeyJ', expected: { vx: 1, vy: -1 }, floor: 120 },
-  { name: 'utilt',   def: 'utilt',   dir: ['ArrowUp'], attack: 'KeyJ', probe: 'utilt', expected: { vx: 0, vy: -1 }, floor: 110 },
-  { name: 'dtilt',   def: 'dtilt',   dir: ['ArrowDown'], attack: 'KeyJ', expected: { vx: 1, vy: 0 }, floor: 90 },
-  { name: 'nsmash',  def: 'nsmash',  dir: [],          attack: 'KeyK', expected: { vx: 1, vy: -1 }, floor: 200 },
-  { name: 'fsmash',  def: 'fsmash',  dir: ['ArrowRight'], attack: 'KeyK', expected: { vx: 1, vy: -1 }, floor: 250 },
+  { name: 'jab',     def: 'jab',     dir: [],          attack: 'KeyJ', expected: { vx: 1, vy: -1 }, floor: 30 },
+  { name: 'ftilt',   def: 'ftilt',   dir: ['ArrowRight'], attack: 'KeyJ', expected: { vx: 1, vy: -1 }, floor: 60 },
+  { name: 'utilt',   def: 'utilt',   dir: ['ArrowUp'], attack: 'KeyJ', probe: 'utilt', expected: { vx: 0, vy: -1 }, floor: 55 },
+  { name: 'dtilt',   def: 'dtilt',   dir: ['ArrowDown'], attack: 'KeyJ', expected: { vx: 1, vy: 0 }, floor: 40 },
+  { name: 'nsmash',  def: 'nsmash',  dir: [],          attack: 'KeyK', expected: { vx: 1, vy: -1 }, floor: 100 },
+  { name: 'fsmash',  def: 'fsmash',  dir: ['ArrowRight'], attack: 'KeyK', expected: { vx: 1, vy: -1 }, floor: 125 },
 ];
 for (const plan of groundPlans) {
   const setup = plan.def === 'utilt'
@@ -157,7 +167,7 @@ for (const plan of groundPlans) {
   ok(b && (plan.expected.vy === -1 ? b.vy < 0 : plan.expected.vy === 1 ? b.vy > 0 : plan.expected.vy === 0 ? Math.abs(b.vy) < speed(b) * 0.2 : true),
     `${plan.name} launches ${plan.expected.vy === -1 ? 'up' : plan.expected.vy === 1 ? 'down' : plan.expected.vy === 0 ? 'flat along the floor' : 'correctly'}`);
   ok(r100.launched && speed(r100.launched) > speed(b) * 1.3,
-    `${plan.name} knockback scales with percent (${speed(b).toFixed(0)} -> ${r100.launched ? speed(r100.launched).toFixed(0) : '?'})`);
+    `${plan.name} knockback scales with percent (${spd(b)} -> ${spd(r100.launched)})`);
 }
 
 console.log('== usmash (up) / dsmash (down) ==');
@@ -167,20 +177,22 @@ console.log('== usmash (up) / dsmash (down) ==');
   const r100 = await fire({ p1: up.p1, p2: withPercent(up, 100).p2, dir: ['ArrowUp'], attack: 'KeyK', probe: 'usmash' });
   const b = r0.launched;
   ok(r0.launched, 'usmash connects');
-  ok(b && speed(b) >= 230, `usmash has real knockback (${speed(b).toFixed(0)})`);
+  ok(b && speed(b) >= 115, `usmash has real knockback (${speed(b).toFixed(0)})`);
   ok(b && b.vy < 0 && Math.abs(b.vx) < Math.abs(b.vy), 'usmash launches nearly straight up');
-  ok(r100.launched && speed(r100.launched) > speed(b) * 1.3, `usmash scales (${speed(b).toFixed(0)} -> ${r100.launched ? speed(r100.launched).toFixed(0) : '?'})`);
+  ok(r100.launched && speed(r100.launched) > speed(b) * 1.3, `usmash scales (${spd(b)} -> ${spd(r100.launched)})`);
 
-  // Down smash hits a grounded opponent: the down component is flattened so the
-  // hit skids them along the floor instead of slamming straight into the ground.
+  // Down smash summons the horse ride: its trample hitbox launches the grounded
+  // opponent UPWARD-OUTWARD (a strong up-angle away from the rider) — nothing
+  // is wasted into the floor.
   const d = stdG(540, 555);
   const d0 = await fire({ p1: d.p1, p2: d.p2, dir: ['ArrowDown'], attack: 'KeyK' });
   const d100 = await fire({ p1: d.p1, p2: withPercent(d, 100).p2, dir: ['ArrowDown'], attack: 'KeyK' });
   const db = d0.launched;
-  ok(d0.launched, 'dsmash connects');
-  ok(db && speed(db) >= 230, `dsmash has real knockback (${speed(db).toFixed(0)})`);
-  ok(db && db.vx > 0 && Math.abs(db.vy) < speed(db) * 0.2, 'dsmash on a grounded target slides them along the floor (not wasted into the ground)');
-  ok(d100.launched && speed(d100.launched) > speed(db) * 1.3, `dsmash scales (${speed(db).toFixed(0)} -> ${d100.launched ? speed(d100.launched).toFixed(0) : '?'})`);
+  ok(d0.launched, 'dsmash horse connects');
+  ok(db && speed(db) >= 115, `dsmash horse has real knockback (${speed(db).toFixed(0)})`);
+  ok(db && db.vy < 0 && Math.abs(db.vy) > Math.abs(db.vx) * 1.2,
+    'dsmash horse launches the target UPWARD-OUTWARD (not into the floor)');
+  ok(d100.launched && speed(d100.launched) > speed(db) * 1.3, `dsmash scales (${spd(db)} -> ${spd(d100.launched)})`);
 }
 
 console.log('== dash attack (dash state) ==');
@@ -190,19 +202,19 @@ console.log('== dash attack (dash state) ==');
   const r100 = await fire({ p1: { ...d.p1, dashing: true, dashTimer: 0.3 }, p2: withPercent(d, 100).p2, dir: [], attack: 'KeyJ' });
   const b = r0.launched;
   ok(r0.launched, 'dash attack connects');
-  ok(b && speed(b) >= 90, `dash attack has real knockback (${speed(b).toFixed(0)})`);
+  ok(b && speed(b) >= 45, `dash attack has real knockback (${speed(b).toFixed(0)})`);
   ok(b && b.vx > 0, 'dash attack launches forward');
-  ok(r100.launched && speed(r100.launched) > speed(b) * 1.3, `dash attack scales (${speed(b).toFixed(0)} -> ${r100.launched ? speed(r100.launched).toFixed(0) : '?'})`);
+  ok(r100.launched && speed(r100.launched) > speed(b) * 1.3, `dash attack scales (${spd(b)} -> ${spd(r100.launched)})`);
 }
 
 // ── Aerial attacks ─────────────────────────────────────────────────────
 console.log('== aerial attacks ==');
 const airPlans = [
-  { name: 'nair', dir: [], attack: 'KeyJ', setup: stdAir(700, 540, 540), floor: 110, vx: 1, vy: -1 },
-  { name: 'fair', dir: ['ArrowRight'], attack: 'KeyJ', setup: stdAir(700, 540, 600), floor: 140, vx: 1, vy: -1 },
-  { name: 'bair', dir: ['ArrowLeft'], attack: 'KeyJ', probe: 'bair', setup: { p1: { x: 760, y: 700, grounded: false, vx: 0, vy: -20, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 700, y: 700, grounded: false, vx: 0, vy: -20, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false } }, floor: 160, vx: -1, vy: 1 },
-  { name: 'uair', dir: ['ArrowUp'], attack: 'KeyJ', probe: 'uair', setup: { p1: { x: 540, y: 760, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 540, y: 700, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false } }, floor: 130, vx: 0, vy: -1 },
-  { name: 'dair', dir: ['ArrowDown'], attack: 'KeyJ', setup: { p1: { x: 430, y: 660, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 430, y: 730, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true } }, floor: 130, vx: 0, vy: -1 },
+  { name: 'nair', dir: [], attack: 'KeyJ', setup: stdAir(700, 540, 540), floor: 55, vx: 1, vy: 0 },
+  { name: 'fair', dir: ['ArrowRight'], attack: 'KeyJ', setup: stdAir(700, 540, 600), floor: 70, vx: 1, vy: -1 },
+  { name: 'bair', dir: ['ArrowLeft'], attack: 'KeyJ', probe: 'bair', setup: { p1: { x: 760, y: 700, grounded: false, vx: 0, vy: -20, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 700, y: 700, grounded: false, vx: 0, vy: -20, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false } }, floor: 80, vx: -1, vy: 1 },
+  { name: 'uair', dir: ['ArrowUp'], attack: 'KeyJ', probe: 'uair', setup: { p1: { x: 540, y: 760, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 540, y: 700, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false } }, floor: 65, vx: 0, vy: -1 },
+  { name: 'dair', dir: ['ArrowDown'], attack: 'KeyJ', setup: { p1: { x: 430, y: 660, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true }, p2: { x: 430, y: 730, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true } }, floor: 65, vx: 0, vy: -1 },
 ];
 for (const plan of airPlans) {
   const r0 = await fire({ ...plan, p1: plan.setup.p1, p2: plan.setup.p2 });
@@ -213,10 +225,10 @@ for (const plan of airPlans) {
   ok(b && speed(b) >= plan.floor, `${plan.name} has real knockback (${b ? speed(b).toFixed(0) : '?'})`);
   ok(b && (plan.vx === 1 ? b.vx > 0 : plan.vx === -1 ? b.vx < 0 : Math.abs(b.vx) < Math.abs(b.vy)),
     `${plan.name} launches in the correct horizontal direction`);
-  ok(b && (plan.vy === -1 ? b.vy < 0 : plan.vy === 1 ? b.vy > 0 : true),
-    `${plan.name} launches ${plan.vy === -1 ? 'up' : plan.vy === 1 ? 'down' : 'correctly'}`);
+  ok(b && (plan.vy === -1 ? b.vy < 0 : plan.vy === 1 ? b.vy > 0 : plan.vy === 0 ? Math.abs(b.vy) < speed(b) * 0.2 : true),
+    `${plan.name} launches ${plan.vy === -1 ? 'up' : plan.vy === 1 ? 'down' : plan.vy === 0 ? 'flat (not up)' : 'correctly'}`);
   ok(r100.launched && speed(r100.launched) > speed(b) * 1.3,
-    `${plan.name} knockback scales with percent (${speed(b).toFixed(0)} -> ${r100.launched ? speed(r100.launched).toFixed(0) : '?'})`);
+    `${plan.name} knockback scales with percent (${spd(b)} -> ${spd(r100.launched)})`);
 }
 
 // ── Weight scaling on a heavy hitter at fixed percent ──────────────────

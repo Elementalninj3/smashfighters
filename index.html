@@ -6,6 +6,17 @@
     <link rel="icon" href="data:;base64,iVBORw0KGgo=" />
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
+      /* Milker (BrandSemut) — display face for the in-arena matchup banner.
+         Self-hosted from public/fonts so it works offline and in the build;
+         font-display:swap means the banner falls back to the monospace stack
+         for the frame or two before the face arrives, then redraws in Milker. */
+      @font-face {
+        font-family: 'Milker';
+        src: url('/fonts/Milker.otf') format('opentype');
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
       body { overflow: hidden; background: #000; font-family: Consolas, "Courier New", monospace; color: #111; }
       canvas { display: block; }
       #select-overlay {

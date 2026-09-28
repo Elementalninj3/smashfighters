@@ -20,30 +20,32 @@
 // covers every editing operation.
 
 import {
-  TRANSFORM_PROPS, PROP_LABEL, PROP_STEP, DEFAULT_VALUES, DEFAULT_POSE,
+  TRANSFORM_PROPS, PROP_LABEL, PROP_STEP, DEFAULT_VALUES,
   ensureTrack, getTrack, propPath, sampleTrack, addKeyframe, exactKey,
   removeKeyframeAt, moveKeyframe, nearestKey, cloneAnimation,
   animationFrameCount, reverseAnimation, flipAnimationH, shiftAnimationTiming,
-  scaleAnimationTiming, allTrackPaths,
+  allTrackPaths,
 } from './core.js';
 import {
   getAnimation, saveAnimation, createAnimation,
   deleteAnimation,
   duplicateAnimationInLibrary, renameAnimation, listAnimations,
-  exportAnimation, exportAllAnimations, importAnimationsJSON,
+  getCharacterAnimationIds,
+    exportAnimation, importAnimationsJSON,
 } from './library.js';
+import { attacksFor } from '../fighter/combat.js';
 import {
   allWeapons, getWeapon, getWeaponRaw, addWeapon, emptyWeaponCfg,
-  drawWeapon, drawWeaponGuides, weaponsToJSON, importWeaponsJSON,
+    drawWeaponGuides, weaponsToJSON, importWeaponsJSON,
 } from './weapons.js';
 import {
   attachAnimator, resetAnimator, sampleAnimator, updateAnimator,
 } from './animator.js';
 import { showModal, cancelModal, modalActive } from './modal.js';
-import { drawFighter } from '../Effects.js';
-import { drawFighterVfx, listVfxEffects, listVfxAnchors } from '../vfx.js';
-import { listAbilities } from '../abilities.js';
-import { ALL_FIGHTERS } from '../Menu.js';
+import { drawFighter } from '../render/Effects.js';
+import { drawFighterVfx, listVfxEffects, listVfxAnchors } from '../effects/vfx.js';
+import { listAbilities } from '../fighter/abilities.js';
+import { ALL_FIGHTERS } from '../content/Menu.js';
 
 // ── black + cream theme ─────────────────────────────────────────────────
 const CREAM      = '#f3ead1';   // primary text / selection
@@ -550,9 +552,12 @@ export function openEditor(canvas, getFighterDef) {
 
   S.subjectDef = getFighterDef;
   S.subject = createEditorSubject(getFighterDef());
-  // Open on the first library animation (combat/hand/weapon actions — the
-  // library no longer ships movement anims like idle/run).
-  const firstEntry = listAnimations()[0];
+  // Open on the first library animation for THIS character (combat/hand/weapon actions)
+  const def = getFighterDef();
+  const charId = def && def.id ? def.id : 'cowboy';
+  const allowedIds = getCharacterAnimationIds(charId, attacksFor);
+  const lib = listAnimations().filter(a => allowedIds.includes(a.id));
+  const firstEntry = lib[0];
   const firstAnim = firstEntry ? getAnimation(firstEntry.id) : null;
   S.anim = firstAnim || createAnimation('new-anim', 'New Animation');
   S.animId = S.anim.id;
@@ -2761,7 +2766,11 @@ function onEditorKey(e) {
 }
 
 function cycleAnimSelect(dir) {
-  const lib = listAnimations();
+  // Filter animations by the currently selected character
+  const def = S.subjectDef ? S.subjectDef() : null;
+  const charId = def && def.id ? def.id : 'cowboy';
+  const allowedIds = getCharacterAnimationIds(charId, attacksFor);
+  const lib = listAnimations().filter(a => allowedIds.includes(a.id));
   if (!lib.length) return;
   let idx = lib.findIndex(a => a.id === S.animId);
   idx = (idx + dir + lib.length) % lib.length;
@@ -2864,7 +2873,11 @@ function handleEditAction(id) {
   if (id === 'anim-prev') { animNav(-1); return; }
   if (id === 'anim-next') { animNav(1); return; }
   if (id === 'menu:anim') {
-    const lib = listAnimations();
+    // Filter animations by the currently selected character
+    const def = S.subjectDef ? S.subjectDef() : null;
+    const charId = def && def.id ? def.id : 'cowboy';
+    const allowedIds = getCharacterAnimationIds(charId, attacksFor);
+    const lib = listAnimations().filter(a => allowedIds.includes(a.id));
     const op = S.menuRects['anim'];
     openMenu('anim', lib.map(a => ({ label: a.name, value: a.id })), op, v => {
       pushUndo();
@@ -2897,7 +2910,10 @@ function handleEditAction(id) {
       if (v === 'none') S.anim.combat = null;
       else {
         c.type = v;
-        if (v === 'nonHitbox' && !c.abilityId) c.abilityId = 'projectile';
+        if (v === 'nonHitbox' && !c.abilityId) {
+          const first = listAbilities()[0];
+          if (first) c.abilityId = first.id;
+        }
         if (v === 'nonHitbox' && !c.cfg) c.cfg = {};
       }
       S.dirty = true;
@@ -3007,7 +3023,11 @@ function handleEditAction(id) {
   if (id === 'anim-del') {
     pushUndo();
     deleteAnimation(S.animId);
-    const rest = listAnimations();
+    // Filter remaining animations by current character
+    const def = S.subjectDef ? S.subjectDef() : null;
+    const charId = def && def.id ? def.id : 'cowboy';
+    const allowedIds = getCharacterAnimationIds(charId, attacksFor);
+    const rest = listAnimations().filter(a => allowedIds.includes(a.id));
     const next = rest[0] ? rest[0].id : null;
     if (next) loadAnimById(next); else setAnim(createAnimation('base', 'Base'), 'base');
     return;
@@ -3221,17 +3241,32 @@ function charCycle(dir) {
   S.subject = createEditorSubject({ ...def });
   S.subjectDef = () => ({ ...def });
   // restore this character's remembered animation (fall back to the current one)
-  const remembered = S.perCharAnim[def.id];
-  if (remembered && getAnimation(remembered)) {
+  // but only if the remembered animation is valid for this character
+  const charId = def.id;
+  const allowedIds = getCharacterAnimationIds(charId, attacksFor);
+  const remembered = S.perCharAnim[charId];
+  if (remembered && getAnimation(remembered) && allowedIds.includes(remembered)) {
     S.anim = getAnimation(remembered);
     S.animId = remembered;
+    refreshMax();
+  } else if (remembered && getAnimation(remembered) && !allowedIds.includes(remembered)) {
+    // remembered animation is not valid for this character, use first allowed
+    const lib = listAnimations().filter(a => allowedIds.includes(a.id));
+    const firstEntry = lib[0];
+    const firstAnim = firstEntry ? getAnimation(firstEntry.id) : null;
+    S.anim = firstAnim || createAnimation('new-anim', 'New Animation');
+    S.animId = S.anim.id;
     refreshMax();
   }
   resetSubjectAnim();
 }
 
 function animNav(dir) {
-  const lib = listAnimations();
+  // Filter animations by the currently selected character
+  const def = S.subjectDef ? S.subjectDef() : null;
+  const charId = def && def.id ? def.id : 'cowboy';
+  const allowedIds = getCharacterAnimationIds(charId, attacksFor);
+  const lib = listAnimations().filter(a => allowedIds.includes(a.id));
   if (!lib.length) return;
   let idx = lib.findIndex(a => a.id === S.animId);
   if (lib[idx]) {

@@ -1,8 +1,7 @@
-// smoke test — verify combat behavior after performance changes.
+﻿// smoke test â€” verify combat behavior after performance changes.
 // Run: node perf-smoke.mjs
-import { pathToFileURL } from 'url';
 
-// ── Global mocks (browser APIs not present in node) ──────────────────────
+// â”€â”€ Global mocks (browser APIs not present in node) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const g = globalThis;
 g.performance = g.performance || { now: () => Date.now() };
 const noop = () => {};
@@ -60,27 +59,27 @@ g.dispatchEvent = (evt) => {
 };
 g.window = g;
 
-const base = pathToFileURL('C:/Users/User/Desktop/smashfighters/game/src/').href;
+const base = new URL('../src/', import.meta.url).href;
 async function load(rel) {
   return await import(new URL(rel, base).href);
 }
 
-// Key helpers — Player 1: J=attack, K=special, S=down. Player 2: Numpad1=attack, Numpad9=special, Numpad2=down.
+// Key helpers â€” Player 1: J=attack, K=special, S=down. Player 2: Numpad1=attack, Numpad9=special, Numpad2=down.
 function press(code) { g.dispatchEvent({ type: 'keydown', code, repeat: false, preventDefault() {} }); }
 function release(code) { g.dispatchEvent({ type: 'keyup', code, repeat: false, preventDefault() {} }); }
 
-// ── Test 1: propPath interning ───────────────────────────────────────────
+// â”€â”€ Test 1: propPath interning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const core = await load('./anim/core.js');
 const p1 = core.propPath('hands', 'left', 'x');
 const p2 = core.propPath('hands', 'left', 'x');
 if (p1 === undefined || p1 !== p2 || p1 !== 'hands.left.x') throw new Error('propPath cache broken');
 console.log('PASS propPath interning:', p1);
 
-// ── Load modules ─────────────────────────────────────────────────────────
-const input = await load('./Input.js');
-const combat = await load('./combat.js');
-const engine = await load('./Engine.js');
-const fighterMod = await load('./Fighter.js');
+// â”€â”€ Load modules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const input = await load('./input/Input.js');
+const combat = await load('./fighter/combat.js');
+const sfxMod = await load('./core/sfx.js');
+const fighterMod = await load('./fighter/Fighter.js');
 input.initInput();
 
 let nextId = 0;
@@ -94,17 +93,19 @@ function mkFighter(pn, x) {
 }
 
 let hits = 0;
-const saveSfxHit = engine.SFX.hit;
-engine.SFX.hit = () => hits++;
-engine.SFX.deny = () => {};
+const saveSfxHit = sfxMod.SFX.hit;
+sfxMod.SFX.hit = () => hits++;
+sfxMod.SFX.deny = () => {};
 
-// ── Test 2: combat pooling — 400 light attacks ───────────────────────────
+// â”€â”€ Test 2: combat pooling â€” 400 light attacks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 combat.resetCombat();
 const A = mkFighter(1, 200);
 const B = mkFighter(2, 300);
 for (let i = 0; i < 400; i++) {
   A.attack = null; A.attackBuffer = null; A.hitstun = 0; A.dodging = false;
+  A.attackCooldown = 0; A.shieldCooldown = 0;
   B.attack = null; B.attackBuffer = null; B.hitstun = 0; B.dodging = false;
+  B.attackCooldown = 0; B.shieldCooldown = 0;
   B.x = A.x + 60; B.y = A.y; B.invulnTimer = 0; A.invulnTimer = 0;
   press('KeyJ');
   combat.combatInput([A, B]);
@@ -119,9 +120,9 @@ console.log('PASS 400 light attacks, hits =', hits);
 
 // hitbox registry must be empty at rest
 let regEmpty = true;
-// (checked implicitly — no assertion surface, next round resets it anyway)
+// (checked implicitly â€” no assertion surface, next round resets it anyway)
 
-// ── Test 3: dsmash bothSides trade ───────────────────────────────────────
+// â”€â”€ Test 3: dsmash bothSides trade â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 combat.resetCombat();
 const A2 = mkFighter(1, 600);
 const B2 = mkFighter(2, 640);
@@ -130,13 +131,15 @@ A2.y = 800; B2.y = 800;
 let traded = 0;
 for (let i = 0; i < 400 && traded < 8; i++) {
   A2.attack = null; A2.attackBuffer = null; A2.hitstun = 0; A2.dodging = false; A2.shielding = false;
+  A2.attackCooldown = 0; A2.shieldCooldown = 0;
   B2.attack = null; B2.attackBuffer = null; B2.hitstun = 0; B2.dodging = false; B2.shielding = false;
+  B2.attackCooldown = 0; B2.shieldCooldown = 0;
   A2.percent = 0; B2.percent = 0;
   A2.invulnTimer = 0; B2.invulnTimer = 0; B2._hitRenderTimer = 0; A2._hitRenderTimer = 0;
-  engine.SFX.hit = () => { traded++; };
+  sfxMod.SFX.hit = () => { traded++; };
 
-  press('KeyK');      // P1 special (down held → dsmash)
-  press('Numpad9');   // P2 special (down held → dsmash)
+  press('KeyK');      // P1 special (down held â†’ dsmash)
+  press('Numpad9');   // P2 special (down held â†’ dsmash)
   press('KeyS');      // P1 down
   press('Numpad2');   // P2 down
   combat.combatInput([A2, B2]);
@@ -149,9 +152,9 @@ for (let i = 0; i < 400 && traded < 8; i++) {
 console.log('PASS dsmash trades, traded =', traded);
 if (traded === 0) throw new Error('dsmash never traded');
 
-// ── Test 4: resetCombat cleans pool references ───────────────────────────
+// â”€â”€ Test 4: resetCombat cleans pool references â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 combat.resetCombat();
 console.log('PASS resetCombat clean');
-engine.SFX.hit = saveSfxHit;
+sfxMod.SFX.hit = saveSfxHit;
 
 console.log('\nALL SMOKE TESTS PASSED');

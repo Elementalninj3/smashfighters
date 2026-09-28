@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anime Shadow Dash VFX — preview harness</title>
+    <!--
+      This page is the PREVIEW HARNESS for the in-game effect. The art itself now
+      lives in the module next to it (./shadowdash.js) — the very same code the
+      game renders:
+
+        GA/vfx/shadowdash.js  →  src/vfx.js       (VFX_EFFECTS.shadowDash)
+                              →  src/abilities.js (Shadow Strike → playShadowStrikeVFX)
+
+      So the page owns NO effect code any more: no Particle/Afterimage classes, no
+      per-frame state machine and no extra animation loop for it. It only supplies
+      a clock (its rAF tick), a dash to look at, and the same params the game
+      passes, then asks the shared draw() for a frame.
+
+      Serve it through the dev server — http://localhost:5173/GA/vfx/shadowdash.html
+      (an ES module import cannot load over file://).
+    -->
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #09090b;
+            color: #e4e4e7;
+            font-family: system-ui, -apple-system, sans-serif;
+            user-select: none;
+        }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #hud {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            z-index: 10;
+            pointer-events: none;
+            background: rgba(24, 24, 27, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid #27272a;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+        }
+        #hud h1 { margin: 0 0 8px; font-size: 18px; letter-spacing: 0.08em; color: #c084fc; }
+        #hud p { margin: 3px 0; font-size: 12px; color: #a1a1aa; }
+        #hud b { color: #e4e4e7; font-weight: 600; }
+        #hud .hot { color: #c084fc; font-weight: 600; }
+        #hud .note { margin-top: 10px; max-width: 330px; font-size: 11px; line-height: 1.45; color: #71717a; }
+    </style>
+</head>
+<body>
+
+    <div id="hud">
+        <h1>SHADOW DASH VFX</h1>
+        <p><b>A / D or Left / Right:</b> Move / Walk</p>
+        <p><b>W or Up:</b> Jump</p>
+        <p><span class="hot">Space / J:</span> Execute Shadow Dash</p>
+        <p class="note">Preview of GA/vfx/shadowdash.js — the module the game's Shadow Strike ability renders. In game the same art is time-mapped onto the move's own remaining frames, so it always ends with Shadow Strike.</p>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script type="module">
+        import { VFX_EFFECTS, SHADOW_DASH } from './shadowdash.js';
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const effect = VFX_EFFECTS.shadowDash;
+
+        let width = window.innerWidth;
+        let height = window.innerHeight;
+
+        const dpr = window.devicePixelRatio || 1;
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            // setTransform (not scale) so repeated resizes never compound the dpr.
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            player.groundY = height - 140;
+        }
+
+        // The reference fighter the art was composed around: a 44×76 body standing
+        // on the floor at (x, y). Because it IS the reference, the preview draws
+        // the effect at unit = 1 (the game scales it to the real fighter radius).
+        const player = {
+            x: 0, y: 0,
+            width: SHADOW_DASH.refBodyWidth,
+            height: SHADOW_DASH.refBodyHeight,
+            vx: 0, vy: 0,
+            speed: 5.5, jumpForce: -13, gravity: 0.65,
+            groundY: 0, grounded: false, facing: 1,
+            dashing: false, dashTimer: 0, dashCooldown: 0, dashDir: 1,
+            // The single VFX instance this page owns: where the dash lands, which
+            // way it went, how far it covered, how far through its timeline it is.
+            vfx: { active: false, x: 0, y: 0, dir: 1, distance: 0, frames: 0 },
+        };
+
+        // The demo's dash, and the art's own reference dash: 14 frames × 22 px.
+        const DASH_SPEED = 22;
+        const DASH_FRAMES = SHADOW_DASH.dashFrames;
+        const ART_FRAMES = SHADOW_DASH.artFrames;
+
+        const keys = {};
+        window.addEventListener('keydown', (e) => {
+            if ((e.code === 'Space' || e.code === 'KeyJ') && !keys['dashTriggered']) triggerDash();
+            keys[e.code] = true;
+            if (e.code === 'Space') e.preventDefault();
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space' || e.code === 'KeyJ') keys['dashTriggered'] = false;
+            keys[e.code] = false;
+        });
+
+        function triggerDash() {
+            if (player.dashCooldown > 0 || player.dashing) return;
+            player.dashing = true;
+            player.dashTimer = DASH_FRAMES;
+            player.dashCooldown = 28;
+            player.dashDir = player.facing;
+            // The effect is anchored where the dash LANDS and covers the distance
+            // actually travelled — exactly how the game arms it from abilities.js
+            // (the game's Shadow Strike dash is instant, so its arrival point is
+            // the fighter's own position at the cast).
+            const wanted = player.x + player.dashDir * DASH_FRAMES * DASH_SPEED;
+            const arriveX = Math.max(50, Math.min(width - 50, wanted));
+            player.vfx.active = true;
+            player.vfx.x = arriveX;
+            player.vfx.y = player.y - player.height / 2;
+            player.vfx.dir = player.dashDir;
+            player.vfx.distance = Math.abs(arriveX - player.x);
+            player.vfx.frames = 0;
+        }
+
+        function update(dt) {
+            const step = dt * 60; // the page runs on 60 fps frames
+            if (player.dashCooldown > 0) player.dashCooldown -= step;
+
+            if (player.dashing) {
+                player.vx = player.dashDir * DASH_SPEED;
+                player.vy = 0;
+                player.x += player.vx * step;
+                player.dashTimer -= step;
+                if (player.dashTimer <= 0) {
+                    player.dashing = false;
+                    player.x = player.vfx.x; // land exactly on the effect's anchor
+                }
+            } else {
+                let moveDir = 0;
+                if (keys['KeyA'] || keys['ArrowLeft']) moveDir = -1;
+                if (keys['KeyD'] || keys['ArrowRight']) moveDir = 1;
+
+                if (moveDir !== 0) {
+                    player.vx = moveDir * player.speed;
+                    player.facing = moveDir;
+                } else {
+                    player.vx *= 0.8;
+                }
+
+                if ((keys['KeyW'] || keys['ArrowUp']) && player.grounded) {
+                    player.vy = player.jumpForce;
+                    player.grounded = false;
+                }
+                player.vy += player.gravity;
+                player.x += player.vx * step;
+                player.y += player.vy * step;
+
+                if (player.y >= player.groundY) {
+                    player.y = player.groundY;
+                    player.vy = 0;
+                    player.grounded = true;
+                }
+            }
+
+            // Screen bounds containment.
+            if (player.x < 50) player.x = 50;
+            if (player.x > width - 50) player.x = width - 50;
+
+            // The effect runs on its OWN timeline: it keeps resolving whether or
+            // not the dash is still going, and is simply dropped once the art is
+            // done — the same way the game retires it (Fighter.js ages the
+            // instance out with the lifetime playShadowStrikeVFX gave it).
+            if (player.vfx.active) {
+                player.vfx.frames += step;
+                if (player.vfx.frames >= ART_FRAMES) player.vfx.active = false;
+            }
+        }
+
+        function drawFighter() {
+            ctx.save();
+            ctx.translate(player.x, player.y - player.height / 2);
+
+            if (player.dashing) ctx.scale(1.4, 0.7); // squash & stretch during the dash
+
+            ctx.fillStyle = player.dashing ? '#18181b' : '#27272a';
+            ctx.strokeStyle = '#a855f7';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-player.width / 2, -player.height / 2, player.width, player.height, 10);
+            else ctx.rect(-player.width / 2, -player.height / 2, player.width, player.height);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = player.dashing ? '#f43f5e' : '#a855f7';
+            ctx.fillRect(player.facing > 0 ? 6 : -14, -player.height * 0.25, 8, 4);
+
+            ctx.restore();
+        }
+
+        function drawVfx() {
+            if (!player.vfx.active) return;
+            effect.draw(ctx, {
+                progress: player.vfx.frames / ART_FRAMES,
+                scale: 1,
+                rotation: 0,
+                mirrorX: player.vfx.dir,
+                params: { distance: player.vfx.distance, unit: 1 },
+            }, { x: player.vfx.x, y: player.vfx.y });
+        }
+
+        let lastTime = performance.now();
+
+        function gameLoop(currentTime) {
+            const dt = Math.min((currentTime - lastTime) / 1000, 0.1);
+            lastTime = currentTime;
+
+            update(dt);
+
+            // Stage: the arcade gradient + neon floor edge from the original page.
+            const bg = ctx.createLinearGradient(0, 0, 0, height);
+            bg.addColorStop(0, '#09090b');
+            bg.addColorStop(1, '#18181b');
+            ctx.fillStyle = bg;
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.fillStyle = '#27272a';
+            ctx.fillRect(0, player.groundY, width, height - player.groundY);
+            ctx.fillStyle = '#a855f7';
+            ctx.fillRect(0, player.groundY, width, 4);
+
+            // Fighter first, then the effect: the game paints fighter VFX above
+            // the fighter, so the preview has to show the same stacking.
+            drawFighter();
+            drawVfx();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+        player.x = width / 2;
+        player.y = player.groundY;
+        player.grounded = true;
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

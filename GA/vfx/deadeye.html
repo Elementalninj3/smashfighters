@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High-Performance Anime Revolver Particle VFX</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #08090c;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Minimal HUD ammo indicator */
+        .hud-ammo {
+            position: absolute;
+            bottom: 24px;
+            right: 24px;
+            display: flex;
+            gap: 6px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .ammo-pip {
+            width: 8px;
+            height: 20px;
+            background: #222b38;
+            border: 1px solid #3b485d;
+            border-radius: 3px;
+            transform: skewX(-12deg);
+            transition: background 0.1s ease, border-color 0.1s ease, box-shadow 0.1s ease;
+        }
+
+        .ammo-pip.active {
+            background: #ffab00;
+            border-color: #ffd54f;
+            box-shadow: 0 0 8px #ffab00;
+        }
+
+        .hint {
+            position: absolute;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #4a5568;
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 13px;
+            letter-spacing: 1px;
+            pointer-events: none;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container">
+        <canvas id="vfxCanvas"></canvas>
+    </div>
+
+    <div class="hud-ammo" id="hudAmmo"></div>
+    <div class="hint">Click to fire rapid burst</div>
+
+    <script>
+        const NUM_BULLETS = 6;
+        const SHOT_DELAY_MS = 90;
+        const BULLET_SPEED = 28;
+        const TRAIL_LENGTH = 5; // Short trail
+        const SPARK_COUNT_PER_SHOT = 12;
+        const BULLET_SIZE = 10; // 4x bigger
+        const MUZZLE_FLASH_SIZE = 35;
+        const RECOIL_SPREAD = 0.035;
+
+        const canvas = document.getElementById('vfxCanvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const hudAmmo = document.getElementById('hudAmmo');
+
+        let width = 0;
+        let height = 0;
+        let centerX = 0;
+        let centerY = 0;
+
+        let mouseX = 0;
+        let mouseY = 0;
+
+        let activeShotsRemaining = 0;
+        let nextShotTime = 0;
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            centerX = width / 2;
+            centerY = height / 2;
+
+            if (mouseX === 0 && mouseY === 0) {
+                mouseX = centerX;
+                mouseY = centerY - 150;
+            }
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        for (let i = 0; i < NUM_BULLETS; i++) {
+            const pip = document.createElement('div');
+            pip.className = 'ammo-pip active';
+            hudAmmo.appendChild(pip);
+        }
+
+        function updateHUD(spent) {
+            const pips = hudAmmo.children;
+            const remaining = NUM_BULLETS - spent;
+            for (let i = 0; i < NUM_BULLETS; i++) {
+                if (i < remaining) {
+                    pips[i].className = 'ammo-pip active';
+                } else {
+                    pips[i].className = 'ammo-pip';
+                }
+            }
+        }
+
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+
+        const MAX_BULLETS = 64;
+        const MAX_PARTS = 512;
+        const MAX_FLASHES = 32;
+
+        const bulletsPool = new Array(MAX_BULLETS);
+        for (let i = 0; i < MAX_BULLETS; i++) {
+            bulletsPool[i] = {
+                active: false,
+                x: 0, y: 0,
+                vx: 0, vy: 0,
+                angle: 0,
+                distTraveled: 0,
+                maxDist: 0,
+                trailX: new Float32Array(TRAIL_LENGTH),
+                trailY: new Float32Array(TRAIL_LENGTH),
+                trailHead: 0,
+                trailCount: 0
+            };
+        }
+
+        const particlesPool = new Array(MAX_PARTS);
+        for (let i = 0; i < MAX_PARTS; i++) {
+            particlesPool[i] = {
+                active: false,
+                x: 0, y: 0,
+                vx: 0, vy: 0,
+                life: 0,
+                maxLife: 0,
+                size: 0,
+                isSpark: false
+            };
+        }
+
+        const flashesPool = new Array(MAX_FLASHES);
+        for (let i = 0; i < MAX_FLASHES; i++) {
+            flashesPool[i] = {
+                active: false,
+                x: 0, y: 0,
+                angle: 0,
+                size: 0,
+                life: 0,
+                maxLife: 0
+            };
+        }
+
+        function spawnBullet(targetAngle) {
+            let b = null;
+            for (let i = 0; i < MAX_BULLETS; i++) {
+                if (!bulletsPool[i].active) {
+                    b = bulletsPool[i];
+                    break;
+                }
+            }
+            if (!b) return;
+
+            const spreadAngle = targetAngle + (Math.random() - 0.5) * RECOIL_SPREAD;
+            const speed = BULLET_SPEED * (0.95 + Math.random() * 0.1);
+
+            b.active = true;
+            b.x = centerX;
+            b.y = centerY;
+            b.vx = Math.cos(spreadAngle) * speed;
+            b.vy = Math.sin(spreadAngle) * speed;
+            b.angle = spreadAngle;
+            b.distTraveled = 0;
+            b.maxDist = Math.hypot(width, height);
+            b.trailHead = 0;
+            b.trailCount = 0;
+
+            for (let k = 0; k < TRAIL_LENGTH; k++) {
+                b.trailX[k] = centerX;
+                b.trailY[k] = centerY;
+            }
+        }
+
+        function spawnMuzzleFlash(angle) {
+            let f = null;
+            for (let i = 0; i < MAX_FLASHES; i++) {
+                if (!flashesPool[i].active) {
+                    f = flashesPool[i];
+                    break;
+                }
+            }
+            if (!f) return;
+
+            f.active = true;
+            f.x = centerX;
+            f.y = centerY;
+            f.angle = angle;
+            f.size = MUZZLE_FLASH_SIZE * (0.8 + Math.random() * 0.4);
+            f.life = 4;
+            f.maxLife = 4;
+        }
+
+        function spawnSpark(angle) {
+            let p = null;
+            for (let i = 0; i < MAX_PARTS; i++) {
+                if (!particlesPool[i].active) {
+                    p = particlesPool[i];
+                    break;
+                }
+            }
+            if (!p) return;
+
+            const spread = (Math.random() - 0.5) * 1.1;
+            const pAngle = angle + spread;
+            const speed = (Math.random() * 0.7 + 0.3) * (BULLET_SPEED * 0.4);
+
+            p.active = true;
+            p.x = centerX;
+            p.y = centerY;
+            p.vx = Math.cos(pAngle) * speed;
+            p.vy = Math.sin(pAngle) * speed;
+            p.maxLife = Math.floor(12 + Math.random() * 14);
+            p.life = p.maxLife;
+            p.size = 1.5 + Math.random() * 2.5;
+            p.isSpark = Math.random() > 0.35;
+        }
+
+        function fireSingleShot() {
+            const angle = Math.atan2(mouseY - centerY, mouseX - centerX);
+            spawnBullet(angle);
+            spawnMuzzleFlash(angle);
+            for (let i = 0; i < SPARK_COUNT_PER_SHOT; i++) {
+                spawnSpark(angle);
+            }
+        }
+
+        window.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            activeShotsRemaining = NUM_BULLETS;
+            nextShotTime = 0;
+        });
+
+        function update(now) {
+            if (activeShotsRemaining > 0) {
+                if (now >= nextShotTime) {
+                    fireSingleShot();
+                    activeShotsRemaining--;
+                    updateHUD(NUM_BULLETS - activeShotsRemaining);
+                    nextShotTime = now + SHOT_DELAY_MS;
+                }
+            }
+
+            for (let i = 0; i < MAX_BULLETS; i++) {
+                const b = bulletsPool[i];
+                if (!b.active) continue;
+
+                b.trailHead = (b.trailHead + 1) % TRAIL_LENGTH;
+                b.trailX[b.trailHead] = b.x;
+                b.trailY[b.trailHead] = b.y;
+                if (b.trailCount < TRAIL_LENGTH) b.trailCount++;
+
+                b.x += b.vx;
+                b.y += b.vy;
+                b.distTraveled += BULLET_SPEED;
+
+                if (
+                    b.x < -100 || b.x > width + 100 ||
+                    b.y < -100 || b.y > height + 100 ||
+                    b.distTraveled >= b.maxDist
+                ) {
+                    b.active = false;
+                }
+            }
+
+            for (let i = 0; i < MAX_PARTS; i++) {
+                const p = particlesPool[i];
+                if (!p.active) continue;
+
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vx *= 0.93;
+                p.vy *= 0.93;
+                p.life--;
+
+                if (p.life <= 0) {
+                    p.active = false;
+                }
+            }
+
+            for (let i = 0; i < MAX_FLASHES; i++) {
+                const f = flashesPool[i];
+                if (!f.active) continue;
+
+                f.life--;
+                if (f.life <= 0) {
+                    f.active = false;
+                }
+            }
+        }
+
+        function render() {
+            ctx.fillStyle = '#08090c';
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.globalCompositeOperation = 'lighter';
+
+            // 1. Render Muzzle Flashes
+            for (let i = 0; i < MAX_FLASHES; i++) {
+                const f = flashesPool[i];
+                if (!f.active) continue;
+
+                const progress = f.life / f.maxLife;
+                const sz = f.size * progress;
+
+                ctx.save();
+                ctx.translate(f.x, f.y);
+                ctx.rotate(f.angle);
+
+                ctx.fillStyle = '#ff8f00';
+                ctx.beginPath();
+                ctx.arc(0, 0, sz, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#ffecb3';
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(sz * 1.8, -sz * 0.4);
+                ctx.lineTo(sz * 2.4, 0);
+                ctx.lineTo(sz * 1.8, sz * 0.4);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            // 2. Render Particle Sparks
+            for (let i = 0; i < MAX_PARTS; i++) {
+                const p = particlesPool[i];
+                if (!p.active) continue;
+
+                const progress = p.life / p.maxLife;
+
+                if (p.isSpark) {
+                    ctx.strokeStyle = progress > 0.5 ? '#ffe082' : '#ff8f00';
+                    ctx.lineWidth = p.size * progress;
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y);
+                    ctx.lineTo(p.x - p.vx * 1.8, p.y - p.vy * 1.8);
+                    ctx.stroke();
+                } else {
+                    ctx.fillStyle = '#ffb300';
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * progress, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // 3. Render Yellow Trails (Underneath bullets)
+            for (let i = 0; i < MAX_BULLETS; i++) {
+                const b = bulletsPool[i];
+                if (!b.active) continue;
+
+                if (b.trailCount > 1) {
+                    ctx.beginPath();
+                    let idx = b.trailHead;
+                    ctx.moveTo(b.x, b.y);
+
+                    for (let c = 0; c < b.trailCount; c++) {
+                        const px = b.trailX[idx];
+                        const py = b.trailY[idx];
+                        ctx.lineTo(px, py);
+                        idx = (idx - 1 + TRAIL_LENGTH) % TRAIL_LENGTH;
+                    }
+
+                    // Outer yellowish glow
+                    ctx.strokeStyle = 'rgba(255, 213, 79, 0.45)';
+                    ctx.lineWidth = BULLET_SIZE * 0.5;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.stroke();
+
+                    // Inner bright core trail
+                    ctx.strokeStyle = 'rgba(255, 249, 196, 0.9)';
+                    ctx.lineWidth = BULLET_SIZE * 0.2;
+                    ctx.stroke();
+                }
+            }
+
+            // 4. Render Bullets ON TOP of trails (Realistic bullet slug shape with rounded caps)
+            for (let i = 0; i < MAX_BULLETS; i++) {
+                const b = bulletsPool[i];
+                if (!b.active) continue;
+
+                ctx.save();
+                ctx.translate(b.x, b.y);
+                ctx.rotate(b.angle);
+
+                const len = BULLET_SIZE * 3.2;
+                const r = BULLET_SIZE * 0.65; // Radius for rounded cap
+
+                // Gray metallic projectile body with rounded front tip
+                ctx.fillStyle = '#78828c';
+                ctx.beginPath();
+                ctx.moveTo(-len * 0.5, -r);
+                ctx.lineTo(len * 0.3, -r);
+                // Rounded bullet nose arc
+                ctx.arc(len * 0.3, 0, r, -Math.PI / 2, Math.PI / 2, false);
+                ctx.lineTo(-len * 0.5, r);
+                ctx.closePath();
+                ctx.fill();
+
+                // Highlight strip on top of the slug for specular anime sheen
+                ctx.fillStyle = '#b0bec5';
+                ctx.beginPath();
+                ctx.moveTo(-len * 0.4, -r * 0.4);
+                ctx.lineTo(len * 0.2, -r * 0.4);
+                ctx.arc(len * 0.2, 0, r * 0.4, -Math.PI / 2, Math.PI / 2, false);
+                ctx.lineTo(-len * 0.4, r * 0.4);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            ctx.globalCompositeOperation = 'source-over';
+
+            // Center crosshair / origin point
+            ctx.fillStyle = '#ffab00';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function mainLoop(timestamp) {
+            update(timestamp);
+            render();
+            requestAnimationFrame(mainLoop);
+        }
+
+        window.onload = function() {
+            requestAnimationFrame(mainLoop);
+        };
+    </script>
+</body>
+</html>
