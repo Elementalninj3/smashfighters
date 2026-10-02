@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Light Pillar</title>
+<style>
+  html,body{margin:0;height:100%;background:#141822;overflow:hidden}
+  canvas{display:block;width:100%;height:100%;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W, H, dpr;
+function resize(){
+  dpr = Math.min(devicePixelRatio || 1, 2);
+  W = cv.width = innerWidth * dpr; H = cv.height = innerHeight * dpr;
+}
+addEventListener('resize', resize); resize();
+
+const rnd = (a,b)=>a+Math.random()*(b-a);
+const TAU = Math.PI*2;
+const clamp = (v,a=0,b=1)=>Math.max(a,Math.min(b,v));
+const easeOut = x=>1-Math.pow(1-x,3);
+const easeInOut = x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
+
+// ---- themes: cycle automatically, click to restart ----
+const THEMES = [
+  { beam:['150,190,255','235,170,255','150,240,240','255,80,90','255,215,90','255,140,60'],
+    spark:['200,225,255','255,140,140','255,240,150','255,180,240','255,255,255'],
+    rib:'150,165,255', ring:'150,180,255', glow:'160,190,255', haze:'120,130,255' },
+  { beam:['255,70,50','255,140,40','255,220,90','255,90,90','255,190,60','255,240,170'],
+    spark:['255,210,120','255,120,80','255,240,170','255,170,60','255,255,255'],
+    rib:'255,120,50', ring:'255,150,70', glow:'255,170,90', haze:'255,90,50' },
+  { beam:['150,190,255','235,170,255','150,240,240','190,200,255'],
+    spark:['200,225,255','255,190,240','255,240,180','170,220,255','255,255,255'],
+    rib:'130,155,255', ring:'150,180,255', glow:'160,190,255', haze:'110,130,255' }
+];
+let theme = THEMES[0];
+
+// ---- timeline (seconds) ----
+const T_CHARGE = 0, T_RISE = .2, T_HOLD = 1.1, T_FADE = 2.0, T_LOOP = 2.3;
+
+const beams = Array.from({length:28}, ()=>({
+  x: rnd(-1,1), w: rnd(.04,.22), ci: 0, ph: rnd(0,TAU), sp: rnd(.6,1.8)
+}));
+const sparkles = Array.from({length:20}, ()=>({
+  x: rnd(-1.5,1.5), y: rnd(0,1), s: rnd(.25,1), vy: rnd(.03,.07),
+  ph: rnd(0,TAU), tw: rnd(2,5), ci: 0
+}));
+const shards = Array.from({length:14}, ()=>({
+  x: rnd(-1.6,1.6), y: rnd(.1,1), r: rnd(.3,1), vy: rnd(.02,.07), rot: rnd(0,TAU), vr: rnd(-1,1)
+}));
+const rays = Array.from({length:22}, (_,i)=>({
+  a: -Math.PI + (i/21)*Math.PI + rnd(-.05,.05), l: rnd(.4,1), ph: rnd(0,TAU)
+}));
+const embers = [];
+
+function applyTheme(n){
+  theme = THEMES[((n % THEMES.length) + THEMES.length) % THEMES.length];
+  beams.forEach(b=>b.ci = (Math.random()*theme.beam.length)|0);
+  sparkles.forEach(s=>s.ci = (Math.random()*theme.spark.length)|0);
+}
+applyTheme(0);
+
+function star(x, y, size, col, a){
+  // soft glow (additive)
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(x,y,0,x,y,size*.5);
+  g.addColorStop(0, `rgba(${col},${a*.5})`); g.addColorStop(1, `rgba(${col},0)`);
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x,y,size*.5,0,TAU); ctx.fill();
+  // four-point star with black outline (normal blending)
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = Math.min(1, a*1.3);
+  const v = size, h = size*.55, t = size*.06;
+  ctx.beginPath();
+  ctx.moveTo(x, y-v); ctx.quadraticCurveTo(x+t, y-t, x+h, y);
+  ctx.quadraticCurveTo(x+t, y+t, x, y+v); ctx.quadraticCurveTo(x-t, y+t, x-h, y);
+  ctx.quadraticCurveTo(x-t, y-t, x, y-v); ctx.closePath();
+  ctx.lineJoin = 'round'; ctx.lineWidth = 3*dpr; ctx.strokeStyle = '#000'; ctx.stroke();
+  ctx.fillStyle = `rgb(${col})`; ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'lighter';
+}
+
+function emit(n, x0, x1, y0, y1, pw, up){
+  for(let i=0;i<n;i++){
+    embers.push({
+      x: rnd(x0,x1), y: rnd(y0,y1),
+      vx: rnd(-1,1)*pw*2.6, vy: -rnd(.1,1)*pw*up*2.8 - rnd(0,pw*.8),
+      life: 0, max: rnd(.25,.7), size: rnd(2,5)*dpr,
+      col: theme.spark[(Math.random()*theme.spark.length)|0]
+    });
+  }
+}
+
+let t0 = performance.now(), last = t0, cycle = 0, burstDone = false, emitAcc = 0;
+cv.addEventListener('click', ()=>{ t0 = performance.now(); cycle = 0; burstDone = false; embers.length = 0; applyTheme(0); });
+
+function frame(ms){
+  const dt = clamp((ms-last)/1000, 0, .05); last = ms;
+  const el = Math.max(0, (ms-t0)/1000);
+  const c = Math.floor(el/T_LOOP), lt = el % T_LOOP;
+  if(c !== cycle){ cycle = c; burstDone = false; applyTheme(c); }
+
+  // lifecycle values: A alpha, Wd width, Hh height, G ground glow, P impact pulse
+  let A=0, Wd=0, Hh=0, G=0, P=0, cp=0, fp=0;
+  if(lt < T_CHARGE){ cp = lt/T_CHARGE; G = .55*easeInOut(cp); }
+  else if(lt < T_RISE){
+    const rp = (lt-T_CHARGE)/(T_RISE-T_CHARGE);
+    Hh = easeOut(rp); Wd = .25+.75*easeOut(rp); A = clamp(rp*3); G = 1; P = 1-rp; cp = 1;
+  } else if(lt < T_HOLD){ Hh = 1; Wd = 1; A = 1; G = 1; cp = 1; }
+  else if(lt < T_FADE){
+    fp = (lt-T_HOLD)/(T_FADE-T_HOLD);
+    Hh = 1 - .45*fp*fp; Wd = 1 - .93*easeInOut(fp); A = Math.pow(1-fp,1.4); G = 1 - Math.pow(fp,.8); cp = 1;
+  }
+
+  const cx = W/2, base = H*.92, topFull = -H*.05, pw = Math.min(W*.2, H*.16);
+  const top = base - Hh*(base-topFull);
+  const t = ms/1000;
+
+  // impact burst when the pillar fires
+  if(lt >= T_CHARGE && !burstDone){ burstDone = true; emit(50, cx-pw*.4, cx+pw*.4, top, base, pw, 1.2); }
+  // embers shed while dissipating
+  if(fp > 0){
+    emitAcc += dt*(400*Math.sin(fp*Math.PI)+60);
+    const n = emitAcc|0; emitAcc -= n;
+    if(n) emit(n, cx-pw*.6*Wd-pw*.1, cx+pw*.6*Wd+pw*.1, top, base, pw, .8);
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#141822'; ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation = 'lighter';
+
+  if(Hh > .01){
+    // haze
+    let g = ctx.createLinearGradient(cx-pw*1.6*Wd,0,cx+pw*1.6*Wd,0);
+    g.addColorStop(0,`rgba(${theme.haze},0)`); g.addColorStop(.5,`rgba(${theme.haze},${.16*A})`); g.addColorStop(1,`rgba(${theme.haze},0)`);
+    ctx.fillStyle = g; ctx.fillRect(cx-pw*1.6*Wd, top, pw*3.2*Wd, base-top);
+
+    // colored streaks
+    for(const b of beams){
+      const flick = .55 + .45*Math.sin(t*b.sp + b.ph);
+      const col = theme.beam[b.ci % theme.beam.length];
+      const bx = cx + b.x*pw*Wd, bw = Math.max(b.w*pw*Wd, dpr);
+      const gg = ctx.createLinearGradient(0,top,0,base);
+      gg.addColorStop(0,`rgba(${col},0)`); gg.addColorStop(.25,`rgba(${col},${.3*flick*A})`);
+      gg.addColorStop(.85,`rgba(${col},${.42*flick*A})`); gg.addColorStop(1,`rgba(${col},0)`);
+      ctx.fillStyle = gg; ctx.fillRect(bx-bw/2, top, bw, base-top);
+    }
+
+    // white core
+    const cw = pw*.5*Wd, pulse = .9 + .1*Math.sin(t*3);
+    g = ctx.createLinearGradient(cx-cw,0,cx+cw,0);
+    g.addColorStop(0,'rgba(255,255,255,0)'); g.addColorStop(.5,`rgba(255,255,255,${.95*pulse*A})`); g.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(cx-cw, top, cw*2, base-top);
+
+    // spiral ribbons (they climb, then unwind as it fades)
+    for(let k=0;k<3;k++){
+      const off = k*TAU/3 + t*(3 + fp*6);
+      ctx.lineCap = 'round';
+      const f = v => {
+        const yy = base - v*(base-topFull)*.92*Hh;
+        const ang = off + v*TAU*3.2;
+        return [cx + Math.cos(ang)*pw*Wd*(.9+.35*v), yy, Math.sin(ang)];
+      };
+      for(let seg=0; seg<80; seg++){
+        const u = seg/80, a = f(u), b = f((seg+1)/80);
+        if(a[2] < 0 && b[2] < 0) continue;
+        const env = Math.sin(u*Math.PI);
+        ctx.strokeStyle = `rgba(${theme.rib},${.65*env*Math.max(0,a[2])*A})`;
+        ctx.lineWidth = (1+4*env)*dpr;
+        ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+      }
+    }
+
+    // shards
+    for(const s of shards){
+      s.y -= s.vy*dt; s.rot += s.vr*dt; if(s.y < -.05){ s.y = 1; s.x = rnd(-1.6,1.6); }
+      const x = cx + s.x*pw*1.6*(1+fp*1.2), y = topFull + s.y*(base-topFull), z = pw*.07*s.r;
+      if(y < top) continue;
+      ctx.save(); ctx.translate(x,y); ctx.rotate(s.rot); ctx.fillStyle = `rgba(${theme.ring},${.7*A})`;
+      ctx.beginPath(); ctx.moveTo(0,-z*1.6); ctx.lineTo(z*.6,0); ctx.lineTo(0,z*1.6); ctx.lineTo(-z*.6,0); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    // sparkles
+    for(const s of sparkles){
+      s.y -= s.vy*dt*5; if(s.y < -.05){ s.y = 1; s.x = rnd(-1.5,1.5); }
+      const y = topFull + s.y*(base-topFull);
+      if(y < top) continue;
+      const x = cx + s.x*pw*1.4*(1+fp*1.2);
+      const tw = .5 + .5*Math.sin(t*s.tw + s.ph);
+      star(x, y, pw*.42*s.s*(.6+.4*tw), theme.spark[s.ci % theme.spark.length], (.45+.55*tw)*A);
+    }
+  }
+
+  // embers
+  for(let i=embers.length-1;i>=0;i--){
+    const e = embers[i]; e.life += dt;
+    if(e.life > e.max){ embers.splice(i,1); continue; }
+    e.x += e.vx*dt; e.y += e.vy*dt; e.vx *= (1-dt*.8); e.vy *= (1-dt*.6);
+    const a = 1 - e.life/e.max, r = e.size*(.4+.6*a);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = Math.min(1, a*2);
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(e.x,e.y,r+2.5*dpr,0,TAU); ctx.fill();
+    ctx.fillStyle = `rgb(${e.col})`;
+    ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

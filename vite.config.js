@@ -49,4 +49,14 @@ function gaAssets() {
 
 export default defineConfig({
   plugins: [noStoreMedia(), gaAssets()],
+  server: {
+    host: 'localhost',
+    port: 5173,
+    strictPort: true,
+    hmr: {
+      host: 'localhost',
+      port: 5173,
+      protocol: 'ws',
+    },
+  },
 });

@@ -153,9 +153,9 @@ async function situScores(p1patch, p2patch, needFacing = true) {
     await page.evaluate(([a, b]) => { window.__ssTest.place(1, a); window.__ssTest.place(2, b); }, [p1patch, p2patch]);
     await sleep(90);
     const r = await page.evaluate(() => {
-      const s = window.__ssTest.state();
-      return { scores: window.__ssTest.aiScores(1), f1: s.fighters[0], f2: s.fighters[1] };
-    });
+    const s = window.__ssTest.state();
+    return { scores: window.__ssTest.aiScores(1, 40), f1: s.fighters[0], f2: s.fighters[1] };
+  });
     if (!needFacing) return { ...r, dx: r.f2.x - r.f1.x };
     const dx = r.f2.x - r.f1.x;
     const facing = Math.abs(dx) < 8 || ((dx >= 0) === r.f1.facingRight);
@@ -189,7 +189,7 @@ const byKey = (list) => Object.fromEntries((list || []).map((e) => [e.key, e]));
     await sleep(90);
     const r = await page.evaluate(() => {
       const s = window.__ssTest.state();
-      return { scores: window.__ssTest.aiScores(2), f1: s.fighters[0], f2: s.fighters[1] };
+      return { scores: window.__ssTest.aiScores(2, 40), f1: s.fighters[0], f2: s.fighters[1] };
     });
     const dx = r.f1.x - r.f2.x;
     if (Math.abs(dx) < 8 || ((dx >= 0) === r.f2.facingRight)) got = r;

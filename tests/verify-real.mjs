@@ -56,11 +56,21 @@ const spawn1 = s.fighters[0], spawn2 = s.fighters[1];
 ok(Math.abs(spawn1.x - 420) < 40 && Math.abs(spawn2.x - 780) < 40, `fighters spawn apart (P1 x=${spawn1.x.toFixed(0)}, P2 x=${spawn2.x.toFixed(0)})`);
 
 console.log('== real walk-up combat: P1 walks right until in range and jabs ==');
-// Walk right for ~2.5s (run speed ~172 px/s from 420 -> ~850), then jab.
+// Event-driven walk: hold right until P1 is in jab range of P2 (~100px gap)
+// or a timeout fires. (Wall-clock holds are brittle: run speed is roster
+// data and SwiftShader paces frames, so a fixed sleep under/overshoots.)
 await page.keyboard.down('KeyD');
-await sleep(1600);
-await page.keyboard.up('KeyD');
 let sMid = await state();
+{
+  const t0 = Date.now();
+  while (Date.now() - t0 < 10000) {
+    await sleep(100);
+    sMid = await state();
+    if (sMid.fighters[0].x > sMid.fighters[1].x - 100) break;
+  }
+}
+await page.keyboard.up('KeyD');
+sMid = await state();
 ok(sMid.fighters[0].x > spawn1.x + 120, `P1 walked right (${spawn1.x.toFixed(0)} -> ${sMid.fighters[0].x.toFixed(0)})`);
 // P2 is idle-ish (may walk? no, P2 is human but no input in headless). P2 stays.
 await page.keyboard.press('KeyJ');
@@ -88,6 +98,10 @@ console.log('== hitstun prevents movement / jump / attack ==');
   await sleep(150);
   await page.keyboard.up('ArrowLeft');
   await page.keyboard.up('KeyA');
+  // Space (P1 jump) MUST be released: leaving it held leaks into every later
+  // section — most visibly the aerial check, where jump+heavy is the
+  // up-special (a ~1000px/s free-fall launch) instead of a forward aerial.
+  await page.keyboard.up('Space');
   await page.keyboard.press('Numpad1'); // P2 attack
   await page.keyboard.press('Numpad8'); // P2 jump
   await sleep(60);
@@ -150,46 +164,65 @@ console.log('== repeated attacks: no runaway physics / resets ==');
   ok(maxY - minY < 1600, `no runaway vertical physics (y span ${(maxY - minY).toFixed(0)}px)`);
 }
 
-console.log('== down-air real-aerial hit-confirm ==');
+console.log('== aerial hit-confirm (unified aerials) ==');
+// NOTE: the legacy directional dair was deliberately removed from the game
+// (verify-combat.mjs pins: no aerialL/R/U/D keys, no dair anims). DOWN+HEAVY
+// in the air now resolves to the unified aerialHeavy, which carries no
+// hit-confirm lock by design - so there is no dair lock left to verify here.
+// Covered instead: a real airborne DOWN+HEAVY swing fires and can connect.
 {
-  // Make sure P1 is fully out of any attack from the previous section before
-  // re-placing, so the fresh aerial input is actually accepted.
   for (let i = 0; i < 60; i++) {
     const st = await state();
     if (!st.fighters[0].attack && !st.fighters[1].attack) break;
     await sleep(50);
   }
-  // Real aerial flow: P1 airborne directly above a GROUNDED P2 (same x). P1 falls
-  // onto the target; a real down-air input (hold DOWN, then press HEAVY a few
-  // frames later, keep holding) connects as it descends. Key events are dispatched
-  // through the page's own keydown pipeline (window.dispatchEvent) so delivery
-  // order is deterministic (headless CDP key delivery races otherwise). Retried a
-  // few times to absorb rAF timing, like a real player mashing would.
   const keyEvt = (type, code) => page.evaluate(([t, c]) => {
     window.dispatchEvent(new KeyboardEvent(t, { code: c, key: c.replace('Key', '').toLowerCase(), bubbles: true }));
   }, [type, code]);
-  let locked = null, launchedUp = null, sawAttack = null;
-  for (let attempt = 0; attempt < 4 && !launchedUp; attempt++) {
-    await place(2, { x: 600, y: 826.8, grounded: true, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false });
-    await place(1, { x: 600, y: 760, grounded: false, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true });
-    await keyEvt('keydown', 'KeyS'); // DOWN held first...
-    await sleep(60);
-    await keyEvt('keydown', 'KeyK'); // ...then HEAVY pressed mid-hold -> dair
+  let sawAttack = null, connected = null;
+  for (let attempt = 0; attempt < 4 && !connected; attempt++) {
+    // Wait until P1 is truly free: no live attack AND the shared attack
+    // cooldown expired (it decays in sim time, which runs slow headless).
+    // Also clear any stale swing the previous attempt may have left behind:
+    // place() does not cancel attacks, so wait for quiescence first.
+    for (let i = 0; i < 120; i++) {
+      const st = await state();
+      if (!st.fighters[0].attack && !(st.fighters[0].attackCd > 0)) break;
+      await sleep(100);
+    }
+    // Place BOTH fighters AND dispatch the aerial input in a SINGLE
+    // round-trip. Two separate awaits let several frames pass between the
+    // placement and the key press; P1 is only ~7px off the ground, so it lands
+    // in that gap and the heavy resolves to a GROUNDED smash instead of the
+    // aerial — the swing still fires, so the old form saw an attack but never
+    // a connect. One evaluate removes the race: the input is seen on the very
+    // next frame, while P1 is still airborne. P1 sits just above P2's center
+    // with a slight upward drift so the forward aerial box overlaps P2 from
+    // its first active frame.
+    await page.evaluate(() => {
+      window.__ssTest.place(2, { x: 650, y: 826.8, grounded: true, vx: 0, vy: 0, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: false });
+      window.__ssTest.place(1, { x: 620, y: 812, grounded: false, vx: 0, vy: -40, percent: 0, hitstun: 0, invulnTimer: 0, facingRight: true });
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyK', key: 'k', bubbles: true }));
+    });
     await sleep(40);
     await keyEvt('keyup', 'KeyK');
-    await keyEvt('keyup', 'KeyS');
-    for (let i = 0; i < 80 && !launchedUp; i++) {
+    // Watch until the swing resolves: connect, or the attack fully finishes.
+    // Wall-clock bounds must cover slow sim (38 attack frames at any pace).
+    for (let i = 0; i < 200 && !connected; i++) {
       await sleep(25);
       const st = await state();
-      const p1 = st.fighters[0], p2 = st.fighters[1];
-      if (p1.attack && !sawAttack) sawAttack = p1.attack;
-      if (p1.locked && p2.locked && !locked) locked = { p1, p2 };
-      if (p2.vy < -50 && p2.hitstun > 0) launchedUp = p2;
+      if (st.fighters[0].attack && !sawAttack) sawAttack = st.fighters[0].attack;
+      if (st.fighters[1].percent > 0) connected = st.fighters[1];
+      if (sawAttack && !st.fighters[0].attack && i > 40) break;
     }
-    await sleep(300); // let the scene settle before a retry
+    {
+      const st = await state();
+      console.log(`   [dbg attempt end: p1(x=${st.fighters[0].x.toFixed(0)},y=${st.fighters[0].y.toFixed(0)},st=${st.fighters[0].attack},cd=${st.fighters[0].attackCd}) p2(x=${st.fighters[1].x.toFixed(0)},y=${st.fighters[1].y.toFixed(0)},pct=${st.fighters[1].percent},hs=${st.fighters[1].hitstun.toFixed(2)},sh=${st.fighters[1].shielding},inv=${st.fighters[1].invulnTimer})`);
+    }
+    await sleep(300);
   }
-  ok(!!locked, `dair hit-confirm locks BOTH fighters on a successful hit (attack=${sawAttack}, real aerial setup)`);
-  ok(!!launchedUp, `dair launches the target upward with real velocity (attack=${sawAttack}, vy=${launchedUp?launchedUp.vy.toFixed(1):'none'})`);
+  ok(!!sawAttack, `airborne DOWN+HEAVY fires an aerial (attack=${sawAttack})`);
+  ok(!!connected, 'aerial connects in a real airborne setup');
 }
 
 console.log('== M returns to the menu from free play ==');

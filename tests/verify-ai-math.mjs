@@ -1,7 +1,7 @@
 // verify-ai-math.mjs — deterministic unit tests for the AI reach model,
 // trajectory prediction and connect-chance estimator (pure functions).
 import { attackReach, predictOppCenter, connectChance, facingOppNow } from '../src/ai/ai.js';
-import { attacksFor } from '../src/fighter/combat.js';
+import { attacksFor } from '../src/combat.js';
 
 let passes = 0, failures = 0;
 function ok(cond, msg) {
@@ -23,7 +23,8 @@ ok(jabC.kind === 'melee' && jabC.fwd === 72, `cowboy jab fwd=72 (got ${jabC.fwd}
 const sweepN = attackReach('dtilt', attacksFor(N()).dtilt, N());
 ok(sweepN.kind === 'melee' && sweepN.fwd === 42 + 27.5, `ninja sweep fwd=69.5 (got ${sweepN.fwd})`);
 const shadN = attackReach('dsmash', attacksFor(N()).dsmash, N());
-ok(shadN.kind === 'dash' && shadN.fwd === 55 + 35 + 120, `shadow strike lunges 210 (got ${shadN.fwd})`);
+// Reach = ox + w/2 + dashDistance from the CURRENT table (0 + 96/2 + 192).
+ok(shadN.kind === 'dash' && shadN.fwd === 0 + 48 + 192, `shadow strike lunges 240 (got ${shadN.fwd})`);
 const shuN = attackReach('fsmash', attacksFor(N()).fsmash, N());
 ok(shuN.kind === 'projectile' && shuN.fwd === 450, 'shuriken is long-range projectile');
 console.log('   (cowboy Deadeye/horse/rifle resolve via anim combat at runtime — covered in live tests)');

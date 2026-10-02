@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Toon Impact Effect - Smash Bros Style</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #111;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: crosshair;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas {
+            background: #1a1a2e;
+            border: 4px solid #333;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            color: #aaa;
+            font-size: 16px;
+            letter-spacing: 0.5px;
+            user-select: none;
+            pointer-events-none;
+        }
+        .instructions span {
+            color: #ffcc00;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="canvas" width="900" height="600"></canvas>
+    <div class="instructions">Click anywhere on the canvas to trigger a <span>toony impact effect</span>!</div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Array to store impact particles and shockwaves
+        let particles = [];
+        let impacts = [];
+
+        class ImpactEffect {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.shockwaveRadius = 10;
+                this.shockwaveMaxRadius = 90 + Math.random() * 30;
+                this.shockwaveAlpha = 1.0;
+                this.starBurstLife = 1.0;
+
+                // Spawn smash-bros style individual shrinking circles with outlines
+                const particleCount = 22 + Math.floor(Math.random() * 8);
+                for (let i = 0; i < particleCount; i++) {
+                    const angle = (Math.random() * Math.PI * 2);
+                    const speed = 4 + Math.random() * 9;
+                    particles.push({
+                        x: this.x,
+                        y: this.y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        radius: 14 + Math.random() * 12,
+                        shrinkSpeed: (0.4 + Math.random() * 0.4),
+                        // Grey to bright accent tones matching smash toon style
+                        color: Math.random() > 0.3 ? '#b0b0b0' : (Math.random() > 0.5 ? '#e0e0e0' : '#ffcc00')
+                    });
+                }
+            }
+
+            update() {
+                this.shockwaveRadius += (this.shockwaveMaxRadius - this.shockwaveRadius) * 0.2;
+                this.shockwaveAlpha -= 0.05;
+                this.starBurstLife -= 0.04;
+            }
+
+            draw() {
+                // Draw comic impact shockwave ring
+                if (this.shockwaveAlpha > 0) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.shockwaveRadius, 0, Math.PI * 2);
+                    ctx.lineWidth = 6;
+                    ctx.strokeStyle = `rgba(255, 204, 0, ${Math.max(0, this.shockwaveAlpha)})`;
+                    ctx.stroke();
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = `rgba(17, 17, 17, ${Math.max(0, this.shockwaveAlpha)})`;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                // Draw central cartoon impact star burst lines
+                if (this.starBurstLife > 0) {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.strokeStyle = '#111111';
+                    ctx.lineWidth = 4;
+                    ctx.fillStyle = '#ffffff';
+                    
+                    const spikes = 8;
+                    ctx.beginPath();
+                    for (let i = 0; i < spikes * 2; i++) {
+                        const r = (i % 2 === 0) ? (25 * this.starBurstLife) : (10 * this.starBurstLife);
+                        const a = (i * Math.PI) / spikes;
+                        const px = Math.cos(a) * r;
+                        const py = Math.sin(a) * r;
+                        if (i === 0) ctx.moveTo(px, py);
+                        else ctx.lineTo(px, py);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }
+
+        // Mouse/Touch click handlers
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            impacts.push(new ImpactEffect(clickX, clickY));
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const clickX = touch.clientX - rect.left;
+            const clickY = touch.clientY - rect.top;
+            impacts.push(new ImpactEffect(clickX, clickY));
+            e.preventDefault();
+        });
+
+        // Main Animation Loop
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw grid background lines
+            ctx.strokeStyle = '#222244';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < canvas.width; i += 40) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
+            }
+
+            // Update and draw impacts
+            for (let i = impacts.length - 1; i >= 0; i--) {
+                impacts[i].update();
+                impacts[i].draw();
+                if (impacts[i].shockwaveAlpha <= 0 && impacts[i].starBurstLife <= 0) {
+                    impacts.splice(i, 1);
+                }
+            }
+
+            // Update and draw individual toony shrinking particles with black outlines
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vx *= 0.92; // friction deceleration
+                p.vy *= 0.92;
+                p.radius -= p.shrinkSpeed;
+
+                if (p.radius <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fillStyle = p.color;
+                ctx.fill();
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#111111'; // Crisp cartoon outline
+                ctx.stroke();
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

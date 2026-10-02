@@ -1,4 +1,16 @@
-﻿// Game.js â€” movement arena orchestrator + simplified terminal start menu.
+import { AIController, AI_DIFFICULTIES, configForDifficulty, createTrainer, evaluateModels, loadTrainedModel, listTrainedModels, listModels, getModel, getActiveModel, activateModel, renameModel, duplicateModel, deleteModel, exportModel, importModel, attachEval, listRunHistory, getRun, clearRunHistory, loadCheckpoint, computeFitnessBreakdown } from './ai.js';
+import { allWeapons, getWeapon, setAnimationLoader, updateAnimator, attachAnimator, getAnimation, setAnimLibChangeListener } from './anim.js';
+import { SFX } from './assets.js';
+import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resolveFighterSkin, drawCombatDebug, resetCombat, removeAttackerHitboxes, clearHitLocks, clearDeadeye, clearBoxerState, __debugHitboxes, startAttackForKey, resolveAttackDef, setCombatStage, ALL_FIGHTERS, setCustomHitboxes, clearCustomHitboxes } from './combat.js';
+import { openEditor, closeEditor, updateEditor, renderEditor, setEditorCloseHandler, openHitboxCustomizer, closeHitboxCustomizer, updateHitboxCustomizer, renderHitboxCustomizer, setHitboxCustomizerCloseHandler, setCustomizerMove, setWorkingBoxValue, saveCustomizer, resetCustomizerMove, getWorkingBoxes } from './editors.js';
+import { drawFighterVfx, setVfxViewBounds, warmEffectSprites, stepTimeDilation, timeDilationState, peekTimeDilation, resetTimeDilation, drawTimeDilationPost, updateDamageIndicators, drawDamageIndicators, resetDamageIndicators, updateWorldFx, drawWorldFx, resetWorldFx, setWorldFxViewBounds, setFxQuality, setParticleDetail, setPostDetail, setWorldFxBatch, setDamageTextCache, worldFxState } from './fx.js';
+import { initInput, flushInput, isJustPressed, createFighter, createDefaultStage, drawStage, updatePlatforms, isInBlastZone, onLoopQualityChange, setDestructibleViewBounds, clearDestructibleViewBounds } from './physics.js';
+import { updateCamera, applyCameraTransform, resetCamera, snapCameraToFit, updateCameraZoom, updateMatchZoom, getCameraState, getCameraStateInto, VIEW_W, VIEW_H, syncCanvasBacking, backingScaleFor, setRenderScale, getSkinImage, drawFighter, drawAbilityFx, drawHorse, drawBoxerRollUnder, drawHeldLayer, holdCoversSide, handConfig, resolveHandColor, setViewBounds, setEffectBatch, warmFighterSprites, getRig, saveRig, clearRig, resolveHeld, resolveHoldSlot, orbitDur, orbitSnap, orbitHandPose, orbitFrontSide, orbitTarget, updateCinematic, drawCinematicWorld, cinematicTint, resetCinematic, notifyCinematicKO, ACCESSORIES, accessoryName, loadAccessoryFor, saveAccessoryFor, cloneAccessory, drawAccessory, tickSkinImageRetries, HAND_GEAR, handGearName, loadHandGearFor, saveHandGearFor, saveHandGearSetFor, defaultHandGear, defaultGearIdFor, drawHandGear } from './render.js';
+import { openSandboxEditor, closeSandboxEditor, updateSandboxEditor, renderSandboxEditor, isSandboxEditorOpen, getSandboxDocument, setSandboxArenaSize, startSandboxSession, stopSandboxSession, updateSandboxSession, renderSandboxSession, isSandboxPlaying, toggleSandboxPause, isSandboxPaused, setSandboxTimeScale, getSandboxTimeScale, toggleSandboxDebug, getSandboxRoster, getSandboxStage, getSandboxSessionCount } from './sandbox.js';
+
+
+// ── merged from Game.js ──
+// Game.js â€” movement arena orchestrator + simplified terminal start menu.
 // Two human fighters share the arena, move/jump/dash/dodge freely, and fight
 // with the data-driven attack system in combat.js (light=J, heavy=K). Damage
 // is a percent meter â€” no stocks, no stocks, soft blast-zone respawn only.
@@ -6,125 +18,6 @@
 // The terminal overlay in index.html handles selection: pick a fighter, fit the
 // skin to the circle (SKIN SIZE), wear accessories, then START FREE PLAY.
 
-import { initInput, flushInput, isJustPressed } from './input/Input.js';
-import {
-  createFighter,
-} from './fighter/Fighter.js';
-import {
-  createDefaultStage,
-  drawStage,
-  updatePlatforms,
-  isInBlastZone,
-} from './stage/Stage.js';
-import {
-  stepRosterMovement,
-  stepRosterCombat,
-  stepRosterFinish,
-  softResetFighter,
-  inputForSlot,
-  DUMMY_INPUT,
-  resolveFighterSkin,
-} from './fighter/session.js';
-import { updateCamera, applyCameraTransform, resetCamera, snapCameraToFit, updateCameraZoom, updateMatchZoom, getCameraState } from './core/camera.js';
-import { SFX } from './core/sfx.js';
-import {
-  drawCombatDebug,
-  resetCombat,
-  removeAttackerHitboxes,
-  clearHitLocks,
-  clearDeadeye,
-  clearBoxerState,
-  __debugHitboxes,
-  startAttackForKey,
-  resolveAttackDef,
-  setCombatStage,
-} from './fighter/combat.js';
-import { getSkinImage } from './render/Accessories.js';
-import { drawFighter, drawAbilityFx, drawHorse, handConfig, resolveHandColor, setViewBounds } from './render/Effects.js';
-import { drawFighterVfx, setVfxViewBounds } from './effects/vfx.js';
-import {
-  stepTimeDilation,
-  timeDilationState,
-  peekTimeDilation,
-  resetTimeDilation,
-  drawTimeDilationPost,
-  updateDamageIndicators,
-  drawDamageIndicators,
-  resetDamageIndicators,
-  updateWorldFx,
-  drawWorldFx,
-  resetWorldFx,
-  setWorldFxViewBounds,
-  setFxQuality,
-  worldFxState,
-} from './render/worldFx.js';
-import {
-  ACCESSORIES,
-  accessoryName,
-  loadAccessoryFor,
-  saveAccessoryFor,
-  cloneAccessory,
-  drawAccessory,
-} from './render/Accessories.js';
-import {
-  HAND_GEAR,
-  handGearName,
-  loadHandGearFor,
-  saveHandGearFor,
-  saveHandGearSetFor,
-  defaultHandGear,
-  drawHandGear,
-} from './render/HandGear.js';
-import { ALL_FIGHTERS } from './content/Menu.js';
-import {
-  openEditor,
-  closeEditor,
-  updateEditor,
-  renderEditor,
-  setEditorCloseHandler,
-} from './anim/editor.js';
-import {
-  openHitboxCustomizer,
-  closeHitboxCustomizer,
-  updateHitboxCustomizer,
-  renderHitboxCustomizer,
-  setHitboxCustomizerCloseHandler,
-  setCustomizerMove,
-  setWorkingBoxValue,
-  saveCustomizer,
-  resetCustomizerMove,
-  getWorkingBoxes,
-} from './anim/hitboxCustomizer.js';
-import { setAnimationLoader, updateAnimator, attachAnimator } from './anim/animator.js';
-import { setCustomHitboxes, clearCustomHitboxes } from './fighter/hitboxData.js';
-import { getAnimation, setAnimLibChangeListener } from './anim/library.js';
-import { AIController, AI_DIFFICULTIES, configForDifficulty } from './ai/ai.js';
-import { createTrainer } from './ai/ai-training.js';
-import { loadTrainedModel, listTrainedModels } from './ai/ai-model-storage.js';
-import {
-  openSandboxEditor,
-  closeSandboxEditor,
-  updateSandboxEditor,
-  renderSandboxEditor,
-  isSandboxEditorOpen,
-  getSandboxDocument,
-  setSandboxArenaSize,
-} from './stage/sandbox/SandboxEditor.js';
-import {
-  startSandboxSession,
-  stopSandboxSession,
-  updateSandboxSession,
-  renderSandboxSession,
-  isSandboxPlaying,
-  toggleSandboxPause,
-  isSandboxPaused,
-  setSandboxTimeScale,
-  getSandboxTimeScale,
-  toggleSandboxDebug,
-  getSandboxRoster,
-  getSandboxStage,
-  getSandboxSessionCount,
-} from './stage/sandbox/SandboxSession.js';
 
 const MONO = 'Consolas, "Courier New", monospace';
 
@@ -140,11 +33,21 @@ const _fillHealthP2 = '#ff4a4a';
 // Game state
 let canvas = null;
 let ctx = null;
-let arena = { width: 1200, height: 1100 };
+// Logical viewport: always exactly 1080 × 1080 (see render.js).
+// Sharpness comes from the DPR-scaled backing store, not from a larger
+// logical size — world coordinates, physics, hitboxes and character sizes
+// are unchanged, only the camera framing adapts to the square format.
+let arena = { width: VIEW_W, height: VIEW_H };
 let stage = null;
 let fighter1 = null;
 let fighter2 = null;
 let isPaused = false;
+// In-match damage panel: always visible during play (screen space, outside
+// the camera viewport). T focuses it for editing and freezes the sim like a
+// pause; type digits to set an exact percent, or nudge with arrows.
+let tweakEditing = false;
+let tweakCursor = 0;
+let tweakDraft = '';
 let currentGameState = 'menu'; // 'menu' | 'animator' | 'hitboxes' | 'sandbox' | 'sandboxPlay' | 'ready' | 'playing'
 let gameMode = 'playerVsPlayer'; // 'playerVsPlayer', 'playerVsDummy', 'playerVsAI', 'AIvsAI'
 let aiControllers = [null, null]; // AI controllers for fighter 1 and 2
@@ -198,9 +101,15 @@ let mapSettings = (() => {
       // PERFORMANCE trims harder. Gameplay, damage and timing are untouched —
       // only the number of spawned ability particles changes.
       quality: ['high', 'balanced', 'performance'].includes(saved.quality) ? saved.quality : 'high',
+      // Internal rendering resolution (1080p default = full 1080-line backing).
+      // PERFORMANCE follows the adaptive tier (smoothness first); 720p/1080p/
+      // 1440p pin the backing to that line count (square viewport, so 1440p =
+      // 1440×1440 backing — the 1440p-display equivalent, never stretched).
+      // Render-only like quality above: world units and physics never see it.
+      resolution: ['performance', '720p', '1080p', '1440p'].includes(saved.resolution) ? saved.resolution : '1080p',
     };
   } catch (_) {
-    return { backgroundColor: DEFAULT_BACKGROUND_COLOR, platformColor: null, stopwatch: true, showStocks: true, quality: 'high' };
+    return { backgroundColor: DEFAULT_BACKGROUND_COLOR, platformColor: null, stopwatch: true, showStocks: true, quality: 'high', resolution: '1080p' };
   }
 })();
 function persistMapSettings() {
@@ -216,10 +125,47 @@ function rebuildBackgroundCanvas() {
   // No grid lines - clean background
 }
 
+// Pre-build every sprite the renderer can bake on first use, so the cost never
+// lands as a mid-fight hitch. Each of these caches is a one-shot rasterization
+// (a few hundred microseconds each), but "a few hundred microseconds on the
+// frame a player first throws a smoke bomb" is exactly the kind of thing that
+// reads as a stutter. Done once at the ready -> playing transition, where a
+// single dropped frame is invisible.
+let _warmed = false;
+function _warmRenderCaches() {
+  if (_warmed) return;
+  _warmed = true;
+  try {
+    // Stock pill.
+    if (mapSettings.showStocks !== false && canvas) {
+      const s = screenTransform();
+      ctx.font = _fontHudBold;
+      if (_hudLabelW < 0) _hudLabelW = ctx.measureText('P1      P2').width;
+      const total = Math.max(fighter1 ? fighter1.stocks ?? 0 : 0, fighter2 ? fighter2.stocks ?? 0 : 0, matchSettings.stocks);
+      const half = (total * 17) / 2;
+      const pillW = _hudLabelW + half * 2 + 36;
+      _pillKey = null;                       // force the rebuild on the next frame
+      _buildPillSprite(pillW, 26, half, total, VIEW_W / 2, 10,
+        fighter1 ? fighter1.stocks ?? 0 : 0, fighter2 ? fighter2.stocks ?? 0 : 0, 6, 17, s);
+      screenTransform();
+    }
+    // Percent labels across the whole legal range.
+    for (let p = 0; p <= 150; p += 5) _pctSprite(p + '%');
+  } catch (_) {}
+  try { warmEffectSprites(); } catch (_) {}
+  try { warmFighterSprites(); } catch (_) {}
+}
+
 // On-screen FPS counter (always drawn, top-right).
 let _fpsValue = '--';
 let _fpsFrames = 0;
 let _fpsSince = 0;
+// The on-screen counter is the REAL frame cadence (rAF-to-rAF), which is what
+// the player perceives and what the adaptive controller in physics.js now
+// judges. It used to be derived from a JS-cost timer that ignored GPU and
+// compositing entirely, so a game stuttering at 30fps could still report a
+// healthy number while the quality controller refused to step down.
+// Single choke point: every render path ends here.
 function drawFps(ctx, width, height, time) {
   _fpsFrames += 1;
   if (time - _fpsSince >= 500) {
@@ -259,10 +205,100 @@ let _ovCount = 0;
 // changes once per second, so its string + width are cached across frames.
 const _fontHudBold = `bold 13px ${MONO}`;
 const _fontHudStopwatch = `13px ${MONO}`;
+// Backing-store scale for the screen-space HUD passes. The canvas holds
+// VIEW × dpr device pixels, so logical 1080 coordinates reach the screen
+// through a dpr-scaled transform (one logical pixel = dpr device pixels —
+// exact, never resampled). Derived from the backing store itself, so it
+// stays correct if main.js re-fits the canvas for a new window size, monitor
+// or browser zoom. Five separate blocks in render() (plus the cache-warmer)
+// share one refresh per frame instead of reading window.devicePixelRatio live.
+let _backing = 1;
+function screenScale() {
+  const s = canvas ? backingScaleFor(canvas, VIEW_W) : 1;
+  _backing = s;
+  return s;
+}
+// Install the screen-space transform (logical 1080 units). World code draws
+// under this plus the camera; HUD code draws directly under it.
+function screenTransform() {
+  const s = screenScale();
+  try { ctx.setTransform(s, 0, 0, s, 0, 0); } catch (_) {}
+  return s;
+}
 let _hudLabelW = -1;
 let _swText = null;
 let _swFull = '';
 let _swW = 0;
+// Cached stock-pill sprite.
+//
+// This is the single most expensive thing the HUD drew. It was rebuilt from
+// scratch every single frame — a fillRect, TWO fillText calls (text
+// rasterization is one of the most expensive canvas operations there is), and
+// an arc+fill/stroke per pip for both players. Profiling an idle match put it
+// at roughly a third of ALL canvas operations in the frame, for artwork that
+// only changes when a fighter actually loses a stock.
+//
+// It is now rasterized once into an offscreen canvas and blitted, rebuilt only
+// when the stock counts change. One drawImage replaces ~20 ops including two
+// text rasterizations.
+let _pillSprite = null;
+let _pillKey = null;
+let _pillScale = 0; // backing scale the cached sprite was rasterized at
+function _buildPillSprite(pillW, pillH, half, total, cx, y, stocks1, stocks2, pipR, gap, scale) {
+  // Rasterized at the backing-store density (one logical pixel = scale device
+  // pixels) so the blit lands on exact device pixels instead of an upscaled
+  // 1x image. Blitted with explicit logical dw/dh at the call site.
+  const s = (typeof scale === 'number' && scale > 0) ? scale : _backing;
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.ceil(pillW * s));
+  c.height = Math.max(1, Math.ceil(pillH * s));
+  const m = c.getContext('2d');
+  m.scale(s, s);
+  // Sprite-local origin: the pill's top-left. Everything below is expressed
+  // relative to it so the sprite is position independent.
+  const ox = cx - pillW / 2;
+  const oy = y;
+  void oy;
+  m.textAlign = 'center';
+  m.textBaseline = 'top';
+  m.font = _fontHudBold;
+  m.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  m.fillRect(0, 0, pillW, pillH);
+  m.fillStyle = '#4a9eff';
+  m.textAlign = 'right';
+  m.fillText('P1', cx - ox - 14, 6);
+  m.fillStyle = '#ff4a4a';
+  m.textAlign = 'left';
+  m.fillText('P2', cx - ox + 14, 6);
+  _pipsInto(m, stocks1, false, '#4a9eff', total, cx - ox, pillH, pipR, gap);
+  _pipsInto(m, stocks2, true, '#ff4a4a', total, cx - ox, pillH, pipR, gap);
+  _pillSprite = { canvas: c, w: pillW, h: pillH };
+  _pillScale = s;
+}
+
+// Pip pass, already in sprite-local space. The live-frame version below is a
+// one-line blit; only the (rare) rebuild path walks the pips.
+function _pipsInto(ctx, stocks, right, color, total, cx, pillH, pipR, gap) {
+  const py = pillH / 2;
+  ctx.fillStyle = color;
+  for (let i = 0; i < stocks && i < total; i++) {
+    const px = right ? cx + 44 + i * gap : cx - 44 - i * gap;
+    ctx.beginPath();
+    ctx.arc(px, py, pipR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (stocks < total) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 1.5;
+    for (let i = Math.max(0, stocks); i < total; i++) {
+      const px = right ? cx + 44 + i * gap : cx - 44 - i * gap;
+      ctx.beginPath();
+      ctx.arc(px, py, pipR, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
 function _drawPips(ctx, stocks, right, color, total, cx, y, pillH, pipR, gap) {
   const py = y + pillH / 2;
   ctx.fillStyle = color;
@@ -285,9 +321,10 @@ function _drawPips(ctx, stocks, right, color, total, cx, y, pillH, pipR, gap) {
 }
 
 const _viewRect = { x0: -1e9, y0: -1e9, x1: 1e9, y1: 1e9 };
+const _camScratch = { x: 0, y: 0, zoom: 1 };
 function updateViewBounds() {
   try {
-    const cam = getCameraState();
+    const cam = getCameraStateInto(_camScratch);
     const zoom = cam.zoom || 1;
     const w = arena.width / zoom, h = arena.height / zoom;
     // Margin: culling bounds in Effects/worldFx carry their own margins; the
@@ -303,6 +340,7 @@ function updateViewBounds() {
     setViewBounds(_viewRect.x0, _viewRect.y0, _viewRect.x1, _viewRect.y1);
     setWorldFxViewBounds(_viewRect.x0, _viewRect.y0, _viewRect.x1, _viewRect.y1);
     setVfxViewBounds(_viewRect.x0, _viewRect.y0, _viewRect.x1, _viewRect.y1);
+    setDestructibleViewBounds(_viewRect.x0, _viewRect.y0, _viewRect.x1, _viewRect.y1);
   } catch (_) {}
 }
 
@@ -311,6 +349,7 @@ function resetViewBounds() {
     setViewBounds(-1e9, -1e9, 1e9, 1e9);
     setWorldFxViewBounds(-1e9, -1e9, 1e9, 1e9);
     setVfxViewBounds(-1e9, -1e9, 1e9, 1e9);
+    clearDestructibleViewBounds();
   } catch (_) {}
 }
 
@@ -352,6 +391,15 @@ let trainSettings = (() => {
     mutationRate: typeof saved.mutationRate === 'number' ? Math.min(0.2, Math.max(0.005, saved.mutationRate)) : 0.05,
     speed: ['Normal', 'Fast', 'Fastest'].includes(saved.speed) ? saved.speed : 'Fast',
     showSim: saved.showSim !== false,
+    // Training mode: matchup (both evolve) | character (A vs fixed B) |
+    // general (A vs rotating opponents).
+    mode: ['matchup', 'character', 'general'].includes(saved.mode) ? saved.mode : 'matchup',
+    // Opponent type for fixed-opponent training.
+    oppType: ['coevolve', 'trained', 'scripted', 'dummy'].includes(saved.oppType) ? saved.oppType : 'coevolve',
+    // New run vs continuing from the saved model/checkpoint.
+    startMode: saved.startMode === 'continue' ? 'continue' : 'new',
+    scriptedDifficulty: ['Easy', 'Normal', 'Hard', 'Expert'].includes(saved.scriptedDifficulty) ? saved.scriptedDifficulty : 'Normal',
+    evalMatches: [2, 4, 6, 10].includes(saved.evalMatches) ? saved.evalMatches : 4,
   };
 })();
 function persistAIConfig() {
@@ -548,6 +596,7 @@ const TERM_ROWS = [
   { id: 'start',    label: 'START MATCH' },
 ];
 
+
 // Map settings submenu
 const MAP_SETTINGS_ROWS = [
   { id: 'mapBgColor', label: 'BACKGROUND COLOR', type: 'color', value: () => mapSettings.backgroundColor },
@@ -555,12 +604,58 @@ const MAP_SETTINGS_ROWS = [
   { id: 'stopwatch', label: 'STOPWATCH', type: 'toggle', value: () => (mapSettings.stopwatch !== false ? 'ON' : 'OFF') },
   { id: 'showStocks', label: 'STOCK COUNTER', type: 'toggle', value: () => (mapSettings.showStocks !== false ? 'ON' : 'OFF') },
   { id: 'quality', label: 'QUALITY', type: 'quality', value: () => (mapSettings.quality || 'high').toUpperCase() },
+  { id: 'resolution', label: 'RESOLUTION', type: 'resolution', value: () => (mapSettings.resolution || '1080p').toUpperCase() },
   { id: 'mapBack', label: 'BACK', type: 'action' },
 ];
 const QUALITY_SCALES = { high: 1, balanced: 0.6, performance: 0.35 };
 const QUALITY_ORDER = ['high', 'balanced', 'performance'];
+// Fixed internal-resolution scales, relative to the 1080-line logical
+// viewport: 720p = 720-line backing, 1080p = full, 1440p = 1440-line backing
+// (the sharpness a 1440p display resolves — a real resolution lift, not a
+// stretched 1080p image). 'performance' is absent: it means adaptive, handled
+// by the tier path below rather than a pinned value.
+const RESOLUTION_SCALES = { '720p': 720 / 1080, '1080p': 1, '1440p': 1440 / 1080 };
+const RESOLUTION_ORDER = ['performance', '720p', '1080p', '1440p'];
+// Applies the manual Settings ceiling to every render consumer, then lets the
+// adaptive tier (loop sensor -> perf mapper) reduce below it under load.
+// Render-only: physics, damage, timing untouched.
+function _applyPerfTier(info) {
+  try {
+    setFxQuality(info && info.fxScale != null ? info.fxScale : getActiveFxScale());
+    // Backing resolution: a pinned RESOLUTION setting wins exactly (the player
+    // asked for that sharpness), otherwise the adaptive tier drives it as
+    // before. The canvas resize lands via the per-frame store sync in
+    // render() — no realloc here, no new monitoring; this runs only on actual
+    // tier changes (hysteresis + cooldown gated in loop/perf) or settings
+    // edits, never per frame.
+    try {
+      const pinned = RESOLUTION_SCALES[mapSettings.resolution];
+      setRenderScale(pinned != null ? pinned
+        : (info && info.renderScale != null ? info.renderScale : getActiveRenderScale()));
+    } catch (_) {}
+    const m = (info && info.modes) || null;
+    setParticleDetail(m ? m.particleDetail : 0);
+    setPostDetail(m ? m.postDetail : 0);
+    setWorldFxBatch(m ? m.batchParticles : !FLAGS.legacy);
+    setEffectBatch(m ? m.batchTrails : !FLAGS.legacy);
+    setDamageTextCache(m ? m.textCache : !FLAGS.legacy);
+  } catch (_) {}
+}
+let _perfWired = false;
 function applyQuality() {
   try { setFxQuality(QUALITY_SCALES[mapSettings.quality] || 1); } catch (_) {}
+  try { setManualFxScale(QUALITY_SCALES[mapSettings.quality] || 1); } catch (_) {}
+  // Manual quality changes also move the resolution ceiling immediately (the
+  // tier listener only fires on tier changes, not on settings edits).
+  try { setRenderScale(getActiveRenderScale()); } catch (_) {}
+  try {
+    if (!_perfWired) {
+      _perfWired = true;
+      try { onQualityChange(_applyPerfTier); } catch (_) {}
+      try { onLoopQualityChange((lvl) => { try { setTierFromLoop(lvl); } catch (_) {} }); } catch (_) {}
+    }
+    _applyPerfTier(null);
+  } catch (_) {}
 }
 
 // Game mode labels
@@ -588,6 +683,11 @@ let termGearCursor = 0;
 // Which hand the hand-gear editor is currently pointing at. Separate from
 // termAccyCursor because the two editors are separate submenus.
 let termGearHand = 'right';
+// Gear-editor preview state (never saved): which way the minifig faces, and
+// whether hand-anchor/grip guides draw. Toggling facing previews the SAME rig
+// configuration through the facing transform — never a second value set.
+let previewFacingRight = true;
+let gearGuidesOn = true;
 let termMapCursor = 0;
 let previewFighterIdx = 0;
 let previewCanvas = null;
@@ -634,17 +734,65 @@ function drawHealthBar(ctx, fighter, time) {
   ctx.fillStyle = _healthLut[_hbIdx];
   ctx.fillRect(fighter.x - 40, fighter.y - fighter.radius - 20, 80, 8);
 
-  // Text
-  ctx.fillStyle = 'white';
-  ctx.font = _fontHealth;
-  ctx.textAlign = 'center';
-  ctx.fillText(Math.round(fighter.percent) + '%', fighter.x, fighter.y - fighter.radius - 25);
+  // Text. Cached per rounded percent value: fillText is a full text shaping +
+  // rasterization pass, and this ran for both fighters every frame for a
+  // string drawn from a small, repeating set. Sprites are rasterized at the
+  // backing density and blitted at logical size, so they stay sharp on hidpi.
+  const label = Math.round(fighter.percent) + '%';
+  const spr = _pctSprite(label);
+  if (spr) ctx.drawImage(spr.c, fighter.x - spr.w / 2, fighter.y - fighter.radius - 25 - spr.h / 2, spr.w, spr.h);
+  else {
+    ctx.fillStyle = 'white';
+    ctx.font = _fontHealth;
+    ctx.textAlign = 'center';
+    ctx.fillText(label, fighter.x, fighter.y - fighter.radius - 25);
+  }
+}
+
+// Bounded percent-label sprite cache (FIFO eviction at 96 entries). The set of
+// distinct labels actually on screen at once is tiny, so this is effectively a
+// permanent hit rate. Labels draw in WORLD space (above the fighters, under
+// the camera), so they bake at WORLD_TEXT_SS — a 1x bake would be magnified
+// by the live zoom and read as blurry (same rationale as BODY_SS). Blitted at
+// logical size, so layout is unchanged and no rebuild is ever needed on DPR
+// changes.
+const WORLD_TEXT_SS = 4;
+const _pctSprites = new Map();
+function _pctSprite(text) {
+  const s = WORLD_TEXT_SS;
+  let rec = _pctSprites.get(text);
+  if (rec) return rec;
+  try {
+    const m = document.createElement('canvas').getContext('2d');
+    m.font = _fontHealth;
+    const w = Math.ceil(m.measureText(text).width) + 4;
+    const h = 16;
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil(w * s));
+    c.height = Math.max(1, Math.ceil(h * s));
+    const g = c.getContext('2d');
+    g.scale(s, s);
+    g.font = _fontHealth;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillStyle = 'white';
+    g.fillText(text, w / 2, h / 2);
+    rec = { c, w, h };
+  } catch (_) { return null; }
+  if (_pctSprites.size >= 96) _pctSprites.delete(_pctSprites.keys().next().value);
+  _pctSprites.set(text, rec);
+  return rec;
 }
 
 export function initGame(canvasEl) {
   canvas = canvasEl;
   ctx = canvas.getContext('2d');
-  arena = { width: canvas.width, height: canvas.height };
+  // Logical viewport is fixed at 1080 × 1080 regardless of the canvas backing
+  // size (VIEW × DPR) or CSS size (uniform square fit). World coordinates,
+  // physics and character sizes are therefore untouched by the viewport work.
+  try { syncCanvasBacking(canvas); } catch (_) {}
+  screenTransform();
+  arena = { width: VIEW_W, height: VIEW_H };
   stage = createDefaultStage(arena.width, arena.height);
   // Abilities that need to know where the stage is (the Teleport Strike's
   // placement checks) read it from the combat context, so the stage is
@@ -1093,14 +1241,46 @@ function getProbeApi() {
           if (Number.isFinite(patch.mutationRate)) trainSettings.mutationRate = Math.min(0.2, Math.max(0.005, patch.mutationRate));
           if (typeof patch.speed === 'string' && TRAIN_SPEEDS.includes(patch.speed)) trainSettings.speed = patch.speed;
           if (typeof patch.showSim === 'boolean') trainSettings.showSim = patch.showSim;
+          if (typeof patch.mode === 'string' && ['matchup', 'character', 'general'].includes(patch.mode)) trainSettings.mode = patch.mode;
+          if (typeof patch.oppType === 'string' && ['coevolve', 'trained', 'scripted', 'dummy'].includes(patch.oppType)) trainSettings.oppType = patch.oppType;
+          if (typeof patch.startMode === 'string' && ['new', 'continue'].includes(patch.startMode)) trainSettings.startMode = patch.startMode;
+          if (typeof patch.scriptedDifficulty === 'string') trainSettings.scriptedDifficulty = patch.scriptedDifficulty;
+          if (Number.isFinite(patch.evalMatches)) trainSettings.evalMatches = Math.max(1, Math.min(20, patch.evalMatches | 0));
           persistAIConfig();
           try { renderTermMenu(); } catch (_) {}
           return true;
         },
         start: () => startTraining(),
         stop: () => stopTraining(),
+        pause: () => pauseTraining(),
+        resume: () => resumeTraining(),
         running: () => isTraining(),
         progress: () => (activeTrainer ? activeTrainer.snapshot() : trainProgress || trainDoneInfo || null),
+        history: () => { try { return listRunHistory(50); } catch (_) { return []; } },
+        run: (id) => { try { return getRun(id); } catch (_) { return null; } },
+        models: (charId) => { try { return listModels(charId); } catch (_) { return []; } },
+        model: (charId, id) => { try { return getModel(charId, id); } catch (_) { return null; } },
+        activate: (charId, id) => { try { return activateModel(charId, id); } catch (_) { return false; } },
+        rename: (charId, id, name) => { try { return renameModel(charId, id, name); } catch (_) { return false; } },
+        duplicate: (charId, id, name) => { try { return duplicateModel(charId, id, name); } catch (_) { return { ok: false }; } },
+        remove: (charId, id) => { try { return deleteModel(charId, id); } catch (_) { return false; } },
+        exportJson: (charId, id) => { try { return exportModel(charId, id); } catch (_) { return { ok: false }; } },
+        importJson: (json, opts) => { try { return importModel(json, opts || {}); } catch (_) { return { ok: false }; } },
+        checkpoint: (charId) => { try { return loadCheckpoint(charId); } catch (_) { return null; } },
+        evalModel: (charId, id, matches) => {
+          try {
+            const def = ALL_FIGHTERS.find((f) => f.id === charId);
+            const m = def ? getModel(charId, id) : null;
+            if (!def || !m) return { ok: false, error: 'model not found' };
+            const oppDef = ALL_FIGHTERS[(ALL_FIGHTERS.indexOf(def) + 1) % ALL_FIGHTERS.length] || def;
+            return evaluateModels({
+              defA: def, defB: oppDef,
+              genomeA: { weights: m.weights, behavior: m.behavior },
+              oppB: { kind: 'scripted', difficulty: 'Normal', charId: oppDef.id },
+              matches: Math.max(1, Math.min(20, matches | 0 || 4)),
+            });
+          } catch (_) { return { ok: false, error: 'eval failed' }; }
+        },
       };
     },
     setDifficulty(name) {
@@ -1160,11 +1340,11 @@ function getProbeApi() {
         },
       };
     },
-    aiScores(pn) {
+    aiScores(pn, limit) {
       try {
         const c = pn === 1 ? aiControllers[0] : aiControllers[1];
         if (!c || typeof c.debugScores !== 'function') return [];
-        return c.debugScores();
+        return c.debugScores(limit);
       } catch (e) {
         return [];
       }
@@ -1198,12 +1378,76 @@ function getProbeApi() {
   };
 }
 
+// In-match damage panel helpers: P1 = cursor 0, P2 = 1. Percent is the damage
+// meter only (knockback scales off it); editing it can never end a match,
+// which still ends on stocks/blast zones alone.
+function tweakTarget() { return tweakCursor === 0 ? fighter1 : fighter2; }
+function tweakNudge(dir, step) {
+  const f = tweakTarget();
+  if (!f) return;
+  tweakDraft = '';
+  f.percent = Math.min(999, Math.max(0, f.percent + dir * step));
+}
+function tweakTypeDigit(d) {
+  if (tweakDraft.length >= 3) return;
+  tweakDraft += d;
+  const v = parseInt(tweakDraft, 10);
+  if (Number.isFinite(v)) {
+    const f = tweakTarget();
+    if (f) f.percent = Math.min(999, Math.max(0, v));
+  }
+}
+function tweakEraseDigit() {
+  tweakDraft = tweakDraft.slice(0, -1);
+}
+function tweakResetRow() {
+  const f = tweakTarget();
+  if (!f) return;
+  tweakDraft = '';
+  f.percent = 0;
+}
+function closeTweakWindow() {
+  tweakEditing = false;
+  tweakDraft = '';
+  try { flushInput(); } catch (_) {} // drop UI-navigation edges so they never leak into gameplay
+}
+
 // Hitbox overlay toggle: ` (backtick) shows the active hitboxes in the arena.
 // M during free play exits back to the terminal menu (no page reload needed).
 // In the sandbox M leaves the sandbox entirely for the same menu.
 function onPlayKey(e) {
   const inPlay = currentGameState === 'playing' || currentGameState === 'ready';
-  if (e.code === 'Backquote' && (inPlay || currentGameState === 'sandboxPlay')) {
+  // Damage-panel editing first: while focused, gameplay keys drive the panel
+  // (the sim is frozen, so nothing moves) and repeat scrolls values.
+  if (tweakEditing && currentGameState === 'playing') {
+    const k = e.code;
+    if (k === 'ArrowUp' || k === 'KeyW') { e.preventDefault(); tweakCursor = (tweakCursor + 1) % 2; tweakDraft = ''; return; }
+    if (k === 'ArrowDown' || k === 'KeyS') { e.preventDefault(); tweakCursor = (tweakCursor + 1) % 2; tweakDraft = ''; return; }
+    if (k === 'ArrowLeft' || k === 'KeyA' || k === 'ArrowRight' || k === 'KeyD') {
+      e.preventDefault();
+      const dir = (k === 'ArrowLeft' || k === 'KeyA') ? -1 : 1;
+      tweakNudge(dir, e.shiftKey ? 10 : 1);
+      return;
+    }
+    if (k.slice(0, 5) === 'Digit' || k.slice(0, 7) === 'Numpad') {
+      const d = k.slice(0, 5) === 'Digit' ? k.slice(5) : k.slice(7);
+      if (d >= '0' && d <= '9') { e.preventDefault(); tweakTypeDigit(d); return; }
+    }
+    if (k === 'Backspace') { e.preventDefault(); tweakEraseDigit(); return; }
+    if (k === 'Enter' || k === 'NumpadEnter' || k === 'Space') {
+      e.preventDefault();
+      if (tweakDraft === '') tweakResetRow();
+      else { tweakDraft = ''; }
+      return;
+    }
+    if (k === 'Escape' || k === 'KeyT') { e.preventDefault(); closeTweakWindow(); return; }
+    // Anything else (e.g. M) falls through to the normal handling below.
+  }
+  if (e.code === 'KeyT' && currentGameState === 'playing' && fighter1 && fighter2) {
+    e.preventDefault();
+    if (tweakEditing) closeTweakWindow();
+    else { tweakEditing = true; tweakCursor = 0; tweakDraft = ''; }
+  } else if (e.code === 'Backquote' && (inPlay || currentGameState === 'sandboxPlay')) {
     e.preventDefault();
     showHitboxes = !showHitboxes;
   } else if (e.code === 'KeyM') {
@@ -1244,6 +1488,7 @@ function onPlayKey(e) {
 // background, so nothing from the match carries over visually either.
 function returnToMenu() {
   showHitboxes = false;
+  tweakEditing = false; tweakDraft = '';
   matchOver = false;
   matchWinner = null;
   matchOverAge = 0;
@@ -1270,6 +1515,7 @@ function showSelectOverlay() {
   if (selectOverlay) selectOverlay.style.display = 'flex';
   currentGameState = 'menu';
   isPaused = false;
+  tweakEditing = false; tweakDraft = '';
   renderTermMenu();
 }
 
@@ -1368,6 +1614,38 @@ function exitMapSettings() {
   renderTermMenu();
 }
 
+// ── Custom hex colors (map settings) ─────────────────────────────────────
+// Normalize user input to #rrggbb (accepts #rgb, #rrggbb, with/without #).
+// Returns null when the input is not a valid hex color.
+function normalizeHexColor(input) {
+  if (input == null) return null;
+  let s = String(input).trim().toLowerCase();
+  if (s === 'default') return 'DEFAULT';
+  if (s[0] === '#') s = s.slice(1);
+  if (/^[0-9a-f]{3}$/.test(s)) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
+  if (!/^[0-9a-f]{6}$/.test(s)) return null;
+  return '#' + s;
+}
+
+// Apply a validated custom color to a map color row (persist + repaint).
+function applyMapColor(row, value) {
+  if (row.id === 'mapBgColor') {
+    mapSettings.backgroundColor = value;
+    persistMapSettings();
+    rebuildBackgroundCanvas();
+  } else if (row.id === 'mapPlatColor') {
+    mapSettings.platformColor = (value === 'DEFAULT') ? null : value;
+    persistMapSettings();
+    if (stage && stage.platforms) {
+      for (const plat of stage.platforms) {
+        plat._customGradient = null;
+        plat._customColor = null;
+      }
+    }
+  }
+  renderTermMenu();
+}
+
 function cycleMapSetting(row, dir) {
   if (row.id === 'mapBgColor') {
     // Cycle through some preset colors or allow custom input
@@ -1407,6 +1685,16 @@ function cycleMapSetting(row, dir) {
     const order = QUALITY_ORDER;
     const cur = order.indexOf(mapSettings.quality || 'high');
     mapSettings.quality = order[(cur + dir + order.length) % order.length];
+    persistMapSettings();
+    applyQuality();
+  } else if (row.id === 'resolution') {
+    // Internal rendering resolution (1080p default). PERFORMANCE = adaptive
+    // tier scaling (smoothness first); 720p/1080p/1440p pin the backing line
+    // count. Render-only: world units, physics and camera framing never see
+    // it. Applies live — no restart — via the next frame's store sync.
+    const order = RESOLUTION_ORDER;
+    const cur = order.indexOf(mapSettings.resolution || '1080p');
+    mapSettings.resolution = order[(cur + dir + order.length) % order.length];
     persistMapSettings();
     applyQuality();
   }
@@ -1449,6 +1737,49 @@ function renderMapSettings() {
         SFX.menuSelect();
         renderTermMenu();
       });
+      // Inline custom color: native swatch picker + hex text field, so any
+      // hex code can be typed without cycling presets. Events are stopped
+      // from reaching the row (no preset cycle) and the window key handler
+      // (no menu shortcuts fire while typing).
+      try {
+        const cur = String(typeof row.value === 'function' ? row.value() : row.value || '');
+        const norm = normalizeHexColor(cur);
+        const pick = document.createElement('input');
+        pick.type = 'color';
+        pick.className = 'swatch';
+        pick.title = 'Pick a custom color';
+        pick.value = norm && norm !== 'DEFAULT' ? norm : '#87cefa';
+        pick.addEventListener('click', (e) => e.stopPropagation());
+        pick.addEventListener('input', () => applyMapColor(row, pick.value));
+        line.appendChild(pick);
+        const hex = document.createElement('input');
+        hex.type = 'text';
+        hex.className = 'hex';
+        hex.value = cur || '';
+        hex.maxLength = 7;
+        hex.spellcheck = false;
+        hex.placeholder = '#rrggbb';
+        hex.title = 'Type a hex color, Enter to apply';
+        hex.addEventListener('click', (e) => e.stopPropagation());
+        hex.addEventListener('keydown', (e) => {
+          e.stopPropagation();
+          if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+            const v = normalizeHexColor(hex.value);
+            if (v) applyMapColor(row, v);
+            else hex.value = cur || '';
+            hex.blur();
+          } else if (e.code === 'Escape') {
+            hex.value = cur || '';
+            hex.blur();
+          }
+        });
+        hex.addEventListener('change', () => {
+          const v = normalizeHexColor(hex.value);
+          if (v) applyMapColor(row, v);
+          else hex.value = cur || '';
+        });
+        line.appendChild(hex);
+      } catch (_) {}
     } else if (row.type === 'toggle') {
       line.addEventListener('click', () => {
         termMapCursor = i;
@@ -1456,6 +1787,12 @@ function renderMapSettings() {
         cycleMapSetting(row, 1);
       });
     } else if (row.type === 'quality') {
+      line.addEventListener('click', () => {
+        termMapCursor = i;
+        SFX.menuSelect();
+        cycleMapSetting(row, 1);
+      });
+    } else if (row.type === 'resolution') {
       line.addEventListener('click', () => {
         termMapCursor = i;
         SFX.menuSelect();
@@ -1485,6 +1822,7 @@ let _lastTrainRender = 0;
 const TRAIN_POP_PRESETS = [10, 20, 30, 50, 80, 100, 150, 200];
 const TRAIN_GEN_PRESETS = [5, 25, 50, 100, 250, 500, 1000];
 const TRAIN_MUT_PRESETS = [0.01, 0.03, 0.05, 0.08, 0.12];
+const TRAIN_EVAL_PRESETS = [2, 4, 6, 10];
 const TRAIN_SPEEDS = ['Normal', 'Fast', 'Fastest'];
 const TRAIN_SPEED_FRAMES = { Normal: 400, Fast: 1200, Fastest: 3000 };
 
@@ -1504,7 +1842,9 @@ let _previewSaved = null;
 function enterAITraining() {
   termMode = 'aiTraining';
   termTrainCursor = 0;
+  trainView = 'setup';
   trainDoneInfo = null;
+  try { refreshTrainCaches(); } catch (_) {}
   try {
     if (previewCanvas && !_previewSaved) {
       const termWindow = document.getElementById('term-window');
@@ -1589,6 +1929,29 @@ function cycleTrainRow(id, dir) {
     trainSettings.speed = TRAIN_SPEEDS[(i + dir + TRAIN_SPEEDS.length) % TRAIN_SPEEDS.length];
   } else if (id === 'showsim') {
     trainSettings.showSim = !trainSettings.showSim;
+  } else if (id === 'mode') {
+    const modes = ['matchup', 'character', 'general'];
+    const i = modes.indexOf(trainSettings.mode);
+    trainSettings.mode = modes[(i + dir + modes.length) % modes.length];
+    // Co-evolution only exists in matchup mode; leaving it reverts the
+    // opponent to scripted so the setup can never describe an impossible run.
+    if (trainSettings.mode !== 'matchup' && trainSettings.oppType === 'coevolve') {
+      trainSettings.oppType = 'scripted';
+    }
+  } else if (id === 'opp') {
+    const opps = trainSettings.mode === 'matchup'
+      ? ['coevolve', 'trained', 'scripted', 'dummy']
+      : ['trained', 'scripted', 'dummy'];
+    const i = opps.indexOf(trainSettings.oppType);
+    trainSettings.oppType = opps[(i + dir + opps.length) % opps.length];
+  } else if (id === 'startmode') {
+    trainSettings.startMode = trainSettings.startMode === 'continue' ? 'new' : 'continue';
+  } else if (id === 'opdiff') {
+    const ds = ['Easy', 'Normal', 'Hard', 'Expert'];
+    const i = ds.indexOf(trainSettings.scriptedDifficulty);
+    trainSettings.scriptedDifficulty = ds[(i + dir + ds.length) % ds.length];
+  } else if (id === 'evaln') {
+    trainSettings.evalMatches = cyclePreset(TRAIN_EVAL_PRESETS, trainSettings.evalMatches, dir);
   }
   persistAIConfig();
 }
@@ -1602,10 +1965,37 @@ function trainRowValue(id) {
     case 'mut': return `${Math.round(trainSettings.mutationRate * 100)}%`;
     case 'speed': return trainSettings.speed;
     case 'showsim': return trainSettings.showSim ? 'ON' : 'OFF';
+    case 'mode': return trainSettings.mode.toUpperCase();
+    case 'opp': return trainSettings.oppType.toUpperCase();
+    case 'startmode': return trainSettings.startMode.toUpperCase();
+    case 'opdiff': return trainSettings.scriptedDifficulty.toUpperCase();
+    case 'evaln': return String(trainSettings.evalMatches);
     case 'toggle': return isTraining() ? 'STOP' : 'START';
+    case 'pause': return 'ENTER';
+    case 'view': return trainViewLabel();
     case 'back': return 'ENTER';
-    default: return '';
+    case 'hclear': return 'ENTER';
+    case 'hnone': case 'mnone': return '';
+    case 'mchar': {
+      const def = ALL_FIGHTERS[trainModelChar] || ALL_FIGHTERS[0];
+      return def ? def.name.toUpperCase() : '?';
+    }
+    case 'mactivate': case 'meval': case 'mcompare': case 'mrename':
+    case 'mduplicate': case 'mexport': case 'mimport': case 'mdelete':
+      return 'ENTER';
+    default: break;
   }
+  if (id.indexOf('run:') === 0) {
+    const r = (trainHistoryCache || [])[parseInt(id.slice(4), 10)];
+    return r ? fmtRunLine(r) : '';
+  }
+  if (id.indexOf('model:') === 0) {
+    const m = (trainModelsCache || [])[parseInt(id.slice(6), 10)];
+    if (!m) return '';
+    const wr = m.winRate != null ? ` ${(m.winRate * 100).toFixed(0)}%` : '';
+    return `${m.active ? '* ' : ''}${m.name} G${m.generation} F${fmtFit(m.fitness)}${wr}`;
+  }
+  return '';
 }
 
 function progressBar(frac, width = 20) {
@@ -1627,6 +2017,9 @@ function startTraining() {
   trainProgress = null;
   trainLive = null;
   trainDoneInfo = null;
+  trainEvalReport = null;
+  trainCompareReport = null;
+  trainNotice = '';
   _trainSceneDrawn = false;
   const framesPerChunk = TRAIN_SPEED_FRAMES[trainSettings.speed] || 1200;
   try {
@@ -1638,6 +2031,10 @@ function startTraining() {
       populationSize: trainSettings.populationSize,
       maxGenerations: trainSettings.maxGenerations,
       mutationRate: trainSettings.mutationRate,
+      mode: trainSettings.mode,
+      oppType: trainSettings.mode === 'matchup' ? trainSettings.oppType : (trainSettings.oppType === 'coevolve' ? 'scripted' : trainSettings.oppType),
+      scriptedDifficulty: trainSettings.scriptedDifficulty,
+      startMode: trainSettings.startMode,
       framesPerChunk,
       onProgress: (snap) => {
         trainProgress = snap;
@@ -1656,6 +2053,7 @@ function startTraining() {
       onDone: (info) => {
         trainDoneInfo = info;
         trainProgress = info;
+        try { refreshTrainCaches(); } catch (_) {}
         try { renderTermMenu(); } catch (_) {}
         try { SFX.menuConfirm(); } catch (_) {}
       },
@@ -1675,8 +2073,205 @@ function stopTraining() {
   try {
     activeTrainer.stop();
   } catch (_) {}
+  try { refreshTrainCaches(); } catch (_) {}
   try { renderTermMenu(); } catch (_) {}
   return true;
+}
+
+function pauseTraining() {
+  if (!isTraining()) return false;
+  try { return activeTrainer.pause(); } catch (_) { return false; }
+}
+
+function resumeTraining() {
+  try {
+    if (!activeTrainer || typeof activeTrainer.resume !== 'function') return false;
+    return activeTrainer.resume();
+  } catch (_) { return false; }
+}
+
+// ── Training views: setup / progress / history / models ───────────────────
+let trainView = 'setup';
+let trainHistoryCache = [];
+let trainRunSel = 0;
+let trainModelsCache = [];
+let trainModelChar = 0;
+let trainModelSel = 0;
+let trainEvalReport = null;
+let trainEvalBusy = false;
+let trainCompareReport = null;
+let trainNotice = '';
+
+function refreshTrainCaches() {
+  try { trainHistoryCache = listRunHistory(50); } catch (_) { trainHistoryCache = []; }
+  try {
+    const def = ALL_FIGHTERS[trainModelChar] || ALL_FIGHTERS[0];
+    trainModelsCache = def ? listModels(def.id) : [];
+  } catch (_) { trainModelsCache = []; }
+  if (trainRunSel >= trainHistoryCache.length) trainRunSel = 0;
+  if (trainModelSel >= trainModelsCache.length) trainModelSel = 0;
+}
+
+function trainSetupRows(running) {
+  const locked = !!running;
+  const rows = [
+    { id: 'view', label: 'VIEW', locked: false },
+    { id: 'ai1', label: 'AI 1 CHARACTER (TRAINED)', locked },
+    { id: 'ai2', label: 'AI 2 CHARACTER', locked },
+    { id: 'mode', label: 'TRAINING MODE', locked },
+    { id: 'opp', label: 'OPPONENT TYPE', locked },
+    { id: 'opdiff', label: 'SCRIPTED STRENGTH', locked },
+    { id: 'startmode', label: 'START MODE', locked },
+    { id: 'pop', label: 'POPULATION SIZE', locked },
+    { id: 'gens', label: 'MAX GENERATIONS', locked },
+    { id: 'mut', label: 'MUTATION RATE', locked },
+    { id: 'evaln', label: 'EVAL MATCHES', locked: false },
+    { id: 'speed', label: 'TRAINING SPEED', locked },
+    { id: 'showsim', label: 'SHOW SIMULATION', locked: false },
+    { id: 'toggle', label: running ? (trainProgress && trainProgress.paused ? 'RESUME TRAINING' : 'STOP TRAINING') : 'START TRAINING', locked: false },
+  ];
+  if (running && !(trainProgress && trainProgress.paused)) {
+    rows.push({ id: 'pause', label: 'PAUSE TRAINING', locked: false });
+  }
+  rows.push({ id: 'back', label: 'BACK', locked: false });
+  return rows;
+}
+
+function trainViewLabel() {
+  return ({ setup: 'SETUP', progress: 'PROGRESS', history: 'HISTORY', models: 'MODELS' })[trainView] || 'SETUP';
+}
+
+function cycleTrainView(dir) {
+  const vs = ['setup', 'progress', 'history', 'models'];
+  const i = vs.indexOf(trainView);
+  trainView = vs[(i + dir + vs.length) % vs.length];
+  if (trainView === 'history' || trainView === 'models') refreshTrainCaches();
+}
+
+// Evaluate a stored model under identical scripted conditions. Synchronous
+// and bounded (evalMatches bouts); the report is attached to the model so the
+// models view and comparisons show measured - not claimed - performance.
+function runModelEval(charId, modelId) {
+  if (trainEvalBusy) return { ok: false, error: 'evaluation already running' };
+  const def = ALL_FIGHTERS.find((f) => f.id === charId);
+  const m = def ? getModel(charId, modelId) : null;
+  if (!def || !m) return { ok: false, error: 'model not found' };
+  trainEvalBusy = true;
+  try {
+    const oppDef = ALL_FIGHTERS[(ALL_FIGHTERS.indexOf(def) + 1) % ALL_FIGHTERS.length] || def;
+    const report = evaluateModels({
+      defA: def,
+      defB: oppDef,
+      genomeA: { weights: m.weights, behavior: m.behavior },
+      oppB: { kind: 'scripted', difficulty: 'Normal', charId: oppDef.id },
+      matches: trainSettings.evalMatches,
+    });
+    report.modelId = modelId;
+    report.modelName = m.name;
+    report.character = charId;
+    report.at = new Date().toISOString();
+    try { attachEval(charId, modelId, report); } catch (_) {}
+    try { refreshTrainCaches(); } catch (_) {}
+    return { ok: true, report };
+  } catch (e) {
+    return { ok: false, error: 'evaluation failed' };
+  } finally {
+    trainEvalBusy = false;
+  }
+}
+
+// Compare two models for one character under the SAME scenarios: each plays
+// evalMatches scripted bouts; both reports are shown side by side with no
+// automatic "winner" label beyond the raw numbers.
+function runModelCompare(charId, idA, idB) {
+  if (trainEvalBusy) return { ok: false, error: 'evaluation already running' };
+  const def = ALL_FIGHTERS.find((f) => f.id === charId);
+  const mA = def ? getModel(charId, idA) : null;
+  const mB = def ? getModel(charId, idB) : null;
+  if (!def || !mA || !mB) return { ok: false, error: 'model not found' };
+  if (idA === idB) return { ok: false, error: 'pick two different models' };
+  trainEvalBusy = true;
+  try {
+    const oppDef = ALL_FIGHTERS[(ALL_FIGHTERS.indexOf(def) + 1) % ALL_FIGHTERS.length] || def;
+    const mk = (m) => evaluateModels({
+      defA: def,
+      defB: oppDef,
+      genomeA: { weights: m.weights, behavior: m.behavior },
+      oppB: { kind: 'scripted', difficulty: 'Normal', charId: oppDef.id },
+      matches: trainSettings.evalMatches,
+    });
+    const rA = mk(mA); rA.modelName = mA.name;
+    const rB = mk(mB); rB.modelName = mB.name;
+    return { ok: true, a: rA, b: rB, at: new Date().toISOString() };
+  } catch (e) {
+    return { ok: false, error: 'comparison failed' };
+  } finally {
+    trainEvalBusy = false;
+  }
+}
+
+function exportModelFile(charId, modelId) {
+  const res = exportModel(charId, modelId);
+  if (!res.ok) { trainNotice = `export failed: ${res.error}`; return false; }
+  try {
+    const blob = new Blob([res.json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `smashfighters-ai-${charId}-${modelId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { URL.revokeObjectURL(a.href); a.remove(); } catch (_) {} }, 500);
+    trainNotice = 'model exported - keep the file as a portable backup';
+    return true;
+  } catch (_) {
+    trainNotice = 'export failed in this browser';
+    return false;
+  }
+}
+
+function importModelFile(file) {
+  if (!file) return;
+  const def = ALL_FIGHTERS[trainModelChar] || ALL_FIGHTERS[0];
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      const res = importModel(text, { charId: def.id });
+      trainNotice = res.ok
+        ? `imported as "${getModel(def.id, res.id).name}"${res.converted ? ` (converted from ${res.converted})` : ''}`
+        : `import rejected: ${res.error}`;
+    } catch (_) {
+      trainNotice = 'import rejected: unreadable file';
+    }
+    try { refreshTrainCaches(); } catch (_) {}
+    try { renderTermMenu(); } catch (_) {}
+  };
+  reader.onerror = () => {
+    trainNotice = 'import rejected: unreadable file';
+    try { renderTermMenu(); } catch (_) {}
+  };
+  try { reader.readAsText(file); } catch (_) { trainNotice = 'import rejected: unreadable file'; }
+}
+
+let _trainFileInput = null;
+function promptModelImport() {
+  try {
+    if (!_trainFileInput) {
+      _trainFileInput = document.createElement('input');
+      _trainFileInput.type = 'file';
+      _trainFileInput.accept = '.json,application/json';
+      _trainFileInput.style.display = 'none';
+      document.body.appendChild(_trainFileInput);
+      _trainFileInput.addEventListener('change', () => {
+        const f = _trainFileInput.files && _trainFileInput.files[0];
+        _trainFileInput.value = '';
+        importModelFile(f);
+      });
+    }
+    _trainFileInput.click();
+  } catch (_) {
+    trainNotice = 'import unavailable in this browser';
+  }
 }
 
 function trainedModelsLine() {
@@ -1689,29 +2284,353 @@ function trainedModelsLine() {
   }
 }
 
+// ── Training views: row lists ───────────────────────────────────────────
+function trainRows() {
+  const running = isTraining();
+  if (trainView === 'history') {
+    const rows = [{ id: 'view', label: 'VIEW' }];
+    const list = trainHistoryCache || [];
+    if (!list.length) rows.push({ id: 'hnone', label: 'NO SAVED RUNS', locked: true });
+    for (let i = 0; i < list.length; i++) rows.push({ id: 'run:' + i, label: 'RUN ' + (i + 1) });
+    rows.push({ id: 'hclear', label: 'CLEAR HISTORY' });
+    rows.push({ id: 'back', label: 'BACK' });
+    return rows;
+  }
+  if (trainView === 'models') {
+    const rows = [{ id: 'view', label: 'VIEW' }, { id: 'mchar', label: 'CHARACTER' }];
+    const list = trainModelsCache || [];
+    if (!list.length) rows.push({ id: 'mnone', label: 'NO SAVED MODELS', locked: true });
+    for (let i = 0; i < list.length; i++) rows.push({ id: 'model:' + i, label: 'MODEL ' + (i + 1) });
+    rows.push({ id: 'mactivate', label: 'ACTIVATE SELECTED' });
+    rows.push({ id: 'meval', label: 'EVALUATE SELECTED' });
+    rows.push({ id: 'mcompare', label: 'COMPARE VS ACTIVE' });
+    rows.push({ id: 'mrename', label: 'RENAME SELECTED' });
+    rows.push({ id: 'mduplicate', label: 'DUPLICATE SELECTED' });
+    rows.push({ id: 'mexport', label: 'EXPORT SELECTED' });
+    rows.push({ id: 'mimport', label: 'IMPORT FILE' });
+    rows.push({ id: 'mdelete', label: 'DELETE SELECTED' });
+    rows.push({ id: 'back', label: 'BACK' });
+    return rows;
+  }
+  if (trainView === 'progress') {
+    const rows = [{ id: 'view', label: 'VIEW' }];
+    if (running) {
+      const paused = !!(trainProgress && trainProgress.paused);
+      rows.push({ id: 'toggle', label: paused ? 'RESUME TRAINING' : 'STOP TRAINING' });
+      if (!paused) rows.push({ id: 'pause', label: 'PAUSE TRAINING' });
+    } else {
+      rows.push({ id: 'toggle', label: 'START TRAINING' });
+    }
+    rows.push({ id: 'back', label: 'BACK' });
+    return rows;
+  }
+  return trainSetupRows(running);
+}
+
+function selectedTrainModel() {
+  try {
+    const def = ALL_FIGHTERS[trainModelChar] || ALL_FIGHTERS[0];
+    const list = trainModelsCache || [];
+    const m = list[trainModelSel];
+    if (!def || !m) return null;
+    return { character: def.id, id: m.id, summary: m };
+  } catch (_) {
+    return null;
+  }
+}
+
+function promptTrainNumber(id) {
+  const isPop = id === 'pop';
+  const cur = isPop ? trainSettings.populationSize : trainSettings.maxGenerations;
+  let raw = null;
+  try {
+    raw = prompt(`Enter ${isPop ? 'population size (2-200)' : 'max generations (1-2000)'}:`, String(cur));
+  } catch (_) { raw = null; }
+  if (raw !== null) {
+    const v = parseInt(raw, 10);
+    if (Number.isFinite(v)) {
+      if (isPop) trainSettings.populationSize = Math.max(2, Math.min(200, v));
+      else trainSettings.maxGenerations = Math.max(1, Math.min(2000, v));
+      persistAIConfig();
+    }
+  }
+}
+
+function loadRunConfig(i) {
+  const run = (trainHistoryCache || [])[i];
+  if (!run) return;
+  try {
+    const names = ALL_FIGHTERS.map((f) => f.id);
+    if (names.includes(run.charA)) trainSettings.ai1 = names.indexOf(run.charA);
+    if (names.includes(run.charB)) trainSettings.ai2 = names.indexOf(run.charB);
+    if (run.mode) trainSettings.mode = run.mode;
+    if (run.oppType) trainSettings.oppType = run.oppType;
+    const c = run.config || {};
+    if (Number.isFinite(c.populationSize)) trainSettings.populationSize = Math.max(2, Math.min(200, c.populationSize | 0));
+    if (Number.isFinite(c.maxGenerations)) trainSettings.maxGenerations = Math.max(1, Math.min(2000, c.maxGenerations | 0));
+    if (Number.isFinite(c.mutationRate)) trainSettings.mutationRate = Math.min(0.2, Math.max(0.005, c.mutationRate));
+    persistAIConfig();
+    trainView = 'setup';
+    trainNotice = `loaded config from run ${run.id.slice(0, 8)} - press START TRAINING`;
+  } catch (_) {
+    trainNotice = 'could not load that run config';
+  }
+}
+
+// Central dispatcher for training-menu activation (click or ENTER).
+// viaEnter distinguishes ENTER (numeric prompt) from click (cycle).
+function trainActivateRow(id, viaEnter) {
+  if (id === 'view') { cycleTrainView(1); return; }
+  if (id === 'back') { exitAITraining(); return; }
+  if (id === 'toggle') {
+    if (isTraining()) {
+      if (trainProgress && trainProgress.paused) resumeTraining();
+      else stopTraining();
+    } else startTraining();
+    return;
+  }
+  if (id === 'pause') { pauseTraining(); return; }
+  const setupValueIds = ['ai1', 'ai2', 'pop', 'gens', 'mut', 'speed', 'showsim', 'mode', 'opp', 'startmode', 'opdiff', 'evaln'];
+  if (setupValueIds.includes(id)) {
+    if (isTraining() && ['ai1', 'ai2', 'pop', 'gens', 'mut', 'speed', 'mode', 'opp', 'startmode', 'opdiff'].includes(id)) return;
+    if ((id === 'pop' || id === 'gens') && viaEnter) { promptTrainNumber(id); return; }
+    cycleTrainRow(id, 1);
+    return;
+  }
+  if (id.indexOf('run:') === 0) { loadRunConfig(parseInt(id.slice(4), 10)); return; }
+  if (id === 'hclear') {
+    let yes = false;
+    try { yes = confirm('Clear all saved training history? Models are kept.'); } catch (_) { yes = false; }
+    if (yes) {
+      clearRunHistory();
+      refreshTrainCaches();
+      trainNotice = 'history cleared - models kept';
+    }
+    return;
+  }
+  if (id === 'mchar') {
+    trainModelChar = (trainModelChar + 1) % ALL_FIGHTERS.length;
+    trainModelSel = 0;
+    refreshTrainCaches();
+    return;
+  }
+  if (id.indexOf('model:') === 0) {
+    trainModelSel = parseInt(id.slice(6), 10) || 0;
+    return;
+  }
+  const sel = selectedTrainModel();
+  if (id === 'mimport') { promptModelImport(); return; }
+  if (!sel) { trainNotice = 'no model selected'; return; }
+  if (id === 'mactivate') {
+    trainNotice = activateModel(sel.character, sel.id) ? `"${sel.summary.name}" is now active` : 'activation failed';
+    refreshTrainCaches();
+    return;
+  }
+  if (id === 'mrename') {
+    let name = null;
+    try { name = prompt('Rename model:', sel.summary.name); } catch (_) { name = null; }
+    if (name !== null) {
+      trainNotice = renameModel(sel.character, sel.id, name) ? 'renamed' : 'rename failed (1-40 chars)';
+      refreshTrainCaches();
+    }
+    return;
+  }
+  if (id === 'mduplicate') {
+    const res = duplicateModel(sel.character, sel.id);
+    trainNotice = res.ok ? 'duplicated' : `duplicate failed: ${res.error}`;
+    refreshTrainCaches();
+    return;
+  }
+  if (id === 'mexport') {
+    exportModelFile(sel.character, sel.id);
+    return;
+  }
+  if (id === 'mdelete') {
+    let yes = false;
+    try { yes = confirm(`Delete model "${sel.summary.name}"? This cannot be undone.`); } catch (_) { yes = false; }
+    if (yes) {
+      trainNotice = deleteModel(sel.character, sel.id) ? 'deleted' : 'delete failed';
+      refreshTrainCaches();
+    }
+    return;
+  }
+  if (id === 'meval') {
+    trainNotice = 'evaluating...';
+    try { renderTermMenu(); } catch (_) {}
+    const res = runModelEval(sel.character, sel.id);
+    if (res.ok) {
+      trainEvalReport = res.report;
+      trainNotice = `evaluated ${res.report.matches} bouts - win rate ${(res.report.winRate * 100).toFixed(0)}%`;
+    } else {
+      trainNotice = `evaluation failed: ${res.error}`;
+    }
+    return;
+  }
+  if (id === 'mcompare') {
+    const def = ALL_FIGHTERS[trainModelChar] || ALL_FIGHTERS[0];
+    let active = null;
+    try { active = getActiveModel(def.id); } catch (_) { active = null; }
+    const activeId = active && (active.modelId || null);
+    if (!activeId) { trainNotice = 'no active model to compare against'; return; }
+    if (activeId === sel.id) { trainNotice = 'selected model IS the active one - pick another'; return; }
+    trainNotice = 'comparing...';
+    try { renderTermMenu(); } catch (_) {}
+    const res = runModelCompare(def.id, sel.id, activeId);
+    if (res.ok) {
+      trainCompareReport = res;
+      trainNotice = 'comparison complete - raw numbers below, no auto-winner';
+    } else {
+      trainNotice = `comparison failed: ${res.error}`;
+    }
+    return;
+  }
+}
+
+// ── Training status blocks (DOM text from real snapshots/records) ─────────
+function sparkAscii(values, width) {
+  const w = Math.max(4, Math.min(40, width | 0 || 28));
+  const vs = (values || []).filter(Number.isFinite);
+  if (vs.length < 2) return '(need 2+ generations)';
+  let mn = Math.min(...vs), mx = Math.max(...vs);
+  if (!(mx > mn)) return '(flat)';
+  const glyphs = ' .:-=+*#%@';
+  const step = Math.max(1, Math.floor(vs.length / w));
+  let out = '';
+  for (let i = 0; i < vs.length; i += step) {
+    const lvl = Math.max(0, Math.min(glyphs.length - 1, Math.round(((vs[i] - mn) / (mx - mn)) * (glyphs.length - 1))));
+    out += glyphs[lvl];
+  }
+  return out + `  [${fmtFit(mn)}..${fmtFit(mx)}]`;
+}
+
+function trainStatusSetup(info) {
+  info(trainedModelsLine());
+  const p = trainProgress;
+  if (p) {
+    const gen = p.generation || 0;
+    const max = p.maxGenerations || trainSettings.maxGenerations;
+    info(`GENERATION ${gen} / ${max}${p.paused ? ' (PAUSED)' : ''}`);
+    info(progressBar(gen / Math.max(1, max)));
+    info(`BEST FITNESS ${fmtFit(p.best)}   AVERAGE FITNESS ${fmtFit(p.avg)}   BEST WINS ${p.bestWins || 0}   MATCHES ${p.matchesPlayed || 0}`);
+    const lr = p.lastResult;
+    if (lr) {
+      const w = lr.winner === 1 ? ALL_FIGHTERS[trainSettings.ai1].name : lr.winner === 2 ? ALL_FIGHTERS[trainSettings.ai2].name : 'draw';
+      info(`LAST: GEN ${lr.gen} MATCH ${lr.match} WIN ${w} FIT ${lr.fitA}/${lr.fitB == null ? '-' : lr.fitB}`);
+    }
+    if (p.warnings && p.warnings.length) info('NOTE: ' + p.warnings.join(' | '));
+  } else if (trainDoneInfo) {
+    info(`DONE (${trainDoneInfo.reason}) - models saved`);
+  } else {
+    info(`${ALL_FIGHTERS[trainSettings.ai1].name} vs ${ALL_FIGHTERS[trainSettings.ai2].name} - press START TRAINING`);
+  }
+  if (trainNotice) info(trainNotice);
+  if (trainSettings.showSim) {
+    const live = document.createElement('div');
+    live.className = 'term-row head';
+    live.id = 'train-live-line';
+    live.textContent = liveLineText();
+    termLinesEl.appendChild(live);
+  }
+  drawTrainingPreview();
+}
+
+function trainStatusProgress(info) {
+  const p = trainProgress;
+  if (!p && !isTraining()) {
+    info('no training data yet - START TRAINING from SETUP');
+    if (trainNotice) info(trainNotice);
+    drawTrainingPreview();
+    return;
+  }
+  const snap = p || {};
+  info(`STATUS: ${!isTraining() ? 'IDLE' : snap.paused ? 'PAUSED' : 'TRAINING'}  ${snap.charA || ''} vs ${snap.charB || ''}  ${snap.mode || ''}/${snap.oppType || ''}`);
+  info(`GENERATION ${snap.generation || 0} / ${snap.maxGenerations || trainSettings.maxGenerations}`);
+  info(progressBar((snap.generation || 0) / Math.max(1, snap.maxGenerations || trainSettings.maxGenerations)));
+  info(`BEST ${fmtFit(snap.best)}  AVG ${fmtFit(snap.avg)}  WINS A/B ${snap.winsA || 0}/${snap.winsB || 0}  MATCHES ${snap.matchesPlayed || 0}`);
+  info(`DIVERSITY A ${fmtFit(snap.diversityA)}${snap.diversityB ? `  B ${fmtFit(snap.diversityB)}` : ''}`);
+  const hist = (snap.history || []).map((h) => h.best);
+  info('FITNESS CURVE: ' + sparkAscii(hist, 28));
+  if (snap.warnings && snap.warnings.length) info('NOTE: ' + snap.warnings.join(' | '));
+  if (trainNotice) info(trainNotice);
+  if (trainSettings.showSim) {
+    const live = document.createElement('div');
+    live.className = 'term-row head';
+    live.id = 'train-live-line';
+    live.textContent = liveLineText();
+    termLinesEl.appendChild(live);
+  }
+  drawTrainingPreview();
+}
+
+function fmtRunLine(r) {
+  const date = String(r.finishedAt || '').slice(0, 10);
+  return `G${r.generations} F${fmtFit(r.bestFitness)} W${r.winsA}-${r.winsB} ${r.status} ${date}`;
+}
+
+function trainStatusHistory(info) {
+  const list = trainHistoryCache || [];
+  if (!list.length) {
+    info('no saved runs yet - completed or stopped runs are recorded here');
+    if (trainNotice) info(trainNotice);
+    return;
+  }
+  const run = list[Math.min(trainRunSel, list.length - 1)];
+  if (!run) return;
+  info(`RUN ${run.id.slice(0, 8)}  ${run.charA} vs ${run.charB}  ${run.mode}/${run.oppType}`);
+  info(`GENS ${run.generations}  MATCHES ${run.matches}  BEST ${fmtFit(run.bestFitness)}  AVG ${fmtFit(run.avgFitness)}`);
+  info(`WINS A/B ${run.winsA}/${run.winsB}  STATUS ${run.status}  ${String(run.finishedAt || '').slice(0, 16).replace('T', ' ')}`);
+  try {
+    const c = run.config || {};
+    info(`POP ${c.populationSize} MUT ${(c.mutationRate * 100).toFixed(0)}% OPP ${run.opponent || run.charB}`);
+  } catch (_) {}
+  if (run.warnings && run.warnings.length) info('NOTE: ' + run.warnings.join(' | '));
+  info('FITNESS: ' + sparkAscii(run.fitnessCurve || [], 28));
+  if (trainNotice) info(trainNotice);
+  info('ENTER on a run loads its config into SETUP');
+}
+
+function fmtEvalLine(prefix, r) {
+  if (!r || !r.ok && !r.matches) return `${prefix}: no data`;
+  return `${prefix}: ${r.wins}/${r.matches} wins (${(r.winRate * 100).toFixed(0)}%) dealt ${r.avgDealt.toFixed(1)} taken ${r.avgTaken.toFixed(1)} rec ${(r.recRate * 100).toFixed(0)}% hit ${(r.hitRate * 100).toFixed(0)}%`;
+}
+
+function trainStatusModels(info) {
+  const def = ALL_FIGHTERS[trainModelChar] || ALL_FIGHTERS[0];
+  const list = trainModelsCache || [];
+  info(`CHARACTER: ${def ? def.name : '?'}  (${list.length} saved)  storage: browser localStorage (exports back up)`);
+  const m = list[Math.min(trainModelSel, Math.max(0, list.length - 1))];
+  if (m) {
+    info(`SELECTED: "${m.name}"${m.active ? ' [ACTIVE]' : ''} G${m.generation} F${fmtFit(m.fitness)} W${m.wins} ${String(m.savedAt || '').slice(0, 10)} OPP ${m.opponent || '-'}`);
+    if (m.hasEval && m.winRate != null) {
+      info(`LAST EVAL: ${(m.winRate * 100).toFixed(0)}% wins - see EVALUATE for a fresh report`);
+    }
+  } else {
+    info('no models for this character yet - train or import one');
+  }
+  if (trainEvalReport && trainEvalReport.ok !== false) {
+    const r = trainEvalReport;
+    info(fmtEvalLine(`EVAL "${r.modelName || ''}"`, r));
+    const tops = Object.entries(r.moveUses || {}).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k}x${v}`).join(' ');
+    if (tops) info(`MOVES: ${tops}`);
+  }
+  if (trainCompareReport && trainCompareReport.ok) {
+    info(fmtEvalLine(`A "${trainCompareReport.a.modelName}"`, trainCompareReport.a));
+    info(fmtEvalLine(`B "${trainCompareReport.b.modelName}"`, trainCompareReport.b));
+    info('same scenarios, same opponent - numbers above, no auto-winner');
+  }
+  if (trainNotice) info(trainNotice);
+}
+
 function renderAITraining() {
   const header = document.createElement('div');
   header.className = 'term-row head';
-  header.textContent = 'AI TRAINING  Â·  evolve neural fighters (real bouts, real evolution)';
+  header.textContent = `AI TRAINING  -  ${trainViewLabel()}  (real bouts, real evolution)`;
   termLinesEl.appendChild(header);
 
-  const rows = [
-    { id: 'ai1', label: 'AI 1 CHARACTER' },
-    { id: 'ai2', label: 'AI 2 CHARACTER' },
-    { id: 'pop', label: 'POPULATION SIZE' },
-    { id: 'gens', label: 'MAX GENERATIONS' },
-    { id: 'mut', label: 'MUTATION RATE' },
-    { id: 'speed', label: 'TRAINING SPEED' },
-    { id: 'showsim', label: 'SHOW SIMULATION' },
-    { id: 'toggle', label: isTraining() ? 'STOP TRAINING' : 'START TRAINING' },
-    { id: 'back', label: 'BACK' },
-  ];
+  const rows = trainRows();
   if (termTrainCursor >= rows.length) termTrainCursor = 0;
-
   rows.forEach((row, i) => {
-    // Config rows lock while running (changing the gene pool mid-evolution
-    // would corrupt the run); START becomes STOP.
-    const locked = isTraining() && ['ai1', 'ai2', 'pop', 'gens', 'mut', 'speed'].includes(row.id);
+    const locked = !!row.locked;
     const isOn = i === termTrainCursor;
     const line = document.createElement('div');
     line.className = 'term-row' + (isOn ? ' on' : '') + (locked ? ' off' : '');
@@ -1728,55 +2647,26 @@ function renderAITraining() {
     line.appendChild(val);
     if (!locked) {
       line.addEventListener('click', () => {
-        if (termTrainCursor === i && row.id !== 'toggle' && row.id !== 'back') cycleTrainRow(row.id, 1);
         termTrainCursor = i;
         SFX.menuSelect();
-        if (row.id === 'toggle') {
-          if (isTraining()) stopTraining();
-          else startTraining();
-        } else if (row.id === 'back') {
-          exitAITraining();
-          return;
-        }
+        trainActivateRow(row.id, false);
         renderTermMenu();
       });
     }
     termLinesEl.appendChild(line);
   });
 
-  // â”€â”€ Status block (read-only info lines, same DOM, no new architecture) â”€â”€
-  const info = (text, cls) => {
+  // Status block (read-only info lines, same DOM, no new architecture).
+  const info = (text) => {
     const d = document.createElement('div');
-    d.className = 'term-row head' + (cls ? ' ' + cls : '');
+    d.className = 'term-row head';
     d.textContent = text;
     termLinesEl.appendChild(d);
   };
-  info(trainedModelsLine());
-  const p = trainProgress;
-  if (p) {
-    const gen = p.generation || 0;
-    const max = p.maxGenerations || trainSettings.maxGenerations;
-    info(`GENERATION ${gen} / ${max}`);
-    info(progressBar(gen / Math.max(1, max)));
-    info(`BEST FITNESS ${fmtFit(p.best)}   AVERAGE ${fmtFit(p.avg)}   BEST WINS ${p.bestWins || 0}`);
-    const lr = p.lastResult;
-    if (lr) {
-      const w = lr.winner === 1 ? ALL_FIGHTERS[trainSettings.ai1].name : lr.winner === 2 ? ALL_FIGHTERS[trainSettings.ai2].name : 'draw';
-      info(`LAST: GEN ${lr.gen} MATCH ${lr.match} WIN ${w} FIT ${lr.fitA}/${lr.fitB}`);
-    }
-  } else if (trainDoneInfo) {
-    info(`DONE (${trainDoneInfo.reason}) â€” models saved`);
-  } else {
-    info(`${ALL_FIGHTERS[trainSettings.ai1].name} vs ${ALL_FIGHTERS[trainSettings.ai2].name} â€” press START TRAINING`);
-  }
-  if (trainSettings.showSim) {
-    const live = document.createElement('div');
-    live.className = 'term-row head';
-    live.id = 'train-live-line';
-    live.textContent = liveLineText();
-    termLinesEl.appendChild(live);
-  }
-  drawTrainingPreview();
+  if (trainView === 'progress') trainStatusProgress(info);
+  else if (trainView === 'history') trainStatusHistory(info);
+  else if (trainView === 'models') trainStatusModels(info);
+  else trainStatusSetup(info);
 }
 
 function liveLineText() {
@@ -1947,7 +2837,7 @@ function maybeRedrawTrainingPreview(now) {
 
 function onAITrainingKey(e) {
   const k = e.code;
-  const rows = ['ai1', 'ai2', 'pop', 'gens', 'mut', 'speed', 'showsim', 'toggle', 'back'];
+  const rows = trainRows().map((r) => r.id);
   if (k === 'Escape' || k === 'Backspace') {
     exitAITraining();
     return;
@@ -1957,34 +2847,25 @@ function onAITrainingKey(e) {
   } else if (k === 'ArrowDown' || k === 'KeyS') {
     termTrainCursor = (termTrainCursor + 1) % rows.length;
   } else if (k === 'ArrowLeft' || k === 'KeyA' || k === 'Minus' || k === 'NumpadSubtract') {
-    cycleTrainRow(rows[termTrainCursor], -1);
-  } else if (k === 'ArrowRight' || k === 'KeyD' || k === 'Equal' || k === 'NumpadAdd') {
-    cycleTrainRow(rows[termTrainCursor], 1);
-  } else if (k === 'Enter' || k === 'NumpadEnter' || k === 'Space') {
     const id = rows[termTrainCursor];
-    if (id === 'back') { exitAITraining(); return; }
-    if (id === 'toggle') {
-      if (isTraining()) stopTraining();
-      else startTraining();
-      renderTermMenu();
-      return;
-    }
-    if (id === 'pop' || id === 'gens') {
-      // Custom numeric entry on top of the preset cycling.
-      const cur = id === 'pop' ? trainSettings.populationSize : trainSettings.maxGenerations;
-      const raw = prompt(`Enter ${id === 'pop' ? 'population size (2-200)' : 'max generations (1-2000)'}:`, String(cur));
-      if (raw !== null) {
-        const v = parseInt(raw, 10);
-        if (Number.isFinite(v)) {
-          if (id === 'pop') trainSettings.populationSize = Math.max(2, Math.min(200, v));
-          else trainSettings.maxGenerations = Math.max(1, Math.min(2000, v));
-          persistAIConfig();
-        }
-      }
-      renderTermMenu();
-      return;
-    }
-    cycleTrainRow(id, 1);
+    if (id === 'view') cycleTrainView(-1);
+    else if (id === 'mchar') {
+      trainModelChar = (trainModelChar + ALL_FIGHTERS.length - 1) % ALL_FIGHTERS.length;
+      trainModelSel = 0;
+      refreshTrainCaches();
+    } else cycleTrainRowLeft(id);
+  } else if (k === 'ArrowRight' || k === 'KeyD' || k === 'Equal' || k === 'NumpadAdd') {
+    const id = rows[termTrainCursor];
+    if (id === 'view') cycleTrainView(1);
+    else if (id === 'mchar') {
+      trainModelChar = (trainModelChar + 1) % ALL_FIGHTERS.length;
+      trainModelSel = 0;
+      refreshTrainCaches();
+    } else if (trainSetupValueId(id)) trainActivateRow(id, false);
+  } else if (k === 'Enter' || k === 'NumpadEnter' || k === 'Space') {
+    trainActivateRow(rows[termTrainCursor], true);
+    renderTermMenu();
+    return;
   } else if (k.slice(0, 5) === 'Digit') {
     const n = parseInt(k.slice(5), 10);
     if (n >= 1 && n <= rows.length) termTrainCursor = n - 1;
@@ -1993,6 +2874,16 @@ function onAITrainingKey(e) {
   }
   SFX.menuSelect();
   renderTermMenu();
+}
+
+// Left/Right on setup value rows cycles the value (click parity).
+function trainSetupValueId(id) {
+  return ['ai1', 'ai2', 'pop', 'gens', 'mut', 'speed', 'showsim', 'mode', 'opp', 'startmode', 'opdiff', 'evaln'].includes(id);
+}
+function cycleTrainRowLeft(id) {
+  if (!trainSetupValueId(id)) return;
+  if (isTraining() && ['ai1', 'ai2', 'pop', 'gens', 'mut', 'speed', 'mode', 'opp', 'startmode', 'opdiff'].includes(id)) return;
+  cycleTrainRow(id, -1);
 }
 
 function renderTermMenu() {
@@ -2055,6 +2946,7 @@ function renderTermMenu() {
         SFX.menuSelect();
         enterMapSettings();
       });
+
     } else if (row.id === 'mode' || row.id === 'aiDifficulty') {
       line.addEventListener('click', () => {
         termCursor = i;
@@ -2110,7 +3002,7 @@ function updateTermHints() {
   } else if (termMode === 'handGear') {
     h.innerHTML = 'HAND GEAR dresses each hand separately. EDITING HAND picks which arm LEFT/RIGHT GEAR, SIZE, ANGLE and FLIP act on. '
       + 'MATCH BOTH HANDS copies the edited hand onto the other, R resets both to the character default. '
-      + 'ESC/Backspace = back. Auto-saves per fighter.';
+      + 'ESC/Backspace = back. Auto-saves per fighter.'
   } else if (termMode === 'mapSettings') {
      h.innerHTML = 'MAP SETTINGS: UP/DOWN to select. LEFT/RIGHT to cycle colors. ENTER to input custom color, CLICK to cycle. ESC/BACKSPACE to go back.';
    } else if (termMode === 'aiTraining') {
@@ -2298,38 +3190,15 @@ function onMapSettingsKey(e) {
       cycleMapSetting(row, 1);
       return;
     }
-    // For color settings, prompt for custom input
+    // For color settings, focus the row's inline hex field for custom input.
     if (row.type === 'color') {
-      const currentValue = typeof row.value === 'function' ? row.value() : row.value;
-      const input = prompt('Enter color (HEX, RGB, or color name):', currentValue || '#ffffff');
-      if (input !== null) {
-        // Simple validation - if it's not empty, try to use it
-        // The browser will handle invalid colors in the CSS parsing
-        if (input.trim() !== '') {
-          if (row.id === 'mapBgColor') {
-            mapSettings.backgroundColor = input.trim();
-          } else if (row.id === 'mapPlatColor') {
-            // Handle special case for "DEFAULT"
-            if (input.trim().toUpperCase() === 'DEFAULT') {
-              mapSettings.platformColor = null;
-            } else {
-              mapSettings.platformColor = input.trim();
-            }
-          }
-          persistMapSettings();
-          if (row.id === 'mapBgColor') {
-            rebuildBackgroundCanvas();
-          } else {
-            // Clear custom gradient cache so platforms redraw with new color
-            if (stage && stage.platforms) {
-              for (const plat of stage.platforms) {
-                plat._customGradient = null;
-                plat._customColor = null;
-              }
-            }
-          }
-        }
-      }
+      try {
+        const rows = termLinesEl ? termLinesEl.children : null;
+        // Header occupies the first child; rows follow in order.
+        const line = rows ? rows[termMapCursor + 1] : null;
+        const hex = line ? line.querySelector('input.hex') : null;
+        if (hex) { hex.focus(); hex.select(); }
+      } catch (_) {}
       return;
     }
   } else {
@@ -2601,8 +3470,12 @@ function adjustAccyRow(row, dir, coarse) {
 const ACCY_PREVIEW_RADIUS = 26;  // in-game ball radius
 const ACCY_PREVIEW_ZOOM = 3.4;   // scale-up so the small fighter fills the panel
 
-function drawAccyMinifig(ctx, x, y, R, f, conf, gear) {
-  const dirHand = 1; // facing right
+function drawAccyMinifig(ctx, x, y, R, f, conf, gear, opts) {
+  // Preview facing (gear editor toggle; accessories previews stay right).
+  // Anatomical mapping like the game: hands sit on the shared orbit at the
+  // settled angle, so gear/weapon sides never swap between facings.
+  const facing = !opts || opts.facingRight !== false;
+  const showGuides = !!(opts && opts.guides);
 
   // Ground shadow
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
@@ -2615,14 +3488,17 @@ function drawAccyMinifig(ctx, x, y, R, f, conf, gear) {
     drawAccessory(ctx, x, y, R, conf);
   }
 
-  // Neutral hands: back (non-striking) hand behind the body, front over it.
-  const neutralPose = (handConfig.actions && handConfig.actions.neutral) || {
-    start: { back: { x: 0.7, y: 0.35 }, front: { x: 0.7, y: 0.12 } },
-  };
+  // Orbit base hands at the preview facing (settled orbit angle, no travel):
+  // the same canonical arrangement the game draws, so the preview shows the
+  // real rest pose with correct anatomical sides in both facings.
+  const previewPhi = orbitTarget(facing);
+  const oPR = orbitHandPose(previewPhi, 'right', {});
+  const oPL = orbitHandPose(previewPhi, 'left', {});
+  const previewFront = orbitFrontSide(previewPhi, facing, false);
+  const previewBack = previewFront === 'right' ? 'left' : 'right';
+  const previewPosOf = (side) => (side === 'right' ? oPR : oPL);
   const handR = R * 0.35;
   const handFill = resolveHandColor(f.id, f.color);
-  // The minifig faces right, so its leading (front) hand is the fighter's RIGHT
-  // hand and the trailing one is the LEFT â€” the same mapping drawFighter uses.
   const handState = (hx, hy, side) => {
     const px = x + hx, py = y + hy;
     ctx.beginPath();
@@ -2632,11 +3508,27 @@ function drawAccyMinifig(ctx, x, y, R, f, conf, gear) {
     ctx.strokeStyle = '#222222';
     ctx.lineWidth = 2.5 / ACCY_PREVIEW_ZOOM;
     ctx.stroke();
-    if (gear && gear[side]) drawHandGear(ctx, px, py, handR, gear[side]);
+    // Fist gear hides where a held weapon grips (same rule as in game).
+    if (gear && gear[side] && !holdCoversSide({ _fighterDef: f }, side)) {
+      drawHandGear(ctx, px, py, handR, gear[side], !facing);
+    }
+    return { px, py };
+  };
+
+  // Fake fighter for the shared held layer (orbit rest pose, preview facing).
+  const fake = {
+    x, y, radius: R, facingRight: facing, _fighterDef: f,
+    _handFront: { x: previewPosOf(previewFront).x * R, y: previewPosOf(previewFront).y * R },
+    _handBack: { x: previewPosOf(previewBack).x * R, y: previewPosOf(previewBack).y * R },
   };
 
   // Back hand (behind the body)
-  handState(-dirHand * R * neutralPose.start.back.x, R * neutralPose.start.back.y, 'left');
+  const backPt = handState(previewPosOf(previewBack).x * R, previewPosOf(previewBack).y * R, previewBack);
+
+  // Persistent held weapons through the shared layer — back under the body,
+  // front over it (grip hidden unless overHand), exactly like the game.
+  drawHeldLayer(ctx, fake, x, y, 'back', false);
+  drawHeldLayer(ctx, fake, x, y, 'back', true);
 
   // Body ball + skin, exactly the in-game formula
   const skinEntry = getSkinImage(f.skin);
@@ -2663,7 +3555,49 @@ function drawAccyMinifig(ctx, x, y, R, f, conf, gear) {
   ctx.stroke();
 
   // Front hand (over the body)
-  handState(dirHand * R * neutralPose.start.front.x, R * neutralPose.start.front.y, 'right');
+  const frontPt = handState(previewPosOf(previewFront).x * R, previewPosOf(previewFront).y * R, previewFront);
+
+  // Front-layer held weapons (grip hidden unless overHand), then guides.
+  drawHeldLayer(ctx, fake, x, y, 'front', false);
+  drawHeldLayer(ctx, fake, x, y, 'front', true);
+
+  // Anchor + grip guides (gear editor toggle): gold rings on the fist
+  // anchors, cyan dots on each held weapon's grip with a connecting line.
+  if (showGuides) {
+    ctx.save();
+    ctx.lineWidth = 2 / ACCY_PREVIEW_ZOOM;
+    ctx.strokeStyle = '#d9a92e';
+    for (const pt of [backPt, frontPt]) {
+      if (!pt) continue;
+      ctx.beginPath();
+      ctx.arc(pt.px, pt.py, handR * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    try {
+      const held = resolveHeld(f);
+      const dir = facing ? 1 : -1;
+      if (held) {
+        for (const e of held) {
+          if (!e) continue;
+          const slot = { _fighterDef: f, facingRight: facing };
+          const bs = resolveHoldSlot(e.hand || (e.hands === 'both' ? (e.primary || 'lead') : 'right'), slot);
+          const hp = bs === previewFront ? fake._handFront : fake._handBack;
+          const gx = x + hp.x + (e.mirror !== false ? dir : 1) * (e.dx || 0) * R;
+          const gy = y + hp.y + (e.dy || 0) * R;
+          ctx.strokeStyle = '#1d6fd6';
+          ctx.beginPath();
+          ctx.moveTo(x + hp.x, y + hp.y);
+          ctx.lineTo(gx, gy);
+          ctx.stroke();
+          ctx.fillStyle = '#1d9fd6';
+          ctx.beginPath();
+          ctx.arc(gx, gy, 4 / ACCY_PREVIEW_ZOOM + 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } catch (_) {}
+    ctx.restore();
+  }
 
   // Front-layer accessory on top
   if (conf && conf.type && conf.type !== 'none' && conf.layer !== 'behind') {
@@ -2920,7 +3854,27 @@ const GEAR_ROWS = [
   // Labels carry the hand they act on, so they are built per render.
   { type: 'size',  label: () => `${termGearHand.toUpperCase()} SIZE` },
   { type: 'angle', label: () => `${termGearHand.toUpperCase()} ANGLE` },
+  { type: 'shiftx', label: () => `${termGearHand.toUpperCase()} X OFFSET` },
+  { type: 'shifty', label: () => `${termGearHand.toUpperCase()} Y OFFSET` },
   { type: 'flip',  label: () => `${termGearHand.toUpperCase()} FLIP` },
+  // Universal rig + held-weapon rows (handRig.js). PRIMARY/BLEND tune the
+  // shared rig; the WPN rows edit the editing hand's held entry (created on
+  // first use, cleared by RESET RIG). PREVIEW/GUIDES are display-only.
+  { type: 'primary', label: 'PRIMARY HAND' },
+  { type: 'blend', label: 'FACE TRANSITION' },
+  { type: 'orbitdur', label: 'ORBIT DURATION' },
+  { type: 'orbitsnap', label: 'WEAPON SNAP' },
+  { type: 'weapon', label: () => `${termGearHand.toUpperCase()} WEAPON` },
+  { type: 'wscale', label: () => `${termGearHand.toUpperCase()} WPN SIZE` },
+  { type: 'wangle', label: () => `${termGearHand.toUpperCase()} WPN ANGLE` },
+  { type: 'wx', label: () => `${termGearHand.toUpperCase()} WPN X OFF` },
+  { type: 'wy', label: () => `${termGearHand.toUpperCase()} WPN Y OFF` },
+  { type: 'wlayer', label: () => `${termGearHand.toUpperCase()} WPN LAYER` },
+  { type: 'wmirror', label: () => `${termGearHand.toUpperCase()} WPN MIRROR` },
+  { type: 'wtop', label: () => `${termGearHand.toUpperCase()} WPN ON TOP` },
+  { type: 'rigreset', label: 'RESET RIG' },
+  { type: 'previewface', label: 'PREVIEW FACING' },
+  { type: 'guides', label: 'GUIDES' },
   { type: 'match', label: 'MATCH BOTH HANDS' },
   { type: 'reset', label: 'RESET TO DEFAULT' },
 ];
@@ -2943,11 +3897,96 @@ function editGearHand(f, side, mutate) {
   renderTermMenu();
 }
 
+// ── Rig + held-weapon editing helpers ────────────────────────────────────
+// The editor works on a mutable COPY of the effective held array (def config
+// overlaid by the rig-store override); every write saves the copy back via
+// saveRig, so the game keeps reading an immutable array per frame.
+function editHeldCopy(f) {
+  const cur = resolveHeld(f);
+  return (cur || []).map((e) => ({ ...(e || {}) }));
+}
+const _rigProbe = { _fighterDef: null, facingRight: true };
+// Index of the one-handed entry covering a body side, or -1. Both-handed
+// entries match through their primary slot.
+function rigEntryIndex(copy, f, bodySide) {
+  _rigProbe._fighterDef = f;
+  for (let i = 0; i < copy.length; i++) {
+    const e = copy[i];
+    if (!e) continue;
+    const slot = e.hands === 'both'
+      ? resolveHoldSlot(e.primary || 'lead', _rigProbe)
+      : resolveHoldSlot(e.hand || 'right', _rigProbe);
+    if (slot === bodySide) return i;
+  }
+  return -1;
+}
+function rigWeaponIds() {
+  const ids = ['NONE'];
+  try {
+    for (const w of allWeapons()) if (w && w.id) ids.push(w.id);
+  } catch (_) {}
+  return ids;
+}
+// Read helpers for the value column (no creation, no saving).
+function rigEntryForValue(f, side) {
+  const copy = editHeldCopy(f);
+  const idx = rigEntryIndex(copy, f, side);
+  return idx >= 0 ? copy[idx] : null;
+}
+function rigEntryWeapon(f, side) {
+  const e = rigEntryForValue(f, side);
+  return (e && e.weapon) || null;
+}
+function rigEntryProp(f, side, key, fallback) {
+  const e = rigEntryForValue(f, side);
+  if (!e) return fallback;
+  const v = e[key];
+  return v === undefined ? fallback : v;
+}
+function rigRowNumber(f, side, rowType) {  if (rowType === 'blend') {
+  const b = getRig(f.id).blend;
+  return typeof b === 'number' ? b : 0.42;
+}
+  if (rowType === 'orbitdur') return orbitDur(f);
+  if (rowType === 'orbitsnap') return orbitSnap(f);
+  const copy = editHeldCopy(f);
+  const e = copy[rigEntryIndex(copy, f, side)];
+  if (rowType === 'wscale') return e && typeof e.scale === 'number' ? e.scale : 1;
+  if (rowType === 'wangle') return e && typeof e.angle === 'number' ? e.angle : 0;
+  if (rowType === 'wx') return e && typeof e.dx === 'number' ? e.dx : 0;
+  if (rowType === 'wy') return e && typeof e.dy === 'number' ? e.dy : 0;
+  return 0;
+}
+function rigWriteNumber(f, side, rowType, v) {
+  if (rowType === 'blend') {
+    saveRig(f.id, { blend: Math.max(0.1, Math.min(1, v)) });
+    return;
+  }
+  if (rowType === 'orbitdur' || rowType === 'orbitsnap') {
+    const cur = (getRig(f.id).orbit && typeof getRig(f.id).orbit === 'object') ? { ...getRig(f.id).orbit } : {};
+    if (rowType === 'orbitdur') cur.dur = Math.max(0.05, Math.min(1, v));
+    else cur.snap = Math.max(0, Math.min(1, v));
+    saveRig(f.id, { orbit: cur });
+    return;
+  }
+  const copy = editHeldCopy(f);
+  let idx = rigEntryIndex(copy, f, side);
+  if (idx < 0) {
+    copy.push({ weapon: null, hand: side, scale: 1, angle: 0, dx: 0, dy: 0, mirror: true, layer: 'front' });
+    idx = copy.length - 1;
+  }
+  const e = copy[idx];
+  if (rowType === 'wscale') e.scale = Math.max(0.2, Math.min(2.5, v));
+  else if (rowType === 'wangle') e.angle = Math.max(-180, Math.min(180, v));
+  else if (rowType === 'wx') e.dx = Math.max(-2, Math.min(2, v));
+  else if (rowType === 'wy') e.dy = Math.max(-2, Math.min(2, v));
+  saveRig(f.id, { held: copy });
+}
+
 function adjustGearRow(row, dir, coarse) {
   const f = ALL_FIGHTERS[previewFighterIdx];
   const side = termGearHand;
   const other = side === 'left' ? 'right' : 'left';
-
   if (row.type === 'fighter') {
     previewFighterIdx = (previewFighterIdx + dir + ALL_FIGHTERS.length) % ALL_FIGHTERS.length;
     SFX.menuSelect();
@@ -2981,8 +4020,99 @@ function adjustGearRow(row, dir, coarse) {
     });
     return;
   }
+  // Hand-space nudge in hand-radius units (+x toward the fist's outboard side
+  // after mirroring, +y down) — same bounds as the accessories editor.
+  if (row.type === 'shiftx') {
+    editGearHand(f, side, (conf) => {
+      conf.shiftX = Math.min(2.0, Math.max(-1.2, (conf.shiftX || 0) + dir * (coarse ? 0.1 : 0.02)));
+    });
+    return;
+  }
+  if (row.type === 'shifty') {
+    editGearHand(f, side, (conf) => {
+      conf.shiftY = Math.min(2.0, Math.max(-1.5, (conf.shiftY || 0) + dir * (coarse ? 0.1 : 0.02)));
+    });
+    return;
+  }
   if (row.type === 'flip') {
     editGearHand(f, side, (conf) => { conf.flip = !conf.flip; });
+    return;
+  }
+  // ── Universal rig rows ──
+  if (row.type === 'primary') {
+    // Which anatomical slot the 'lead' hand resolves to (trail follows).
+    saveRig(f.id, { primary: dir >= 0 ? 'right' : 'left' });
+    SFX.menuSelect();
+    renderTermMenu();
+    return;
+  }
+  if (row.type === 'blend' || row.type === 'orbitdur' || row.type === 'orbitsnap' || row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
+    const cur = rigRowNumber(f, side, row.type);
+    const step = row.type === 'blend' ? 0.01 : row.type === 'orbitdur' ? 0.01
+      : row.type === 'orbitsnap' ? 0.05 : row.type === 'wscale' ? 0.01
+      : row.type === 'wangle' ? 1 : 0.02;
+    const jump = row.type === 'blend' ? 0.1 : row.type === 'orbitdur' ? 0.1
+      : row.type === 'orbitsnap' ? 0.25 : row.type === 'wscale' ? 0.1
+      : row.type === 'wangle' ? 10 : 0.1;
+    rigWriteNumber(f, side, row.type, cur + dir * (coarse ? jump : step));
+    SFX.menuSelect();
+    renderTermMenu();
+    return;
+  }
+  if (row.type === 'weapon') {
+    const ids = rigWeaponIds();
+    const copy = editHeldCopy(f);
+    const idx = rigEntryIndex(copy, f, side);
+    const curId = idx >= 0 && copy[idx].weapon ? copy[idx].weapon : 'NONE';
+    let at = ids.indexOf(curId);
+    if (at < 0) at = 0;
+    const next = ids[(at + dir + ids.length) % ids.length];
+    if (next === 'NONE') {
+      if (idx >= 0) copy.splice(idx, 1);
+    } else if (idx >= 0) {
+      copy[idx] = { ...copy[idx], weapon: next };
+    } else {
+      copy.push({ weapon: next, hand: side, scale: 1, angle: 0, dx: 0, dy: 0, mirror: true, layer: 'front' });
+    }
+    saveRig(f.id, { held: copy });
+    SFX.menuSelect();
+    renderTermMenu();
+    return;
+  }
+  if (row.type === 'wlayer' || row.type === 'wmirror' || row.type === 'wtop') {
+    const copy = editHeldCopy(f);
+    let idx = rigEntryIndex(copy, f, side);
+    if (idx < 0) {
+      copy.push({ weapon: null, hand: side, scale: 1, angle: 0, dx: 0, dy: 0, mirror: true, layer: 'front' });
+      idx = copy.length - 1;
+    }
+    const e = copy[idx];
+    if (row.type === 'wlayer') e.layer = e.layer === 'back' ? 'front' : 'back';
+    else if (row.type === 'wmirror') e.mirror = e.mirror === false;
+    else e.overHand = !e.overHand;
+    saveRig(f.id, { held: copy });
+    SFX.menuSelect();
+    renderTermMenu();
+    return;
+  }
+  if (row.type === 'rigreset') {
+    // Back to the fighter def (plus rig defaults): clears the whole override.
+    clearRig(f.id);
+    SFX.menuSelect();
+    renderTermMenu();
+    return;
+  }
+  if (row.type === 'previewface') {
+    // Display-only: previews the SAME rig facing the other way.
+    previewFacingRight = dir >= 0;
+    SFX.menuSelect();
+    renderTermMenu();
+    return;
+  }
+  if (row.type === 'guides') {
+    gearGuidesOn = dir >= 0;
+    SFX.menuSelect();
+    renderTermMenu();
     return;
   }
   if (row.type === 'match') {
@@ -2995,9 +4125,12 @@ function adjustGearRow(row, dir, coarse) {
     return;
   }
   if (row.type === 'reset') {
-    // Back to the character's own default on BOTH hands â€” the boxer comes out
-    // gloved again, everyone else comes out bare.
-    saveHandGearSetFor(f.id, { left: defaultHandGear(f.handGear), right: defaultHandGear(f.handGear) });
+    // Back to the character's own default loadout on BOTH hands — the boxer
+    // comes out gloved again, the knight sword-and-shield, everyone else bare.
+    saveHandGearSetFor(f.id, {
+      left: defaultHandGear(defaultGearIdFor(f.handGear, 'left')),
+      right: defaultHandGear(defaultGearIdFor(f.handGear, 'right')),
+    });
     SFX.menuSelect();
     renderTermMenu();
   }
@@ -3015,9 +4148,32 @@ function gearRowValue(row) {
     case 'hand': return termGearHand === 'left' ? 'LEFT' : 'RIGHT';
     case 'gearLeft': return handGearName(gear.left.type);
     case 'gearRight': return handGearName(gear.right.type);
-    case 'size': return gear[termGearHand].scale.toFixed(2);
-    case 'angle': return `${gear[termGearHand].angle}Â°`;
+    case 'size': return gear[termGearHand].scale.toFixed(2);    case 'angle': return `${gear[termGearHand].angle}Â°`;
     case 'flip': return gear[termGearHand].flip ? 'MIRRORED' : 'NORMAL';
+    case 'shiftx': return (gear[termGearHand].shiftX || 0).toFixed(2);
+    case 'shifty': return (gear[termGearHand].shiftY || 0).toFixed(2);
+    case 'primary': return (getRig(f.id).primary === 'left') ? 'LEFT' : 'RIGHT';
+    case 'blend': return rigRowNumber(f, termGearHand, 'blend').toFixed(2);
+    case 'orbitdur': return rigRowNumber(f, termGearHand, 'orbitdur').toFixed(2);
+    case 'orbitsnap': return rigRowNumber(f, termGearHand, 'orbitsnap').toFixed(2);
+    case 'weapon': {
+      const wid = rigEntryWeapon(f, termGearHand);
+      if (!wid) return 'NONE';
+      try {
+        const w = getWeapon(wid);
+        return (w && w.name ? w.name : wid).toUpperCase();
+      } catch (_) { return 'NONE'; }
+    }
+    case 'wscale': return rigRowNumber(f, termGearHand, 'wscale').toFixed(2);
+    case 'wangle': return `${Math.round(rigRowNumber(f, termGearHand, 'wangle'))}°`;
+    case 'wx': return rigRowNumber(f, termGearHand, 'wx').toFixed(2);
+    case 'wy': return rigRowNumber(f, termGearHand, 'wy').toFixed(2);
+    case 'wlayer': return rigEntryProp(f, termGearHand, 'layer', 'front') === 'back' ? 'BACK' : 'FRONT';
+    case 'wmirror': return rigEntryProp(f, termGearHand, 'mirror', true) === false ? 'NO' : 'YES';
+    case 'wtop': return rigEntryProp(f, termGearHand, 'overHand', false) ? 'YES' : 'NO';
+    case 'rigreset': return 'CLR';
+    case 'previewface': return previewFacingRight ? 'RIGHT' : 'LEFT';
+    case 'guides': return gearGuidesOn ? 'SHOW' : 'HIDE';
     default: return '';
   }
 }
@@ -3040,16 +4196,17 @@ function drawGearPreview() {
   pctx.save();
   pctx.translate(W / 2, 240);
   pctx.scale(S, S);
-  drawAccyMinifig(pctx, 0, 0, R, f, conf, gear);
+  drawAccyMinifig(pctx, 0, 0, R, f, conf, gear, { facingRight: previewFacingRight, guides: gearGuidesOn });
   pctx.restore();
 
-  // Mark the hand currently being edited so SIZE/ANGLE/FLIP have a visible
-  // subject. A ring, not a fill: it must not obscure the gear underneath.
-  const neutralPose = (handConfig.actions && handConfig.actions.neutral) || {
-    start: { back: { x: 0.7, y: 0.35 }, front: { x: 0.7, y: 0.12 } } };
+  // Mark the hand currently being edited so the rows have a visible subject.
+  // A ring, not a fill: it must not obscure the gear underneath. Uses the same
+  // orbit rest pose as the minifig above, so the ring sits on the edited
+  // anatomical hand in both facings.
+  const editPose = orbitHandPose(orbitTarget(previewFacingRight), termGearHand, {});
   const handR = R * 0.35;
-  const hx = (termGearHand === 'right' ? 1 : -1) * R * neutralPose.start[termGearHand === 'right' ? 'front' : 'back'].x;
-  const hy = R * neutralPose.start[termGearHand === 'right' ? 'front' : 'back'].y;
+  const hx = editPose.x * R;
+  const hy = editPose.y * R;
   pctx.save();
   pctx.translate(W / 2, 240);
   pctx.scale(S, S);
@@ -3065,7 +4222,10 @@ function drawGearPreview() {
   pctx.font = '11px monospace';
   pctx.fillStyle = '#444';
   pctx.fillText(`EDITING ${termGearHand.toUpperCase()} HAND`, 10, 18);
-  pctx.fillText(`L: ${handGearName(gear.left.type)}  Â·  R: ${handGearName(gear.right.type)}`, 10, 34);
+  pctx.fillText(`L: ${handGearName(gear.left.type)}  ·  R: ${handGearName(gear.right.type)}`, 10, 34);
+  const gc = gear[termGearHand];
+  pctx.fillText(`X ${(gc.shiftX || 0).toFixed(2)}  ·  Y ${(gc.shiftY || 0).toFixed(2)}`, 10, 50);
+  pctx.fillText(`FACING ${previewFacingRight ? 'RIGHT' : 'LEFT'}${gearGuidesOn ? '  ·  GUIDES ON' : ''}`, 10, 64);
   pctx.textAlign = 'center';
   pctx.font = 'bold 16px monospace';
   pctx.fillStyle = '#111';
@@ -3093,7 +4253,10 @@ function renderGearEditor() {
     line.appendChild(key);
 
     const isStepper = row.type === 'fighter' || row.type === 'hand' ||
-      row.type === 'gearLeft' || row.type === 'gearRight' || row.type === 'flip';
+      row.type === 'gearLeft' || row.type === 'gearRight' || row.type === 'flip' ||
+      row.type === 'primary' || row.type === 'weapon' || row.type === 'wlayer' ||
+      row.type === 'wmirror' || row.type === 'wtop' || row.type === 'previewface' ||
+      row.type === 'guides';
 
     if (isStepper) {
       const prevBtn = document.createElement('span');
@@ -3112,13 +4275,20 @@ function renderGearEditor() {
       line.appendChild(prevBtn);
       line.appendChild(nextBtn);
       line.appendChild(val);
-    } else if (row.type === 'size' || row.type === 'angle') {
+    } else if (row.type === 'size' || row.type === 'angle' || row.type === 'shiftx' || row.type === 'shifty') {
       const f = ALL_FIGHTERS[previewFighterIdx];
-      const confKey = row.type === 'size' ? 'scale' : 'angle';
-      const bounds = row.type === 'size'
-        ? { min: 0.4, max: 2.0, step: 0.01 }
-        : { min: -180, max: 180, step: 1 };
+      const CONF_KEY = { size: 'scale', angle: 'angle', shiftx: 'shiftX', shifty: 'shiftY' };
+      const confKey = CONF_KEY[row.type] || row.type;
+      const bounds = {
+        size: { min: 0.4, max: 2.0, step: 0.01 },
+        angle: { min: -180, max: 180, step: 1 },
+        shiftx: { min: -1.2, max: 2.0, step: 0.02 },
+        shifty: { min: -1.5, max: 2.0, step: 0.02 },
+      }[row.type];
       const startVal = loadHandGearFor(f.id, f.handGear)[termGearHand][confKey];
+      // Angles are whole degrees; everything else shows two decimals.
+      const isAngle = row.type === 'angle';
+      const fmt = (v) => (isAngle ? v : v.toFixed(2));
       const range = document.createElement('input');
       range.type = 'range';
       range.min = bounds.min;
@@ -3131,7 +4301,7 @@ function renderGearEditor() {
       num.max = bounds.max;
       num.step = bounds.step;
       num.className = 'num';
-      num.value = row.type === 'size' ? startVal.toFixed(2) : startVal;
+      num.value = fmt(startVal);
       // The row is rendered per hand, so it writes the hand that was current
       // when the control was built â€” re-read from the captured `side` rather
       // than termGearHand, which can move while a drag is in flight.
@@ -3145,18 +4315,65 @@ function renderGearEditor() {
       range.addEventListener('input', () => {
         const v = parseFloat(range.value);
         write(v);
-        num.value = row.type === 'size' ? v.toFixed(2) : v;
+        num.value = fmt(v);
       });
       num.addEventListener('change', () => {
         const v = Math.min(bounds.max, Math.max(bounds.min, parseFloat(num.value) || 1));
         const clamped = Math.round(v * 100) / 100;
         write(clamped);
         range.value = clamped;
-        num.value = row.type === 'size' ? clamped.toFixed(2) : clamped;
+        num.value = fmt(clamped);
       });
       line.appendChild(range);
       line.appendChild(num);
-    } else if (row.type === 'match' || row.type === 'reset') {
+    } else if (row.type === 'blend' || row.type === 'orbitdur' || row.type === 'orbitsnap' || row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
+      // Rig-backed numeric rows (shared rig store, not hand gear): same
+      // slider + numeric pattern as above, writing through rigWriteNumber.
+      const f = ALL_FIGHTERS[previewFighterIdx];
+      const bounds = {
+        blend: { min: 0.1, max: 1, step: 0.01 },
+        orbitdur: { min: 0.05, max: 1, step: 0.01 },
+        orbitsnap: { min: 0, max: 1, step: 0.05 },
+        wscale: { min: 0.2, max: 2.5, step: 0.01 },
+        wangle: { min: -180, max: 180, step: 1 },
+        wx: { min: -2, max: 2, step: 0.02 },
+        wy: { min: -2, max: 2, step: 0.02 },
+      }[row.type];
+      const startVal = rigRowNumber(f, termGearHand, row.type);
+      const isAngle = row.type === 'wangle';
+      const fmt = (v) => (isAngle ? Math.round(v) : v.toFixed(2));
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = bounds.min;
+      range.max = bounds.max;
+      range.step = bounds.step;
+      range.value = startVal;
+      const num = document.createElement('input');
+      num.type = 'number';
+      num.min = bounds.min;
+      num.max = bounds.max;
+      num.step = bounds.step;
+      num.className = 'num';
+      num.value = fmt(startVal);
+      const side = termGearHand;
+      const write = (v) => {
+        rigWriteNumber(f, side, row.type, v);
+        drawGearPreview();
+      };
+      range.addEventListener('input', () => {
+        const v = parseFloat(range.value);
+        write(v);
+        num.value = fmt(v);
+      });
+      num.addEventListener('change', () => {
+        const v = Math.min(bounds.max, Math.max(bounds.min, parseFloat(num.value) || 0));
+        write(Math.round(v * 100) / 100);
+        range.value = v;
+        num.value = fmt(v);
+      });
+      line.appendChild(range);
+      line.appendChild(num);
+    } else if (row.type === 'match' || row.type === 'reset' || row.type === 'rigreset') {
       const btn = document.createElement('span');
       btn.className = 'btn';
       btn.textContent = row.type === 'match' ? 'MATCH' : 'RESET';
@@ -3164,7 +4381,7 @@ function renderGearEditor() {
       const val = document.createElement('span');
       val.className = 'v';
       val.style.width = 'auto';
-      val.textContent = row.type === 'match' ? 'COPY' : 'R';
+      val.textContent = row.type === 'match' ? 'COPY' : (row.type === 'rigreset' ? 'CLR' : 'R');
       line.appendChild(btn);
       line.appendChild(val);
     }
@@ -3351,6 +4568,14 @@ function startNewMatch() {
     airSpeed: (f1Def.runSpeed || 91) * 0.85,
     jumpForce: f1Def.jumpForce || 680,
     doubleJumpForce: (f1Def.jumpForce || 680) * 1.2,
+    gravityMul: f1Def.gravityMul || 1,
+    fallMaxMul: f1Def.fallMaxMul || 1,
+    airAccelMul: f1Def.airAccelMul || 1,
+    recoveryMul: f1Def.recoveryMul || 1,
+    launchResist: f1Def.launchResist || 1,
+    recoveryStrength: f1Def.recoveryStrength || 1,
+    recoveryRange: f1Def.recoveryRange || 1,
+    recoveryCooldown: f1Def.recoveryCooldown || 0,
   });
   fighter1._fighterDef = f1Def;
   fighter1._match = null;
@@ -3368,6 +4593,14 @@ function startNewMatch() {
     airSpeed: (f2Def.runSpeed || 91) * 0.85,
     jumpForce: f2Def.jumpForce || 680,
     doubleJumpForce: (f2Def.jumpForce || 680) * 1.2,
+    gravityMul: f2Def.gravityMul || 1,
+    fallMaxMul: f2Def.fallMaxMul || 1,
+    airAccelMul: f2Def.airAccelMul || 1,
+    recoveryMul: f2Def.recoveryMul || 1,
+    launchResist: f2Def.launchResist || 1,
+    recoveryStrength: f2Def.recoveryStrength || 1,
+    recoveryRange: f2Def.recoveryRange || 1,
+    recoveryCooldown: f2Def.recoveryCooldown || 0,
   });
   fighter2._fighterDef = f2Def;
   fighter2._match = null;
@@ -3425,6 +4658,7 @@ function startNewMatch() {
   // updateCamera() then tracks dynamically from these correct values.
   try { snapCameraToFit(fightersPair(), arena.width, arena.height, stage); } catch (_) {}
   isPaused = false;
+  tweakEditing = false; tweakDraft = '';
   matchOver = false;
   matchWinner = null;
   matchOverAge = 0;
@@ -3433,6 +4667,7 @@ function startNewMatch() {
   resetTimeDilation(); // and any leftover slow-mo / orange tint
   resetDamageIndicators(); // and any stale floating damage numbers
   resetWorldFx(); // clear any lingering ability particles
+  resetCinematic(); // clear any cinematic camera, tint or KO/trail particles
   // START MATCH only ARMS the match. It goes to 'ready' and waits for the player
   // to confirm with SPACE, so the fight never begins while they are still getting
   // to it. The arming keypress is dropped here on purpose - otherwise the very
@@ -3451,6 +4686,22 @@ function startNewMatch() {
 // hit zero it is a draw, otherwise the survivor wins.
 function onBlastKO(f) {
   if (matchOver || !f || f.eliminated) return;
+  // Cinematic KO pillar at the victim's exit point (before the reset moves
+  // them). Side-blast exits happen far outside the camera view, so the point
+  // is clamped into the visible rect — the pillar reads as erupting at the
+  // screen edge the fighter flew out of instead of spawning off-screen.
+  try {
+    let kx = f.x, ky = f.y;
+    try {
+      const cam = getCameraStateInto(_camScratch);
+      const zoom = cam.zoom || 1;
+      const hw = Math.max(80, arena.width / zoom / 2 - 90);
+      const hh = Math.max(80, arena.height / zoom / 2 - 90);
+      kx = Math.max(cam.x - hw, Math.min(cam.x + hw, kx));
+      ky = Math.max(cam.y - hh, Math.min(cam.y + hh, ky));
+    } catch (_) {}
+    notifyCinematicKO(kx, ky);
+  } catch (_) {}
   f.stocks = Math.max(0, (f.stocks ?? 1) - 1);
   const other = f === fighter1 ? fighter2 : fighter1;
   const otherBlasted = other && !other.eliminated && isInBlastZone(other, stage);
@@ -3474,6 +4725,10 @@ function onBlastKO(f) {
         if (who._projectiles) who._projectiles.length = 0;
         who._teleportPending = null;
         who._horse = null;
+        who._parryWindow = 0;
+        who._parryBuff = null;
+        who._knightCounter = 0;
+        who._counterResolving = false;
         clearDeadeye(who);
         clearBoxerState(who);
       } else {
@@ -3515,6 +4770,7 @@ function victoryAnimFor(f) {
   // boxer fights bare-handed, so it gets its own weaponless anim.
   if (def && def.id === 'ninja') return 'ninjaVictory';
   if (def && def.id === 'boxer') return 'boxerVictory';
+  if (def && def.id === 'knight') return 'knightVictory';
   return 'cowboyVictory';
 }
 
@@ -3558,12 +4814,17 @@ export function update(dt, now) {
     const confirm = isJustPressed(1, 'jump') || isJustPressed(1, 'attack') || isJustPressed(1, 'special')
       || isJustPressed(2, 'jump') || isJustPressed(2, 'attack') || isJustPressed(2, 'special');
     flushInput();
-    if (confirm) currentGameState = 'playing';
+    if (confirm) { currentGameState = 'playing'; _warmRenderCaches(); }
     return;
   }
 
   // Playing state
   if (!fighter1 || !fighter2) return;
+
+  // Damage panel focused: hard freeze like a pause (match clock, rematch gate
+  // and pause toggle all hold). Edges are flushed so UI keys never leak into
+  // play; T / Esc handling lives in onPlayKey, independent of update.
+  if (tweakEditing) { flushInput(); return; }
 
   // Match over does NOT freeze the simulation. The fighters keep running so the
   // winner can play their victory dance and normal physics (gravity, drift,
@@ -3657,8 +4918,17 @@ export function update(dt, now) {
     stepRosterCombat(fightersPair(), _ovCount ? _overrides : null, effDt);
   }
 
+  // Cinematic layer (Special/Finish Zoom + launch trails): real dt so its
+  // timers progress under slow-mo; processes the hit combat.js recorded and
+  // drives the cutscene camera that updateCamera below eases toward.
+  try { updateCinematic(dt, fightersPair(), stage, { matchOver }); } catch (_) {}
+
   // Floating damage numbers age with the effective world time.
   updateDamageIndicators(effDt);
+
+  // Refreshes the failed-image retry clock. Lives here, in the update, so the
+  // draw path never has to read the clock itself.
+  try { tickSkinImageRetries(); } catch (_) {}
 
   // Ability particle layer (they age with effDt so they hold with the world
   // through a hit-stop freeze and ride the Deadeye slow-mo).
@@ -3710,7 +4980,7 @@ const _MATCHUP_PAD = 5;    // room for the outline stroke to fit inside the spri
 const _MATCHUP_LIFT = 30;  // baseline height above the platform's top surface
 
 let _matchupKey = null;
-let _matchupSprite = null; // { canvas, baseline }
+let _matchupSprite = null; // { canvas, w, h, baseline }
 let _matchupFontRequested = false;
 
 // Milker is a webfont, so it arrives AFTER the first frames have already drawn.
@@ -3740,6 +5010,10 @@ function mainGroundPlatform(st) {
 // ~20-glyph 48px string twice a frame is real rasterization work; a cached
 // sprite turns the whole banner into one drawImage.
 function buildMatchupSprite(text) {
+  // Baked at WORLD_TEXT_SS like the other world-space text: the banner draws
+  // under the camera transform, so a 1x (or DPR-only) bake is magnified by
+  // the live zoom and reads as blurry. Blitted at logical size below.
+  const s = WORLD_TEXT_SS;
   const c = document.createElement('canvas');
   const m = c.getContext('2d');
   m.font = _MATCHUP_FONT;
@@ -3748,10 +5022,13 @@ function buildMatchupSprite(text) {
   const mt = m.measureText(text);
   const asc = mt.actualBoundingBoxAscent || 40;
   const desc = mt.actualBoundingBoxDescent || 12;
-  c.width = Math.max(1, Math.ceil(mt.width) + _MATCHUP_PAD * 2);
-  c.height = Math.max(1, Math.ceil(asc + desc) + _MATCHUP_PAD * 2);
+  const w = Math.max(1, Math.ceil(mt.width) + _MATCHUP_PAD * 2);
+  const h = Math.max(1, Math.ceil(asc + desc) + _MATCHUP_PAD * 2);
+  c.width = Math.max(1, Math.ceil(w * s));
+  c.height = Math.max(1, Math.ceil(h * s));
 
   // Re-apply state: resizing a canvas resets its 2D context.
+  m.scale(s, s);
   m.font = _MATCHUP_FONT;
   m.textAlign = 'left';
   m.textBaseline = 'alphabetic';
@@ -3762,7 +5039,7 @@ function buildMatchupSprite(text) {
   m.fillStyle = _MATCHUP_FILL;
   m.fillText(text, _MATCHUP_PAD, _MATCHUP_PAD + asc);
 
-  _matchupSprite = { canvas: c, baseline: _MATCHUP_PAD + asc };
+  _matchupSprite = { canvas: c, w, h, baseline: _MATCHUP_PAD + asc };
 }
 
 function drawMatchupText(ctx) {
@@ -3771,7 +5048,8 @@ function drawMatchupText(ctx) {
   if (!plat) return;
   const d1 = fighter1 && fighter1._fighterDef;
   const d2 = fighter2 && fighter2._fighterDef;
-  // The label is rebuilt only when the matchup itself changes, never per frame.
+  // The label is rebuilt only when the matchup itself changes, never per
+  // frame (the fixed-supersample bake needs no rebuild on DPR changes).
   const key = `${d1 ? d1.id : '?'}|${d2 ? d2.id : '?'}`;
   if (key !== _matchupKey) {
     _matchupKey = key;
@@ -3781,13 +5059,25 @@ function drawMatchupText(ctx) {
   if (!spr) return;
   ctx.drawImage(
     spr.canvas,
-    plat.x + plat.width / 2 - spr.canvas.width / 2,
-    (plat.y - _MATCHUP_LIFT) - spr.baseline
+    plat.x + plat.width / 2 - spr.w / 2,
+    (plat.y - _MATCHUP_LIFT) - spr.baseline,
+    spr.w,
+    spr.h
   );
 }
 
 export function render(now) {
   if (!canvas || !ctx || !arena) return;
+  // Re-sync the backing store every frame: idempotent (a comparison when
+  // nothing changed), and it picks up monitor moves / browser zoom / window
+  // resizes that main.js listeners may have missed. Resizing resets context
+  // state, so the screen transform + smoothing are re-installed right after.
+  try { syncCanvasBacking(canvas); } catch (_) {}
+  screenTransform();
+  try {
+    if (ctx.imageSmoothingEnabled !== true) ctx.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in ctx && ctx.imageSmoothingQuality !== 'high') ctx.imageSmoothingQuality = 'high';
+  } catch (_) {}
   const time = now || performance.now();
   // Default: no culling. The playing path below narrows these to the live
   // camera rect via updateViewBounds(); every other state (menu, editors,
@@ -3851,8 +5141,15 @@ export function render(now) {
   }
 
   // â”€â”€ Playing state render â”€â”€
-  // Blit the pre-rendered background in one call.
-  ctx.drawImage(_gridCanvas, 0, 0);
+  // Blit-free backdrop: the background is a FLAT OPAQUE COLOR (see
+  // rebuildBackgroundCanvas — one fillRect, nothing else), so blitting it as a
+  // 1080×1080 image every frame was painting 1,166,400 identical pixels per
+  // frame. Profiling the real game canvas measured that single call at 96.6%
+  // of ALL pixel work in the frame. A solid fillRect hits the rasterizer's
+  // opaque-fill fast path instead: no source sampling, no per-pixel alpha
+  // blend, no image surface lookup. Per-frame fill+blit pixels drop ~30x.
+  ctx.fillStyle = mapSettings.backgroundColor || DEFAULT_BACKGROUND_COLOR;
+  ctx.fillRect(0, 0, arena.width, arena.height);
 
   // Visible world rect for this frame (derived from the composed camera zoom +
   // pan): feeds the view-culling bounds in Effects / worldFx and the stage
@@ -3860,7 +5157,9 @@ export function render(now) {
   updateViewBounds();
 
   ctx.save();
-  applyCameraTransform(ctx, arena.width, arena.height);
+  // Backing scale snaps the camera pan to whole device pixels (no pan
+  // shimmer on sharp edges); the camera state itself stays fractional.
+  applyCameraTransform(ctx, arena.width, arena.height, screenScale());
 
   drawStage(ctx, stage, time, mapSettings.platformColor, _viewRect);
 
@@ -3875,6 +5174,9 @@ export function render(now) {
   // one fighter owns the window they draw last (on top); if both or neither,
   // the default order (fighter1, then fighter2) is kept.
   if (fighter1 && fighter2) {
+    // Buff auras sit BEHIND the bodies: paint before either fighter layer.
+    try { drawBoxerRollUnder(ctx, fighter1, time); } catch (_) {}
+    try { drawBoxerRollUnder(ctx, fighter2, time); } catch (_) {}
     const aFront = (fighter1._hitRenderTimer || 0) > 0;
     const bFront = (fighter2._hitRenderTimer || 0) > 0;
     if (aFront && !bFront) {
@@ -3912,6 +5214,9 @@ export function render(now) {
   // mount dust). Nothing is drawn here for ordinary movement or combat.
   drawWorldFx(ctx);
 
+  // Cinematic world-space pass (KO pillar, launch trails, final bursts).
+  try { drawCinematicWorld(ctx); } catch (_) {}
+
   ctx.restore();
 
   // Down Light time-dilation overlay: a full-screen ORANGE tint across the
@@ -3936,16 +5241,26 @@ export function render(now) {
   // Note: peek returns the live record, whose fields are curTint/curFlash
   // (tint/flash only exist on the timeDilationState() snapshot copy).
   if (tfx.active && (tfx.curTint > 0 || tfx.curFlash > 0)) {
-    const scale = 1 / (window.devicePixelRatio || 1);
-    const w = canvas.width * scale;
-    const h = canvas.height * scale;
+    screenTransform();
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = Math.min(0.55, tfx.curTint + tfx.curFlash);
     ctx.fillStyle = '#ff8a00';
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     ctx.restore();
   }
+
+  // Cinematic tint (cyan for Special Zoom, red for Finish Zoom).
+  try {
+    const ct = cinematicTint();
+    if (ct) {
+      screenTransform();
+      ctx.save();
+      ctx.globalAlpha = ct.alpha;
+      ctx.fillStyle = `rgb(${ct.color})`;
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+      ctx.restore();
+    }
+  } catch (_) {}
 
   // â”€â”€ Round HUD: stocks + round timer (screen space, always visible) â”€â”€
   // â”€â”€ Round HUD: stocks-only pill (top center). Â§42: NO timer here - the
@@ -3954,34 +5269,29 @@ export function render(now) {
   // The pill itself is toggleable in Settings (STOCK COUNTER); hiding it is
   // purely visual and never affects stock tracking or the result.
   if (mapSettings.showStocks !== false) {
-    const scale = 1 / (window.devicePixelRatio || 1);
-    const w = canvas.width * scale;
+    const s = screenTransform();
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    const cx = w / 2, y = 10;
-    const total = Math.max(fighter1.stocks ?? 0, fighter2.stocks ?? 0, matchSettings.stocks);
+    const cx = VIEW_W / 2, y = 10;
+    const s1 = fighter1.stocks ?? 0;
+    const s2 = fighter2.stocks ?? 0;
+    const total = Math.max(s1, s2, matchSettings.stocks);
     const pipR = 6, gap = 17;
     const half = (total * gap) / 2;
-    ctx.font = _fontHudBold;
     // The label never changes: measure once, reuse the cached width.
-    if (_hudLabelW < 0) _hudLabelW = ctx.measureText('P1      P2').width;
+    if (_hudLabelW < 0) {
+      ctx.font = _fontHudBold;
+      _hudLabelW = ctx.measureText('P1      P2').width;
+    }
     const pillW = _hudLabelW + half * 2 + 36, pillH = 26;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-    ctx.fillRect(cx - pillW / 2, y, pillW, pillH);
-    // Player tags
-    ctx.fillStyle = '#4a9eff';
-    ctx.textAlign = 'right';
-    ctx.fillText('P1', cx - 14, y + 6);
-    ctx.fillStyle = '#ff4a4a';
-    ctx.textAlign = 'left';
-    ctx.fillText('P2', cx + 14, y + 6);
-    // Stock pips: filled = remaining, hollow = lost. Batched by style: all
-    // fills first, then all hollow strokes, so fill/stroke state toggles once
-    // per group instead of per pip.
-    _drawPips(ctx, fighter1.stocks ?? 0, false, '#4a9eff', total, cx, y, pillH, pipR, gap);
-    _drawPips(ctx, fighter2.stocks ?? 0, true, '#ff4a4a', total, cx, y, pillH, pipR, gap);
+    // Rebuild only when the stocks (or the backing density) actually change;
+    // every other frame this is a single drawImage instead of ~20 ops
+    // including two text rasterizations.
+    const key = s1 + '|' + s2 + '|' + total + '|' + s.toFixed(3);
+    if (key !== _pillKey || _pillScale !== s) {
+      _pillKey = key;
+      _buildPillSprite(pillW, pillH, half, total, cx, y, s1, s2, pipR, gap, s);
+    }
+    if (_pillSprite) ctx.drawImage(_pillSprite.canvas, cx - pillW / 2, y, pillW, pillH);
     ctx.restore();
   }
 
@@ -3989,11 +5299,10 @@ export function render(now) {
   // Counts up from 00:00 every match. Reads matchElapsed only â€” nothing in
   // gameplay reads it back, so it can never end or affect a match.
   if (mapSettings.stopwatch !== false) {
-    const scale = 1 / (window.devicePixelRatio || 1);
-    const w = canvas.width * scale;
-    const h = canvas.height * scale;
+    screenTransform();
+    const w = VIEW_W;
+    const h = VIEW_H;
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
     ctx.font = _fontHudStopwatch;
@@ -4009,6 +5318,7 @@ export function render(now) {
     ctx.fillRect(10, h - 30, _swW + 16, 22);
     ctx.fillStyle = '#9be8ff';
     ctx.fillText(_swFull, 18, h - 8);
+    ctx.restore();
   }
 
   // Match over: deliberately NO overlay, NO scrim and NO text. The only feedback
@@ -4024,11 +5334,10 @@ export function render(now) {
 
   // Pause overlay
   if (isPaused) {
-    const scale = 1 / (window.devicePixelRatio || 1);
-    const w = canvas.width * scale;
-    const h = canvas.height * scale;
+    screenTransform();
+    const w = VIEW_W;
+    const h = VIEW_H;
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(0, 0, w, h);
     ctx.textAlign = 'center';
@@ -4045,6 +5354,64 @@ export function render(now) {
     ctx.restore();
   }
 
+  // In-match damage panel: always visible during play, bottom-right in screen
+  // space (outside the camera viewport). T focuses it for editing; the sim
+  // freezes only while focused.
+  if (currentGameState === 'playing' && (fighter1 || fighter2)) {
+    screenTransform();
+    const w = VIEW_W;
+    const h = VIEW_H;
+    ctx.save();
+    const rows = [
+      { label: 'P1', f: fighter1, color: '#4a9eff' },
+      { label: 'P2', f: fighter2, color: '#ff4a4a' },
+    ];
+    if (tweakEditing) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, w, h);
+    }
+    const pw = 208, ph = tweakEditing ? 128 : 76;
+    const px = w - pw - 12, py = h - ph - 12;
+    ctx.fillStyle = tweakEditing ? '#f3ead1' : 'rgba(0, 0, 0, 0.55)';
+    ctx.fillRect(px, py, pw, ph);
+    ctx.strokeStyle = tweakEditing ? '#111' : 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 1, py + 1, pw - 2, ph - 2);
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = tweakEditing ? '#111' : '#9be8ff';
+    ctx.font = 'bold 12px Consolas, "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(tweakEditing ? 'SET DAMAGE' : 'DAMAGE [T]', px + pw / 2, py + 8);
+    ctx.font = '13px Consolas, "Courier New", monospace';
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const ry = py + 28 + i * 22;
+      const focused = tweakEditing && i === tweakCursor;
+      if (focused) {
+        ctx.fillStyle = '#111';
+        ctx.fillRect(px + 8, ry - 2, pw - 16, 20);
+        ctx.fillStyle = '#f3ead1';
+      } else {
+        ctx.fillStyle = tweakEditing ? r.color : '#ffffff';
+      }
+      const live = r.f ? Math.round(r.f.percent) + '%' : '--';
+      const val = (focused && tweakDraft !== '') ? tweakDraft + '%' : live;
+      ctx.textAlign = 'left';
+      ctx.fillText((focused ? '> ' : '  ') + r.label, px + 16, ry);
+      ctx.textAlign = 'right';
+      ctx.fillText(val, px + pw - 16, ry);
+    }
+    if (tweakEditing) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#555';
+      ctx.font = '10px Consolas, "Courier New", monospace';
+      ctx.fillText('type 0-999 - ENTER apply', px + pw / 2, py + 74);
+      ctx.fillText('ARROWS +-1 (SHIFT x10)', px + pw / 2, py + 88);
+      ctx.fillText('UP/DOWN player - T/ESC done', px + pw / 2, py + 102);
+    }
+    ctx.restore();
+  }
+
   drawFps(ctx, arena.width, arena.height, time);
 
 // Time-dilation post-process LAST, so the colour inversion covers the entire
@@ -4053,3 +5420,153 @@ export function render(now) {
 // Down Light effect is active.
 drawTimeDilationPost(ctx, canvas);
 }
+
+
+// ── merged from core/perf.js ──
+// Game.js — centralized performance configuration, feature flags,
+// adaptive-quality state, and lightweight diagnostics.
+//
+// LAYER: performance infrastructure only. No gameplay, no physics, no input.
+// Renderers read from here; nothing here ever writes gameplay state.
+//
+// DESIGN:
+// - Sensible defaults preserve current appearance/behavior (all flags on the
+//   safe path, quality HIGH, renderScale 1).
+// - Manual quality (Settings > QUALITY) is the ceiling. Adaptive quality may
+//   only REDUCE below the ceiling under sustained load, never exceed it.
+// - Feature flags resolve to a single `modes` snapshot per frame (or on
+//   change) so hot loops check one boolean, not dozens of flags.
+// - All caches/pools stay bounded; every optimized path has a fallback.
+
+export const PERF_DEFAULTS = {
+  // Manual ceiling from Settings: 1 | 0.6 | 0.35
+  manualFxScale: 1,
+  // Detail knobs derived from the active tier (renderers read these).
+  // particleDetail: 0=full, 1=reduced, 2=minimal
+  // postDetail: 0=full, 1=simplified, 2=off (except essential tint)
+  // textCache / batchParticles / batchTrails: safe optimized paths.
+  renderScale: 1, // unused (backing resolution is owned by render.js); never changed live
+};
+
+const _cfg = { ...PERF_DEFAULTS };
+
+// Quality tiers: render-only workload. Index 0=high .. 3=verylow.
+export const QUALITY_TIERS = [
+  { name: 'high',   fxScale: 1,    particleDetail: 0, postDetail: 0 },
+  { name: 'medium', fxScale: 0.6,  particleDetail: 1, postDetail: 0 },
+  { name: 'low',    fxScale: 0.35, particleDetail: 1, postDetail: 1 },
+  { name: 'verylow', fxScale: 0.2, particleDetail: 2, postDetail: 2 },
+];
+
+let _tierIndex = 0;          // active adaptive tier (0=high)
+let _manualCeiling = 0;      // index cap from manual setting (0=high..2)
+let _listeners = [];
+
+// Feature flags — risky paths stay behind these; all default to the safe
+// optimized path that preserves visuals. `legacy` forces original code.
+export const FLAGS = {
+  batchParticles: true,
+  batchTrails: true,
+  textCache: true,
+  simplifiedPost: true,
+  legacy: false, // when true: original per-particle save/restore, per-seg trails
+};
+
+// Resolved once per frame by the orchestrator (Game.js render).
+export const modes = {
+  particleDetail: 0,
+  postDetail: 0,
+  batchParticles: true,
+  batchTrails: true,
+  textCache: true,
+  simplifiedPost: true,
+};
+
+export function getPerfConfig() { return _cfg; }
+
+export function setManualFxScale(scale) {
+  _cfg.manualFxScale = scale;
+  // Map manual scale to a ceiling tier: high->0, balanced->1, performance->2.
+  _manualCeiling = scale >= 1 ? 0 : scale >= 0.6 ? 1 : 2;
+  // Clamp active tier to the ceiling immediately (manual takes priority).
+  if (_tierIndex < _manualCeiling) _applyTier(_manualCeiling, true);
+  else _resolveModes();
+}
+
+export function onQualityChange(cb) {
+  if (typeof cb === 'function') _listeners.push(cb);
+  return () => { _listeners = _listeners.filter((f) => f !== cb); };
+}
+
+function _currentFxScale() {
+  // Active scale is min(manual ceiling scale, adaptive tier scale).
+  const manual = _cfg.manualFxScale;
+  const tier = QUALITY_TIERS[_tierIndex].fxScale;
+  return Math.min(manual, tier);
+}
+
+export function getActiveFxScale() { return _currentFxScale(); }
+export function getTierIndex() { return _tierIndex; }
+export function getTierName() { return QUALITY_TIERS[_tierIndex].name; }
+
+// ── Adaptive backing resolution ──────────────────────────────────────────
+// Backing-store scale per detail tier (index matches QUALITY_TIERS). Gentler
+// than the particle fxScale curve on purpose: resolution is the most visible
+// dimension, so tiers trim particles first and pixels second. The manual
+// Settings quality caps it from above (high=full, balanced=0.85,
+// performance=0.7); the adaptive tier picks the level within that ceiling.
+// Gameplay coordinates never see any of this — only backing pixels change,
+// and Game.js picks the resize up through its per-frame store sync, so camera,
+// UI, input mapping and VFX stay aligned at every scale.
+const TIER_RENDER_SCALES = [1, 0.8, 0.65, 0.55];
+function _manualRenderCap() {
+  const m = _cfg.manualFxScale;
+  return m >= 1 ? 1 : m >= 0.6 ? 0.85 : 0.7;
+}
+export function getActiveRenderScale() {
+  const tier = TIER_RENDER_SCALES[Math.max(0, Math.min(TIER_RENDER_SCALES.length - 1, _tierIndex))];
+  return Math.min(_manualRenderCap(), tier);
+}
+
+function _resolveModes() {
+  const t = QUALITY_TIERS[_tierIndex];
+  modes.particleDetail = t.particleDetail;
+  modes.postDetail = t.postDetail;
+  modes.batchParticles = FLAGS.batchParticles && !FLAGS.legacy;
+  modes.batchTrails = FLAGS.batchTrails && !FLAGS.legacy;
+  modes.textCache = FLAGS.textCache && !FLAGS.legacy;
+  modes.simplifiedPost = FLAGS.simplifiedPost && !FLAGS.legacy;
+}
+
+function _applyTier(idx, force) {
+  idx = Math.max(_manualCeiling, Math.min(QUALITY_TIERS.length - 1, idx));
+  if (!force && idx === _tierIndex) return false;
+  _tierIndex = idx;
+  _resolveModes();
+  const scale = _currentFxScale();
+  const payload = { tier: _tierIndex, name: getTierName(), fxScale: scale, renderScale: getActiveRenderScale(), modes };
+  for (const cb of _listeners) {
+    try { cb(payload); } catch (_) {}
+  }
+  return true;
+}
+
+// TIER SOURCE: physics.js owns the only frame-time sensor (real rAF-cadence
+// based) and calls setTierFromLoop() on tier changes. The EMA sensor that used
+// to live here (noteFrameTime / observeFrameTime) was dormant — nothing ever
+// called it — so it was removed rather than left as a second, disagreeing
+// set of thresholds.
+
+// Map physics.js quality levels (2=high,1=medium,0=low) onto detail tiers,
+// clamped by the manual ceiling. Called only on actual loop tier changes.
+export function setTierFromLoop(loopLevel) {
+  const mapped = loopLevel >= 2 ? 0 : loopLevel === 1 ? 1 : 2;
+  _applyTier(mapped, false);
+}
+
+export function resetPerf() {
+  _tierIndex = _manualCeiling;
+  _resolveModes();
+}
+
+_resolveModes();

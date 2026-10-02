@@ -69,17 +69,17 @@ function press(code) { g.dispatchEvent({ type: 'keydown', code, repeat: false, p
 function release(code) { g.dispatchEvent({ type: 'keyup', code, repeat: false, preventDefault() {} }); }
 
 // â”€â”€ Test 1: propPath interning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const core = await load('./anim/core.js');
+const core = await load('./anim.js');
 const p1 = core.propPath('hands', 'left', 'x');
 const p2 = core.propPath('hands', 'left', 'x');
 if (p1 === undefined || p1 !== p2 || p1 !== 'hands.left.x') throw new Error('propPath cache broken');
 console.log('PASS propPath interning:', p1);
 
 // â”€â”€ Load modules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const input = await load('./input/Input.js');
-const combat = await load('./fighter/combat.js');
-const sfxMod = await load('./core/sfx.js');
-const fighterMod = await load('./fighter/Fighter.js');
+const input = await load('./physics.js');
+const combat = await load('./combat.js');
+const sfxMod = await load('./assets.js');
+const fighterMod = await load('./physics.js');
 input.initInput();
 
 let nextId = 0;

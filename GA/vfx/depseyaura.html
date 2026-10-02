@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solid Green Liquid Aura Effect</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #000000;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas {
+            background: #000000;
+            display: block;
+        }
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            color: #666;
+            font-size: 15px;
+            letter-spacing: 0.5px;
+            user-select: none;
+            pointer-events: none;
+        }
+        .instructions span {
+            color: #00ff66;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="canvas" width="900" height="600"></canvas>
+    <div class="instructions">Click anywhere to reposition the <span>solid green liquid aura</span></div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Central Anchor Point (can be clicked to reposition)
+        const center = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            targetX: canvas.width / 2,
+            targetY: canvas.height / 2
+        };
+
+        // Reposition on click
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            center.targetX = e.clientX - rect.left;
+            center.targetY = e.clientY - rect.top;
+        });
+
+        // Main Render Loop
+        function animate() {
+            // Completely black background
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Smooth center tracking update
+            center.x += (center.targetX - center.x) * 0.1;
+            center.y += (center.targetY - center.y) * 0.1;
+
+            const time = Date.now() * 0.003;
+
+            // Minimalist outer aura glow (substantially reduced)
+            ctx.save();
+            const outerGlow = ctx.createRadialGradient(center.x, center.y, 40, center.x, center.y, 90);
+            outerGlow.addColorStop(0, 'rgba(0, 255, 100, 0.08)');
+            outerGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = outerGlow;
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, 90, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Wavy Liquid Aura Core Shape (Solid green fill with crisp outline)
+            ctx.save();
+            ctx.beginPath();
+            const segments = 64;
+            const baseRadius = 65;
+            
+            for (let i = 0; i <= segments; i++) {
+                const theta = (i / segments) * Math.PI * 2;
+                // Organic liquid ripple modulation
+                const wave = Math.sin(theta * 5 + time * 3) * 6 + Math.cos(theta * 3 - time * 2) * 5;
+                const r = baseRadius + wave;
+                const px = center.x + Math.cos(theta) * r;
+                const py = center.y + Math.sin(theta) * r;
+
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+
+            // Solid opaque green inside fill
+            ctx.fillStyle = '#00cc55';
+            ctx.fill();
+
+            // Sharp, defined green border stroke
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#00ff73';
+            ctx.stroke();
+            ctx.restore();
+
+            // Inner core solid highlight spot
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, 12, 0, Math.PI * 2);
+            ctx.fillStyle = '#66ff99';
+            ctx.fill();
+            ctx.restore();
+
+            requestAnimationFrame(animate);
+        }
+
+        requestAnimationFrame(animate);
+    </script>
+</body>
+</html>

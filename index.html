@@ -53,7 +53,7 @@
         display: flex; align-items: center; gap: 12px;
       }
       .term-row .k { color: #111; }
-      .term-row .v { color: #111; font-weight: bold; width: 52px; text-align: right; white-space: nowrap; }
+      .term-row .v { color: #111; font-weight: bold; min-width: 52px; text-align: right; white-space: nowrap; }
       .term-row .btn {
         border: 1px solid #111; background: #fffdf5; color: #111;
         padding: 1px 8px; cursor: pointer; user-select: none;
@@ -64,6 +64,16 @@
         flex: 1; min-width: 80px; max-width: 260px; height: 16px;
         accent-color: #111; cursor: pointer;
       }
+      .term-row input.swatch {
+        width: 30px; height: 20px; padding: 0;
+        border: 1px solid #111; background: #fffdf5; cursor: pointer;
+        flex: 0 0 auto;
+      }
+      .term-row input.hex {
+        width: 74px; background: #fffdf5; color: #111; font-family: inherit; font-size: 13px;
+        border: 1px solid #111; padding: 1px 4px; flex: 0 0 auto;
+      }
+      .term-row.on input.hex { background: #fffdf5; color: #111; }
       .term-row select {
         flex: 1; min-width: 90px; max-width: 260px;
         background: #fffdf5; color: #111; font-family: inherit; font-size: 13px;

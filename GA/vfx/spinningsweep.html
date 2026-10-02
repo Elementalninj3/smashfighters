@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Spin Attack FX</title>
+<style>
+:root{--bg:#f6f8fc;--fg:#12203a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1424;--fg:#e6edff}}
+:root[data-theme="dark"]{--bg:#0e1424;--fg:#e6edff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;overflow:hidden;touch-action:manipulation}
+canvas{display:block;width:100%;height:100%}
+#ui{position:fixed;left:0;right:0;bottom:calc(10px + env(safe-area-inset-bottom,0px));text-align:center;font-size:14px;opacity:.75;pointer-events:none}
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="ui">Tap / click / Space = spin attack · auto-replays</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let W,H,s,cx,cy;
+function resize(){const d=Math.min(devicePixelRatio||1,2);W=cv.clientWidth;H=cv.clientHeight;cv.width=W*d;cv.height=H*d;ctx.setTransform(d,0,0,d,0,0);s=Math.min(W/16,H/8);cx=W/2;cy=H*.5}
+addEventListener('resize',resize);resize();
+const R=(a,b)=>a+Math.random()*(b-a),pick=a=>a[Math.random()*a.length|0];
+const T=1.4,PAL=[['#0a5cff','#4aa8ff'],['#1f8cff','#8fdcff'],['#5cc8ff','#e2f8ff']];
+let t=-1,idle=0,blades=[],u=0,env=0,psi=-2.5;
+
+/* ---------- FX API ---------- */
+function spinFX(){t=0;blades=[];
+  for(let i=0;i<26;i++){const k=R(.05,1),bl=i>=18;
+    blades.push({k,ph:R(0,6.28),sp:R(5,9)*(1.5-k*.7),span:R(.8,1.9)*(bl?.8:1),w:s*(bl?R(.1,.18):R(.3,.75))*(1.2-k*.45),ci:i%3,bl,kr:bl?R(.9,1.5):0})}}
+addEventListener('pointerdown',()=>{if(t<0)spinFX()});
+addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();if(t<0)spinFX()}});
+
+function update(dt){
+  if(t<0){idle+=dt;if(idle>.9){idle=0;spinFX()}}
+  else{t+=dt;u=Math.min(1,t/T);env=u<.12?u/.12:u>.75?(1-u)/.25:1;
+    const e=u*u*(3-2*u);psi=-2.5+Math.PI*2*7*e;
+    for(const b of blades)b.ph+=b.sp*dt*(.3+env);
+    if(u>=1){t=-1;env=0;psi=-2.5}}
+}
+
+/* ---------- Drawing ---------- */
+const lw=()=>s*.11;
+function poly(pts){ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath()}
+function eyeAngry(x,y,r,d=1){ctx.save();ctx.translate(x,y);ctx.scale(r*d,r);ctx.beginPath();
+  ctx.moveTo(-.3,-.02);ctx.lineTo(.3,.15);ctx.quadraticCurveTo(.25,.55,-.05,.5);ctx.quadraticCurveTo(-.38,.35,-.3,-.02);
+  ctx.fillStyle='#fff';ctx.fill();ctx.restore();ctx.lineWidth=lw()*.45;ctx.strokeStyle='#000';ctx.stroke()}
+function ball(x,y,r){const g=ctx.createRadialGradient(x-r*.35,y-r*.4,r*.1,x,y,r);g.addColorStop(0,'#2a8bff');g.addColorStop(1,'#0846c9');
+  ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fillStyle=g;ctx.fill();ctx.lineWidth=lw();ctx.strokeStyle='#000';ctx.stroke();
+  ctx.beginPath();ctx.ellipse(x-r*.4,y-r*.52,r*.26,r*.12,-.6,0,7);ctx.fillStyle='rgba(255,255,255,.4)';ctx.fill();
+  eyeAngry(x-r*.25,y+r*.05,r*.55,1);eyeAngry(x+r*.45,y+r*.12,r*.4,-1)}
+function sword(x,y,a,L){ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.lineJoin='round';ctx.lineWidth=s*.07;ctx.strokeStyle='#000';
+  const g=ctx.createLinearGradient(0,-L*.07,0,L*.07);g.addColorStop(0,'#e6f0ff');g.addColorStop(1,'#7f9fe0');
+  poly([[.16*L,-.08*L],[.92*L,-.08*L],[L,0],[.92*L,.08*L],[.16*L,.08*L]]);ctx.fillStyle=g;ctx.fill();ctx.stroke();
+  ctx.fillStyle='#f5b928';ctx.beginPath();ctx.roundRect(.1*L,-.17*L,.07*L,.34*L,s*.05);ctx.fill();ctx.stroke();
+  ctx.beginPath();ctx.roundRect(-.08*L,-.05*L,.18*L,.1*L,s*.05);ctx.fill();ctx.stroke();ctx.restore()}
+function drawBlades(front){
+  if(env<=0)return;ctx.save();ctx.beginPath();front?ctx.rect(0,cy,W,H):ctx.rect(0,0,W,cy);ctx.clip();ctx.globalAlpha=Math.min(1,env*1.4);
+  const grow=.6+.4*Math.min(1,u*4);
+  for(const b of blades){const rx=s*(2.2+3.4*b.k+b.kr*.5)*grow,ry=rx*.42,layers=b.bl?[['#000',1]]:[[PAL[b.ci][0],1],[PAL[b.ci][1],.45]];
+    for(const [c,m] of layers){const o=[],q=[],n=22;
+      for(let i=0;i<=n;i++){const f=i/n,th=b.ph-b.span*(1-f),g=b.w*m*Math.sin(Math.PI*Math.pow(f,1.5))/(2*rx);
+        o.push([cx+rx*(1+g)*Math.cos(th),cy+ry*(1+g)*Math.sin(th)]);q.push([cx+rx*(1-g)*Math.cos(th),cy+ry*(1-g)*Math.sin(th)])}
+      poly(o.concat(q.reverse()));ctx.fillStyle=c;ctx.fill()}}
+  ctx.restore()}
+function swordPose(){const fl=1-.55*env,hx=cx+Math.cos(psi)*s*.95,hy=cy+Math.sin(psi)*s*.95*fl;
+  return{hx,hy,a:Math.atan2(Math.sin(psi)*fl,Math.cos(psi)),back:Math.sin(psi)<0}}
+function draw(){
+  ctx.clearRect(0,0,W,H);const hop=t<0?0:s*.3*Math.sin(Math.PI*u),by=cy-hop,sp=swordPose(),L=s*2.3;
+  ctx.fillStyle='rgba(60,70,120,.18)';ctx.beginPath();ctx.ellipse(cx,cy+s*1.15,s*(1.3-hop/s*.5),s*.16,0,0,7);ctx.fill();
+  drawBlades(false);if(sp.back)sword(sp.hx,sp.hy,sp.a,L);
+  ball(cx,by,s);
+  drawBlades(true);if(!sp.back)sword(sp.hx,sp.hy,sp.a,L);}
+let last=performance.now();
+(function loop(n){const dt=Math.min((n-last)/1000,.05);last=n;update(dt);draw();requestAnimationFrame(loop)})(last);
+</script></body></html>

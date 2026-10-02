@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smash Fighter Running Dust VFX</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #111;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas {
+            background: #1a1a2e;
+            border: 4px solid #333;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            color: #aaa;
+            font-size: 16px;
+            letter-spacing: 0.5px;
+            user-select: none;
+            pointer-events: none;
+        }
+        .instructions span {
+            color: #ffcc00;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="canvas" width="900" height="600"></canvas>
+    <div class="instructions">Use <span>Left/Right Arrow Keys</span> to run and trigger running dust VFX</div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Platform y position
+        const platformY = 450;
+
+        // Fighter Object
+        const fighter = {
+            x: canvas.width / 2,
+            y: platformY,
+            width: 50,
+            height: 80,
+            vx: 0,
+            facing: 'right',
+            isGrounded: true,
+            isAttacking: false,
+            speedThreshold: 2.5,
+            dustTimer: 0
+        };
+
+        // Array to store running dust particles
+        let dustParticles = [];
+
+        // Input tracking
+        const keys = { ArrowLeft: false, ArrowRight: false };
+        window.addEventListener('keydown', (e) => {
+            if (e.key in keys) keys[e.key] = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key in keys) keys[e.key] = false;
+        });
+
+        // Spawn running dust logic
+        function updateRunningDust(fighter) {
+            // Do not spawn running dust while airborne, standing still, or attacking
+            if (!fighter.isGrounded || fighter.isAttacking || Math.abs(fighter.vx) < fighter.speedThreshold) {
+                fighter.dustTimer = 0;
+                return;
+            }
+
+            // Frequency responds subtly to horizontal speed
+            fighter.dustTimer += Math.abs(fighter.vx);
+            
+            // Threshold required before spawning a new dust puff
+            if (fighter.dustTimer >= 18) {
+                fighter.dustTimer = 0;
+
+                // Position near the trailing foot (opposite to facing or movement direction)
+                const trailingDir = fighter.vx > 0 ? -1 : 1;
+                const footX = fighter.x + (trailingDir * fighter.width * 0.35);
+                const footY = fighter.y + fighter.height * 0.5;
+
+                // Spawn 1 or 2 tiny dust particles
+                const count = Math.random() > 0.5 ? 2 : 1;
+                for (let i = 0; i < count; i++) {
+                    const speedFactor = Math.abs(fighter.vx) * 0.15;
+                    dustParticles.push({
+                        x: footX + (Math.random() - 0.5) * 6,
+                        y: footY + (Math.random() - 0.5) * 4,
+                        vx: (-fighter.vx * 0.2) + (Math.random() - 0.5) * 0.8, // Slightly backward
+                        vy: -0.6 - (Math.random() * 0.8 * speedFactor),          // Slightly upward
+                        radius: 5 + Math.random() * 4,
+                        shrinkSpeed: 0.25 + Math.random() * 0.15,
+                        alpha: 0.75
+                    });
+                }
+            }
+        }
+
+        // Main Animation Loop
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw grid background
+            ctx.strokeStyle = '#222244';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < canvas.width; i += 40) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
+            }
+
+            // Draw Platform
+            ctx.fillStyle = '#4a4e69';
+            ctx.fillRect(100, platformY + 40, canvas.width - 200, 20);
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#111';
+            ctx.strokeRect(100, platformY + 40, canvas.width - 200, 20);
+
+            // Update Fighter Position based on Input
+            if (keys.ArrowLeft) {
+                fighter.vx = -4.5;
+                fighter.facing = 'left';
+            } else if (keys.ArrowRight) {
+                fighter.vx = 4.5;
+                fighter.facing = 'right';
+            } else {
+                fighter.vx *= 0.8; // friction deceleration
+                if (Math.abs(fighter.vx) < 0.1) fighter.vx = 0;
+            }
+
+            fighter.x += fighter.vx;
+            // Bound to platform
+            if (fighter.x < 120) fighter.x = 120;
+            if (fighter.x > canvas.width - 120) fighter.x = canvas.width - 120;
+
+            // Trigger running dust evaluation
+            updateRunningDust(fighter);
+
+            // Update & Render Dust Particles
+            for (let i = dustParticles.length - 1; i >= 0; i--) {
+                let p = dustParticles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.radius -= p.shrinkSpeed;
+                p.alpha -= 0.05;
+
+                if (p.radius <= 0 || p.alpha <= 0) {
+                    dustParticles.splice(i, 1);
+                    continue;
+                }
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(200, 200, 200, ${p.alpha})`;
+                ctx.fill();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = `rgba(30, 30, 30, ${p.alpha})`;
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            // Draw Fighter Box & Details
+            ctx.save();
+            const renderY = platformY + 40 - fighter.height / 2;
+            ctx.beginPath();
+            ctx.roundRect(fighter.x - fighter.width / 2, renderY, fighter.width, fighter.height, 10);
+            ctx.fillStyle = '#2ed573';
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#111';
+            ctx.stroke();
+
+            // Fighter Eyes / Face
+            ctx.beginPath();
+            ctx.arc(fighter.x + (fighter.facing === 'right' ? 10 : -10), renderY + 25, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.restore();
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

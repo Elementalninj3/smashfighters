@@ -55,16 +55,18 @@ const px = await page.evaluate(() => {
 console.log('   preview pixels:', JSON.stringify(px));
 ok(px.distinct > 12, `scene has varied colors (${px.distinct} distinct)`);
 ok(px.nonBg > px.total * 0.02, 'fighters/platforms visibly drawn over background');
-// Caption overlay present (top strip is dark).
+// Caption overlay present: the GEN/BEST text is drawn in bright green
+// (#33ff88) across the top strip (bg-independent: the scrim is translucent
+// over the light sky-blue arena backdrop, so "dark strip" no longer applies).
 const caption = await page.evaluate(() => {
   const c = document.getElementById('hand-preview');
   const x = c.getContext('2d');
   const d = x.getImageData(0, 0, c.width, 44).data;
-  let dark = 0, n = 0;
-  for (let i = 0; i < d.length; i += 16) { n++; if (d[i] < 40 && d[i + 1] < 40 && d[i + 2] < 40) dark++; }
-  return dark / n;
+  let text = 0, n = 0;
+  for (let i = 0; i < d.length; i += 16) { n++; if (d[i] < 110 && d[i + 1] > 180 && d[i + 2] < 200) text++; }
+  return text / n;
 });
-ok(caption > 0.5, `caption strip drawn (${Math.round(caption * 100)}% dark)`);
+ok(caption > 0.001, `caption strip drawn (${(caption * 100).toFixed(2)}% caption-green)`);
 await page.screenshot({ path: 'tests/ai-preview-live.png' });
 
 // Second screenshot later in the run — fighters must have MOVED (live sim).

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Toony Smoke Trail - Smash Bros Style</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        canvas {
+            background: #1a1a2e;
+            border: 4px solid #333;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            cursor: grab;
+        }
+        canvas:active {
+            cursor: grabbing;
+        }
+        .instructions {
+            margin-top: 15px;
+            font-size: 16px;
+            color: #aaa;
+            letter-spacing: 0.5px;
+            user-select: none;
+        }
+        .instructions span {
+            color: #ffcc00;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="canvas" width="900" height="600"></canvas>
+    <div class="instructions">Click and <span>drag the center circle</span> around to leave a wide-spreading toony smoke trail!</div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Target (the draggable object in the middle)
+        const target = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 28,
+            isDragging: false,
+            vx: 0,
+            vy: 0,
+            lastX: canvas.width / 2,
+            lastY: canvas.height / 2
+        };
+
+        // Array to store individual smoke circles
+        let smokeParticles = [];
+        let distanceSinceLastSpawn = 0;
+        // Spacing distance so circles don't overlap when spawned
+        const spawnInterval = 25; 
+
+        // Mouse interaction events
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const dx = mouseX - target.x;
+            const dy = mouseY - target.y;
+            if (Math.sqrt(dx * dx + dy * dy) <= target.radius + 15) {
+                target.isDragging = true;
+                target.lastX = target.x;
+                target.lastY = target.y;
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!target.isDragging) return;
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // Calculate velocity for spreading/offset effect
+            target.vx = mouseX - target.x;
+            target.vy = mouseY - target.y;
+
+            target.x = mouseX;
+            target.y = mouseY;
+
+            // Track distance moved to spawn individual non-overlapping puffs
+            const movedDist = Math.hypot(target.x - target.lastX, target.y - target.lastY);
+            distanceSinceLastSpawn += movedDist;
+
+            if (distanceSinceLastSpawn >= spawnInterval) {
+                spawnSmokeParticle();
+                distanceSinceLastSpawn %= spawnInterval;
+            }
+
+            target.lastX = target.x;
+            target.lastY = target.y;
+        });
+
+        window.addEventListener('mouseup', () => {
+            target.isDragging = false;
+        });
+
+        // Touch support for mobile/tablets
+        canvas.addEventListener('touchstart', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+
+            const dx = touchX - target.x;
+            const dy = touchY - target.y;
+            if (Math.sqrt(dx * dx + dy * dy) <= target.radius + 20) {
+                target.isDragging = true;
+                target.lastX = target.x;
+                target.lastY = target.y;
+            }
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (!target.isDragging) return;
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+
+            target.vx = touchX - target.x;
+            target.vy = touchY - target.y;
+
+            target.x = touchX;
+            target.y = touchY;
+
+            const movedDist = Math.hypot(target.x - target.lastX, target.y - target.lastY);
+            distanceSinceLastSpawn += movedDist;
+
+            if (distanceSinceLastSpawn >= spawnInterval) {
+                spawnSmokeParticle();
+                distanceSinceLastSpawn %= spawnInterval;
+            }
+
+            target.lastX = target.x;
+            target.lastY = target.y;
+        });
+
+        window.addEventListener('touchend', () => {
+            target.isDragging = false;
+        });
+
+        function spawnSmokeParticle() {
+            // Wide angular and positional spread
+            const angleOffset = (Math.random() - 0.5) * 1.4;
+            const moveAngle = Math.atan2(target.vy, target.vx) + Math.PI + angleOffset;
+            
+            // Backward spread distance
+            const spreadDist = 20 + Math.random() * 35;
+
+            smokeParticles.push({
+                x: target.x + Math.cos(moveAngle) * spreadDist,
+                y: target.y + Math.sin(moveAngle) * spreadDist,
+                radius: 16 + Math.random() * 12,
+                // Reduced shrinkage rate by 60% (from ~0.9 - 1.4 down to ~0.36 - 0.56)
+                shrinkSpeed: (0.9 + Math.random() * 0.5) * 0.4 
+            });
+        }
+
+        // Main animation loop
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw grid background lines for visual feedback
+            ctx.strokeStyle = '#222244';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < canvas.width; i += 40) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
+            }
+
+            // Update and render individual grey toony smoke circles
+            for (let i = smokeParticles.length - 1; i >= 0; i--) {
+                let p = smokeParticles[i];
+                p.radius -= p.shrinkSpeed;
+
+                if (p.radius <= 0) {
+                    smokeParticles.splice(i, 1);
+                    continue;
+                }
+
+                // Render solid grey fill with clean black outline (no opacity fading)
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#b0b0b0'; // Simple grey fill
+                ctx.fill();
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#111111'; // Crisp black outline
+                ctx.stroke();
+            }
+
+            // Render the draggable target character in the middle
+            ctx.beginPath();
+            ctx.arc(target.x, target.y, target.radius, 0, Math.PI * 2);
+            ctx.fillStyle = target.isDragging ? '#ff4757' : '#2ed573';
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#111111';
+            ctx.stroke();
+
+            // Inner eye/highlight detail for toony look
+            ctx.beginPath();
+            ctx.arc(target.x - 7, target.y - 7, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

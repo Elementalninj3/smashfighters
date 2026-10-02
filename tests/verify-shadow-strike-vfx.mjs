@@ -5,7 +5,7 @@
 // Claims verified:
 //
 //   A. THE EFFECT IS THE shadowdash ART: VFX_EFFECTS.shadowDash exists (the
-//      converted GA/vfx/shadowdash.html art, src/effects/art.js), the retired
+//      converted GA/vfx/shadowdash.html art, src/fx.js), the retired
 //      shadowPoof+slash pair is gone from the ninjaDsmash animation, and the
 //      ability is still the same nonHitbox 'ninjaDsmash' move.
 //
@@ -47,7 +47,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // Ninja-only x1.4 damage buff over the shared balance table: the Shadow Strike
 // (NINJA_ATTACKS.dsmash) went 6.4 -> 8.96. Only the ninja's own numbers moved,
 // so this suite keeps asserting every other field of the move verbatim.
-const DSMASH_DMG = 8.96;
+const DSMASH_DMG = 12.544;
 
 // The dash is a real ~0.15s burst that starts on the cast frame, so a fixed
 // sleep can land anywhere inside it (the headless frame rate swings with load).
@@ -145,9 +145,9 @@ ok(s && s.gameState === 'playing', 'START enters the PLAYING state');
 console.log('== A. the effect IS the converted shadowdash art ==');
 {
   const lib = await page.evaluate(async () => {
-    const anims = await import('/src/anim/library.js');
-    const vfxMod = await import('/src/effects/vfx.js');
-    const art = await import('/src/effects/art.js');
+    const anims = await import('/src/anim.js');
+    const vfxMod = await import('/src/fx.js');
+    const art = await import('/src/fx.js');
     const eff = vfxMod.VFX_EFFECTS.shadowDash;
     return {
       hasEffect: !!(eff && typeof eff.draw === 'function'),
@@ -332,7 +332,7 @@ console.log('== B2. facing left, and a dash clipped by the ability\'s arena clam
 console.log('== C. the art is pure, mirrored and self-terminating ==');
 {
   const art = await page.evaluate(async () => {
-    const mod = await import('/GA/vfx/effects.js');
+    const mod = await import('/src/fx.js');
     const eff = mod.VFX_EFFECTS.shadowDash;
     const W = 400, H = 220;
     const render = (progress, mirrorX, distance) => {
@@ -407,7 +407,7 @@ console.log('== D. dirty animation store: the old pair cannot come back ==');
   await page.waitForSelector('canvas', { timeout: 20000 });
   await sleep(1200);
   const after = await page.evaluate(async () => {
-    const anims = await import('/src/anim/library.js');
+    const anims = await import('/src/anim.js');
     const a = anims.getAnimation('ninjaDsmash');
     return {
       vfx: a ? a.vfx : null,

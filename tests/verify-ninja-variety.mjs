@@ -36,9 +36,9 @@ ok(skin.ok && skin.w > 100 && skin.h > 100, `ninga.png loads and decodes (${skin
 
 console.log('== 2. ninja sword in weapon system ==');
 const lib = await page.evaluate(async () => {
-  const m = await import('/src/anim/weapons.js');
+  const m = await import('/src/anim.js');
   const w = m.getWeapon('ninjaSword');
-  const anims = await import('/src/anim/library.js');
+  const anims = await import('/src/anim.js');
   const ids = ['ninjaJab', 'ninjaFtilt', 'ninjaNsmash', 'ninjaUtilt', 'ninjaUsmash', 'ninjaDtilt', 'ninjaDsmash', 'ninjaNair', 'ninjaFair', 'ninjaDash'];
   const refs = {};
   for (const id of ids) {

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Light Blue Ball Barrage</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            cursor: crosshair;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="barrageCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('barrageCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Track cursor position
+        const mouse = {
+            x: canvas.width / 2 + 100,
+            y: canvas.height / 2
+        };
+
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches.length > 0) {
+                mouse.x = e.touches[0].clientX;
+                mouse.y = e.touches[0].clientY;
+            }
+        });
+
+        class Fist {
+            constructor() {
+                this.reset(true);
+            }
+
+            reset(initial = false) {
+                // Spawn strictly at the center of the screen
+                this.x = canvas.width / 2;
+                this.y = canvas.height / 2;
+
+                // Spread out in the general direction of the cursor
+                const baseAngle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
+                this.angle = baseAngle + (Math.random() - 0.5) * 0.8; 
+
+                this.speed = Math.random() * 12 + 14; 
+                this.maxDist = Math.random() * 150 + 100; 
+                this.traveled = initial ? Math.random() * this.maxDist : 0;
+                
+                this.maxScale = Math.random() * 0.5 + 0.8;
+            }
+
+            update() {
+                this.x += Math.cos(this.angle) * this.speed;
+                this.y += Math.sin(this.angle) * this.speed;
+                this.traveled += this.speed;
+
+                if (this.traveled >= this.maxDist) {
+                    this.reset();
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+
+                // Calculate progress ratio from 0 (start) to 1 (end of path)
+                const progress = this.traveled / this.maxDist;
+
+                // Scale grows larger over time
+                const currentScale = 0.05 + (this.maxScale - 0.05) * progress;
+                ctx.scale(currentScale, currentScale);
+
+                // Opacity starts at 0 and goes up to 1 (100%)
+                ctx.globalAlpha = Math.min(Math.max(progress * 1.5, 0), 1); // Fades in quickly in the first portion, stays solid
+
+                // Light blue ball with a bold black outline
+                ctx.fillStyle = '#8fd8ff';
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 4;
+
+                ctx.beginPath();
+                ctx.arc(0, 0, 22, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        }
+
+        const fists = Array.from({ length: 18 }, () => new Fist());
+
+        function animate() {
+            // Clean trail erase
+            ctx.fillStyle = 'rgba(26, 26, 26, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            fists.forEach(fist => {
+                fist.update();
+                fist.draw();
+            });
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

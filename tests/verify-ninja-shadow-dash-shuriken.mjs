@@ -20,7 +20,7 @@
 //   B. THE EXISTING SHADOW DASH VFX IS PRESERVED AND ARMED ONCE: exactly one
 //      shadowDash temp effect, on the cast frame, gone when the move ends.
 //
-//   C. THE SHURIKEN LIVES IN THE EXISTING WEAPON REGISTRY (anim/weapons.js):
+//   C. THE SHURIKEN LIVES IN THE EXISTING WEAPON REGISTRY (anim.js):
 //      registered by id, sprite-backed, mountable by an animation, and the
 //      ninjaFsmash animation really carries it. No second weapon system.
 //
@@ -46,13 +46,14 @@ import { chromium } from 'playwright';
 const URL = 'http://localhost:5173/?probe';
 const EXE  = 'C:/Users/User/AppData/Local/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe';
 
-// The ninja's damage is buffed x1.4 over the shared balance table, so the two
-// moves this suite measures are 4.8 -> 6.72 (the shuriken, whose damage lives in
-// ABILITIES.ninjaFsmash) and 2.4 -> 3.36 (the Teleport Strike, NINJA_ATTACKS.dtilt).
+// The ninja's damage is buffed x1.4 TWICE over the shared balance table
+// (see NINJA_ATTACKS header), so the two moves this suite measures are
+// 4.8 -> 9.408 (the shuriken, whose damage lives in ABILITIES.ninjaFsmash)
+// and 2.4 -> 4.704 (the Teleport Strike, NINJA_ATTACKS.dtilt).
 // Named once here so the expectations below read as "the move's own number"
 // rather than a magic literal repeated in six places.
-const SHURIKEN_DMG = 6.72;
-const DTILT_DMG = 3.36;
+const SHURIKEN_DMG = 9.408;
+const DTILT_DMG = 4.704;
 
 let passes = 0, failures = 0;
 function ok(cond, msg) {
@@ -342,8 +343,8 @@ console.log('== B. the existing Shadow Dash VFX is preserved and armed once ==')
 console.log('== C. the Shuriken is in the EXISTING weapon registry ==');
 {
   const lib = await page.evaluate(async () => {
-    const w = await import('/src/anim/weapons.js');
-    const a = await import('/src/anim/library.js');
+    const w = await import('/src/anim.js');
+    const a = await import('/src/anim.js');
     const all = w.allWeapons();
     const raw = all.find(x => x.id === 'shuriken');
     const def = w.getWeapon('shuriken');
@@ -428,7 +429,7 @@ console.log('== D. Shuriken Throw spawns at the HAND and flies forward, spinning
   // Drawn at SHURIKEN_DRAW_SCALE (1.2x) of the registered weapon's authored
   // 32px, so the blade reads as a thrown star without dwarfing the fighter.
   const authoredW = await page.evaluate(async () => {
-    const w = await import('/src/anim/weapons.js');
+    const w = await import('/src/anim.js');
     const d = w.getWeapon('shuriken');
     return d ? d.w : null;
   });
