@@ -1652,28 +1652,28 @@ const BOXER_ATTACKS = {
 // the Shield Counter stance (abilities.js) — so every blow resolves through
 // the exact same deliverHit as the rest of the roster.
 const KNIGHT_ATTACKS = {
-  jab:    { name: 'Sword Slash', anim: 'knightJab', category: 'jab', direction: 'neutral', state: 'ground', startup: 3, active: 4, recovery: 7, dmg: 4.5, kbBase: 135, kbGrowth: 0.65, angle: 18, launchAngle: 18, w: 62, h: 30, ox: 44, oy: -2 },
-  ftilt:  { name: 'Side Slash', anim: 'knightFtilt', category: 'tilt', direction: 'forward', state: 'ground', startup: 5, active: 5, recovery: 11, dmg: 7.0, kbBase: 155, kbGrowth: 0.75, angle: 30, launchAngle: 30, w: 78, h: 34, ox: 56, oy: -2 },
+  jab:    { name: 'Sword Slash', anim: 'knightJab', category: 'jab', direction: 'neutral', state: 'ground', startup: 3, active: 4, recovery: 7, dmg: 4.5, kbBase: 74, kbGrowth: 0.65, angle: 18, launchAngle: 18, w: 62, h: 30, ox: 44, oy: -2 },
+  ftilt:  { name: 'Side Slash', anim: 'knightFtilt', category: 'tilt', direction: 'forward', state: 'ground', startup: 5, active: 5, recovery: 11, dmg: 7.0, kbBase: 85, kbGrowth: 0.75, angle: 30, launchAngle: 30, w: 78, h: 34, ox: 56, oy: -2 },
   // Neutral Heavy is the Shield Counter: a rooted counter stance (the active
   // window) that answers any hit taken during it with an answering slash. The
   // retaliation numbers live on the ability; the row carries no box of its own.
   nsmash: { name: 'Shield Counter', anim: 'knightShield', category: 'special', direction: 'neutral', state: 'ground', startup: 4, active: 26, recovery: 15, dmg: 0, kbBase: 0, kbGrowth: 0, angle: 0, launchAngle: 0, w: 70, h: 60, ox: 30, oy: -10, abilityType: 'nonHitbox', abilityId: 'knightShieldCounter', abilityCfg: {} },
-  fsmash: { name: 'Charged Sword Strike', anim: 'knightFsmash', category: 'smash', direction: 'forward', state: 'ground', startup: 14, active: 5, recovery: 30, dmg: 17.0, kbBase: 330, kbGrowth: 1.9, angle: 38, launchAngle: 38, w: 92, h: 44, ox: 66, oy: -4, chargeable: true, specialZoom: { minCharge: 1.2 } },
-  utilt:  { name: 'Rising Guard', anim: 'knightUtilt', category: 'tilt', direction: 'up', state: 'ground', startup: 5, active: 5, recovery: 12, dmg: 6.5, kbBase: 150, kbGrowth: 0.7, angle: 80, launchAngle: 80, w: 50, h: 58, ox: 8, oy: -44 },
-  usmash: { name: 'Skyward Oath', anim: 'knightUsmash', category: 'smash', direction: 'up', state: 'ground', startup: 13, active: 6, recovery: 28, dmg: 15.0, kbBase: 305, kbGrowth: 1.75, angle: 85, launchAngle: 85, w: 68, h: 78, ox: 4, oy: -66, chargeable: true },
+  fsmash: { name: 'Charged Sword Strike', anim: 'knightFsmash', category: 'smash', direction: 'forward', state: 'ground', startup: 14, active: 5, recovery: 30, dmg: 17.0, kbBase: 182, kbGrowth: 1.9, angle: 38, launchAngle: 38, w: 92, h: 44, ox: 66, oy: -4, chargeable: true, specialZoom: { minCharge: 1.2 } },
+  utilt:  { name: 'Rising Guard', anim: 'knightUtilt', category: 'tilt', direction: 'up', state: 'ground', startup: 5, active: 5, recovery: 12, dmg: 6.5, kbBase: 83, kbGrowth: 0.7, angle: 80, launchAngle: 80, w: 50, h: 58, ox: 8, oy: -44 },
+  usmash: { name: 'Skyward Oath', anim: 'knightUsmash', category: 'smash', direction: 'up', state: 'ground', startup: 13, active: 6, recovery: 28, dmg: 15.0, kbBase: 168, kbGrowth: 1.75, angle: 85, launchAngle: 85, w: 68, h: 78, ox: 4, oy: -66, chargeable: true },
   // Down Light is the Shield Bash: a real strike box (strikeHitbox hands this
   // row to the registry on the cast frame) plus a short step-in owned by the
   // ability. Same designation pattern as the boxer/ninja signature rows.
-  dtilt:  { name: 'Shield Bash', anim: 'knightDtilt', category: 'special', direction: 'down', state: 'ground', startup: 5, active: 4, recovery: 12, dmg: 6.0, kbBase: 185, kbGrowth: 0.9, angle: 15, launchAngle: 15, w: 64, h: 30, ox: 48, oy: 10, abilityType: 'nonHitbox', abilityId: 'knightShieldBash', abilityCfg: {} },
-  dsmash: { name: 'Spinning Sweep', anim: 'knightDsmash', category: 'smash', direction: 'down', state: 'ground', startup: 12, active: 6, recovery: 26, dmg: 14.0, kbBase: 290, kbGrowth: 1.6, angle: 30, launchAngle: 30, w: 94, h: 38, ox: 47, oy: 8, bothSides: true },
+  dtilt:  { name: 'Shield Bash', anim: 'knightDtilt', category: 'special', direction: 'down', state: 'ground', startup: 5, active: 4, recovery: 12, dmg: 6.0, kbBase: 102, kbGrowth: 0.9, angle: 15, launchAngle: 15, w: 64, h: 30, ox: 48, oy: 10, abilityType: 'nonHitbox', abilityId: 'knightShieldBash', abilityCfg: {} },
+  dsmash: { name: 'Spinning Sweep', anim: 'knightDsmash', category: 'smash', direction: 'down', state: 'ground', startup: 12, active: 6, recovery: 26, dmg: 14.0, kbBase: 160, kbGrowth: 1.6, angle: 30, launchAngle: 30, w: 94, h: 38, ox: 47, oy: 8, bothSides: true },
   // Aerial Light is the Rising Sword Slash AND the Heroic Ascent: the shared
   // aerial-light recovery mechanic (upward boost + launch assist, one use per
   // airtime, recharged on ground touch) fires for every character's aerial
   // light, and the knight's above-average recoveryStrength makes this one a
   // genuine recovery move — no separate code path, no extra launches.
-  aerialLight: { name: 'Rising Sword Slash', anim: 'knightAerialLight', category: 'aerial', direction: 'neutral', state: 'air', startup: 5, active: 7, recovery: 13, dmg: 7.0, kbBase: 150, kbGrowth: 0.75, angle: 70, launchAngle: 70, w: 60, h: 62, ox: 6, oy: -44, air: true, usableInAir: true },
-  aerialHeavy: { name: 'Falling Sword Strike', anim: 'knightAerialHeavy', category: 'aerial', direction: 'forward', state: 'air', startup: 10, active: 8, recovery: 20, dmg: 13.5, kbBase: 270, kbGrowth: 1.5, angle: -55, launchAngle: -55, spike: true, w: 66, h: 60, ox: 48, oy: -6, air: true, usableInAir: true, recoveryX: -5, recoveryY: -8, recoveryDuration: 5 },
-  dash:   { name: 'Oath Lunge', anim: 'knightDash', category: 'dash', direction: 'forward', state: 'ground', startup: 4, active: 6, recovery: 12, dmg: 7.0, kbBase: 160, kbGrowth: 0.8, angle: 22, launchAngle: 22, w: 96, h: 46, ox: 48, oy: 0 },
+  aerialLight: { name: 'Rising Sword Slash', anim: 'knightAerialLight', category: 'aerial', direction: 'neutral', state: 'air', startup: 5, active: 7, recovery: 13, dmg: 7.0, kbBase: 83, kbGrowth: 0.75, angle: 70, launchAngle: 70, w: 60, h: 62, ox: 6, oy: -44, air: true, usableInAir: true },
+  aerialHeavy: { name: 'Falling Sword Strike', anim: 'knightAerialHeavy', category: 'aerial', direction: 'forward', state: 'air', startup: 10, active: 8, recovery: 20, dmg: 13.5, kbBase: 149, kbGrowth: 1.5, angle: -55, launchAngle: -55, spike: true, w: 66, h: 60, ox: 48, oy: -6, air: true, usableInAir: true, recoveryX: -5, recoveryY: -8, recoveryDuration: 5 },
+  dash:   { name: 'Oath Lunge', anim: 'knightDash', category: 'dash', direction: 'forward', state: 'ground', startup: 4, active: 6, recovery: 12, dmg: 7.0, kbBase: 88, kbGrowth: 0.8, angle: 22, launchAngle: 22, w: 96, h: 46, ox: 48, oy: 0 },
 };
 
 // ── Knight Shield Parry ──────────────────────────────────────────────────
@@ -1754,7 +1754,7 @@ function tryKnightParry(target, attacker) {
 // a fighter already answering (or a dodging/invulnerable attacker) can never
 // trigger a second answer — no counter ping-pong, and i-frames are respected.
 const KNIGHT_COUNTER_DEF = {
-  name: 'Shield Counter', dmg: 12.0, kbBase: 300, kbGrowth: 1.7,
+  name: 'Shield Counter', dmg: 12.0, kbBase: 165, kbGrowth: 1.7,
   angle: 40, launchAngle: 40,
 };
 function tryKnightCounter(target, attacker) {
