@@ -325,51 +325,8 @@ export const WEAPON_STORE_KEY = 'smashfighters.weapons.v2';
 const ANCHOR = (x, y) => ({ x, y });
 
 const DEFAULT_WEAPONS = [
-  {
-    id: 'sword', name: 'Sword', type: 'sword', w: 16, h: 92,
-    color: '#d8d8d8', accent: '#7b68ee', mirror: true,
-    pivot: { x: 0, y: 40 },
-    anchors: {
-      grip: ANCHOR(0, 40), tip: ANCHOR(0, -40),
-      center: ANCHOR(0, 0), custom: [ANCHOR(0, 8)],
-    },
-  },
-  {
-    id: 'gun', name: 'Gun', type: 'gun', w: 64, h: 20,
-    color: '#2b2b2b', accent: '#44aaff', mirror: true,
-    pivot: { x: -14, y: 0 },
-    anchors: {
-      grip: ANCHOR(-14, 0), tip: ANCHOR(30, 0),
-      center: ANCHOR(0, 0), custom: [ANCHOR(0, 0)],
-    },
-  },
-  {
-    id: 'hammer', name: 'Hammer', type: 'hammer', w: 96, h: 100,
-    color: '#8a6d45', accent: '#c9b17e', mirror: true,
-    pivot: { x: 0, y: 34 },
-    anchors: {
-      grip: ANCHOR(0, 34), tip: ANCHOR(0, -42),
-      center: ANCHOR(0, -12), custom: [ANCHOR(0, 34)],
-    },
-  },
-  {
-    id: 'shield', name: 'Shield', type: 'shield', w: 56, h: 66,
-    color: '#c0392b', accent: '#f1c40f', mirror: true,
-    pivot: { x: 0, y: 0 },
-    anchors: {
-      grip: ANCHOR(0, 4), tip: ANCHOR(0, -28),
-      center: ANCHOR(0, 0), custom: [ANCHOR(-18, -14)],
-    },
-  },
-  {
-    id: 'staff', name: 'Staff', type: 'staff', w: 14, h: 110,
-    color: '#7a4a9e', accent: '#e0b0ff', mirror: true,
-    pivot: { x: 0, y: 34 },
-    anchors: {
-      grip: ANCHOR(0, 34), tip: ANCHOR(0, -50),
-      center: ANCHOR(0, -4), custom: [ANCHOR(0, 34)],
-    },
-  },
+  // Sprite-only catalogue: every entry draws a GA PNG (procedural type art
+  // in drawWeapon is purely the while-loading/error fallback).
   {
     id: 'revolver', name: 'Revolver', type: 'gun', w: 64, h: 20,
     color: '#2b2b2b', accent: '#44aaff', mirror: true,
@@ -388,15 +345,6 @@ const DEFAULT_WEAPONS = [
     anchors: {
       grip: ANCHOR(-29, 3), tip: ANCHOR(30, -4),
       center: ANCHOR(0, 0), custom: [],
-    },
-  },
-  {
-    id: 'katana', name: 'Katana', type: 'sword', w: 16, h: 80,
-    color: '#34495e', accent: '#7f8c8d', mirror: true,
-    pivot: { x: 0, y: 30 },
-    anchors: {
-      grip: ANCHOR(0, 30), tip: ANCHOR(0, -40),
-      center: ANCHOR(0, -5), custom: [ANCHOR(0, 25)],
     },
   },
   // Ninja sword (GA sprite): the blade is authored diagonally (guard near
@@ -425,9 +373,9 @@ const DEFAULT_WEAPONS = [
     },
   },
   // GA sprite arms (sword.png landscape 3:2, shield.png square): the PNG draws
-  // when loaded, with the procedural type art above as the automatic fallback —
-  // the same pattern every other sprite weapon uses. Anchors are the neutral
-  // center-grip defaults; fine-tune per weapon in the weapon editor.
+  // when loaded, with drawWeapon's procedural type art as the automatic
+  // fallback — the same pattern every other sprite weapon uses. Anchors are
+  // the neutral center-grip defaults; fine-tune per weapon in the editor.
   {
     id: 'sword', name: 'Sword', type: 'sword', w: 96, h: 64,
     color: '#cfd8e3', accent: '#d9a92e', mirror: true,
@@ -445,6 +393,16 @@ const DEFAULT_WEAPONS = [
     pivot: { x: 0, y: 0 },
     anchors: {
       grip: ANCHOR(0, 0), tip: ANCHOR(0, -30),
+      center: ANCHOR(0, 0), custom: [],
+    },
+  },
+  {
+    id: 'knightsword', name: 'Knight Sword', type: 'sword', w: 96, h: 64,
+    color: '#cfd8e3', accent: '#d9a92e', mirror: true,
+    sprite: '/GA/weapons/knightsword.png',
+    pivot: { x: 0, y: 0 },
+    anchors: {
+      grip: ANCHOR(0, 0), tip: ANCHOR(44, 0),
       center: ANCHOR(0, 0), custom: [],
     },
   },
@@ -1431,15 +1389,50 @@ function migrateAbilityOnlyVfx() {
   try { localStorage.setItem(ABILITY_ONLY_VFX_MIGRATION_KEY, '1'); } catch (_) {}
 }
 
+// ── Sprite-only catalogue migration ───────────────────────────────────────
+// The catalogue is PNG-only now: drop every stored custom weapon without a
+// PNG sprite (they would otherwise keep resolving through the store merge),
+// and restore any missing built-in. Runs once.
+const SPRITE_ONLY_MIGRATION_KEY = 'smashfighters.weapons.spriteOnly.v1';
+const _isPngSprite = (w) => !!w && typeof w.sprite === 'string' && w.sprite.toLowerCase().endsWith('.png');
+
+function migrateSpriteOnlyWeapons() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (localStorage.getItem(SPRITE_ONLY_MIGRATION_KEY)) return;
+  } catch (_) { return; }
+  try {
+    const raw = localStorage.getItem(WEAPON_STORE_KEY);
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const kept = list.filter((w) => w && _isPngSprite(w));
+        if (kept.length !== list.length) {
+          localStorage.setItem(WEAPON_STORE_KEY, JSON.stringify(kept));
+        }
+      }
+    }
+  } catch (_) {}
+  let purged = false;
+  for (const [id, w] of [...weaponLib]) {
+    if (!_isPngSprite(w)) { weaponLib.delete(id); purged = true; }
+  }
+  for (const d of DEFAULT_WEAPONS) {
+    if (!weaponLib.has(d.id)) { weaponLib.set(d.id, d); purged = true; }
+  }
+  if (purged) invalidateWeaponCache();
+  try { localStorage.setItem(SPRITE_ONLY_MIGRATION_KEY, '1'); } catch (_) {}
+}
+
 // ── Bare-knight rebuild migration ─────────────────────────────────────────
-// The knight was rebuilt bare-handed (boxer-style): the knightsword /
-// knightshield weapon defs are deleted and every knight animation derives
-// unarmed. But a saved store REPLACES a built-in animation wholesale (see the
-// load loop below), so any browser where the animator ever saved is still
-// running stored knight copies carrying the old arms — and the stored weapon
-// library still resolves the retired defs. Strip weapons off every stored
-// knight* animation in place (tracks/vfx/combat untouched) and drop the
-// retired defs, once.
+// The knight was rebuilt bare-handed (boxer-style): the knightshield weapon
+// def is deleted and every knight animation derives unarmed. But a saved
+// store REPLACES a built-in animation wholesale (see the load loop below), so
+// any browser where the animator ever saved may still run stored knight
+// copies carrying the old arms. Strip weapons off every stored knight*
+// animation in place (tracks/vfx/combat untouched) and drop the retired
+// shield def, once. (The knight sword is a normal catalogue entry and is
+// left alone.)
 const BARE_KNIGHT_MIGRATION_KEY = 'smashfighters.animlib.bareKnight.v1';
 
 function migrateBareKnight() {
@@ -1462,10 +1455,9 @@ function migrateBareKnight() {
     if (raw) {
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
-        const kept = list.filter((w) => w && w.id !== 'knightsword' && w.id !== 'knightshield');
+        const kept = list.filter((w) => w && w.id !== 'knightshield');
         if (kept.length !== list.length) {
           localStorage.setItem(WEAPON_STORE_KEY, JSON.stringify(kept));
-          weaponLib.delete('knightsword');
           weaponLib.delete('knightshield');
           invalidateWeaponCache();
         }
@@ -1486,7 +1478,9 @@ try {
       migrateShadowStrikeVfx();
       migrateTeleportStrike();
       migrateAbilityOnlyVfx();
-      migrateBareKnight();
+migrateBareKnight();
+migrateSpriteOnlyWeapons();
+      migrateSpriteOnlyWeapons();
     }
   }
 } catch (err) { /* corrupt store — fall back to defaults */ }

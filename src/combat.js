@@ -4233,10 +4233,9 @@ export const ALL_FIGHTERS = [
   // No `attacks` entry: it uses the BOXER_ATTACKS table, picked by id in
   // attacksFor, the same way the ninja is.
   //
-  // `handGear` is this character's BUILT-IN hand gear, applied by
-  // loadHandGearFor only when the player has nothing stored for the fighter yet
-  // — so the boxer comes out already gloved, and the hand-gear customiser can
-  // still take the gloves off or put different gear on either hand.
+  // No `handGear`: every fighter comes out bare-fisted. (Clean-slate rule —
+  // no character ships with built-in hand gear; anything equipped later comes
+  // only from the Hand Weapons editor.)
   {
     id: 'boxer',
     name: 'Boxer',
@@ -4246,7 +4245,7 @@ export const ALL_FIGHTERS = [
     weight: 122,     // Heavyweight — launched ~15% softer than mid
     radius: 31.2,
     runSpeed: 63,     // Slowest
-    jumpForce: 690,   // Lowest jump
+    jumpForce: 690,     // Lowest jump
     gravityMul: 1.0,
     fallMaxMul: 1.0,
     airAccelMul: 1.0,
@@ -4255,7 +4254,6 @@ export const ALL_FIGHTERS = [
     recoveryStrength: 0.85, // Boxer has weaker recovery
     recoveryRange: 0.85,    // Limited horizontal reach
     recoveryCooldown: 0,
-    handGear: 'boxinggloves',
   },
   // Knight — the fourth fighter, appended last so the existing roster indices
   // (and everything that walks the list in order) are unchanged.

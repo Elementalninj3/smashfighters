@@ -5,7 +5,7 @@ import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighte
 import { openEditor, closeEditor, updateEditor, renderEditor, setEditorCloseHandler, openHitboxCustomizer, closeHitboxCustomizer, updateHitboxCustomizer, renderHitboxCustomizer, setHitboxCustomizerCloseHandler, setCustomizerMove, setWorkingBoxValue, saveCustomizer, resetCustomizerMove, getWorkingBoxes } from './editors.js';
 import { drawFighterVfx, setVfxViewBounds, warmEffectSprites, stepTimeDilation, timeDilationState, peekTimeDilation, resetTimeDilation, drawTimeDilationPost, updateDamageIndicators, drawDamageIndicators, resetDamageIndicators, updateWorldFx, drawWorldFx, resetWorldFx, setWorldFxViewBounds, setFxQuality, setParticleDetail, setPostDetail, setWorldFxBatch, setDamageTextCache, worldFxState } from './fx.js';
 import { initInput, flushInput, isJustPressed, createFighter, createDefaultStage, drawStage, updatePlatforms, isInBlastZone, onLoopQualityChange, setDestructibleViewBounds, clearDestructibleViewBounds, sanitizeDeathZone, applyDeathZoneToStage, blastRectFor, DEFAULT_DEATH_MARGINS, DEATHZONE_MIN, DEATHZONE_MAX, DEATHZONE_STEP } from './physics.js';
-import { updateCamera, applyCameraTransform, resetCamera, snapCameraToFit, updateCameraZoom, updateMatchZoom, getCameraState, getCameraStateInto, worldToScreen, VIEW_W, VIEW_H, syncCanvasBacking, backingScaleFor, setRenderScale, getSkinImage, drawFighter, drawAbilityFx, drawHorse, drawBoxerRollUnder, drawHeldLayer, holdCoversSide, handConfig, resolveHandColor, setViewBounds, setEffectBatch, warmFighterSprites, getRig, saveRig, clearRig, resolveHeld, resolveHoldSlot, orbitDur, orbitSnap, orbitHandPose, orbitFrontSide, orbitTarget, resolveOrbitRig, resolveSkinMeta, updateCinematic, drawCinematicWorld, cinematicTint, resetCinematic, notifyCinematicKO, ACCESSORIES, accessoryName, loadAccessoryFor, saveAccessoryFor, cloneAccessory, drawAccessory, tickSkinImageRetries, HAND_GEAR, handGearName, loadHandGearFor, saveHandGearFor, saveHandGearSetFor, defaultHandGear, defaultGearIdFor, drawHandGear } from './render.js';
+import { updateCamera, applyCameraTransform, resetCamera, snapCameraToFit, updateCameraZoom, updateMatchZoom, getCameraState, getCameraStateInto, worldToScreen, VIEW_W, VIEW_H, syncCanvasBacking, backingScaleFor, setRenderScale, getSkinImage, drawFighter, drawAbilityFx, drawHorse, drawBoxerRollUnder, drawHeldLayer, holdCoversSide, handConfig, resolveHandColor, setViewBounds, setEffectBatch, warmFighterSprites, saveRig, clearRig, resolveHeld, resolveHoldSlot, orbitHandPose, orbitFrontSide, orbitTarget, resolveOrbitRig, resolveSkinMeta, updateCinematic, drawCinematicWorld, cinematicTint, resetCinematic, notifyCinematicKO, ACCESSORIES, accessoryName, loadAccessoryFor, saveAccessoryFor, cloneAccessory, drawAccessory, tickSkinImageRetries, handGearName, loadHandGearFor, saveHandGearSetFor, defaultHandGear, defaultGearIdFor, drawHandGear } from './render.js';
 import { openSandboxEditor, closeSandboxEditor, updateSandboxEditor, renderSandboxEditor, isSandboxEditorOpen, getSandboxDocument, setSandboxArenaSize, startSandboxSession, stopSandboxSession, updateSandboxSession, renderSandboxSession, isSandboxPlaying, toggleSandboxPause, isSandboxPaused, setSandboxTimeScale, getSandboxTimeScale, toggleSandboxDebug, getSandboxRoster, getSandboxStage, getSandboxSessionCount } from './sandbox.js';
 
 
@@ -4124,43 +4124,19 @@ function onAccyEditorKey(e) {
 // same shape: a row list, a < / > stepper per row, live sliders, a shared
 // minifig preview, and a save on every change.
 //
-// The one structural difference is the EDITING HAND row. LEFT HAND GEAR and
-// RIGHT HAND GEAR each set their own side directly, but SIZE / ANGLE / FLIP act
-// on ONE hand at a time â€” otherwise there would be six near-identical rows. The
-// edited hand is shown in each of those row labels, so the binding is never
-// hidden, and MATCH BOTH HANDS is the shortcut for the common case.
+// Basics only: which WEAPON each hand holds, plus that weapon's
+// SIZE, X/Y offset and ANGLE. The EDITING HAND row picks which hand the WPN
+// rows act on. RESET TO DEFAULT clears the fighter's held weapons and fist
+// gear back to the built-in loadout.
 const GEAR_ROWS = [
   { type: 'fighter', label: 'PREVIEW FIGHTER' },
   { type: 'hand',     label: 'EDITING HAND' },
-  { type: 'gearLeft', label: 'LEFT HAND GEAR' },
-  { type: 'gearRight', label: 'RIGHT HAND GEAR' },
   // Labels carry the hand they act on, so they are built per render.
-  { type: 'size',  label: () => `${termGearHand.toUpperCase()} SIZE` },
-  { type: 'angle', label: () => `${termGearHand.toUpperCase()} ANGLE` },
-  { type: 'shiftx', label: () => `${termGearHand.toUpperCase()} X OFFSET` },
-  { type: 'shifty', label: () => `${termGearHand.toUpperCase()} Y OFFSET` },
-  { type: 'flip',  label: () => `${termGearHand.toUpperCase()} FLIP` },
-  // Universal rig + held-weapon rows (handRig.js). PRIMARY/BLEND tune the
-  // shared rig; the WPN rows edit the editing hand's held entry (created on
-  // first use, cleared by RESET RIG). PREVIEW/GUIDES are display-only.
-  { type: 'primary', label: 'PRIMARY HAND' },
-  { type: 'blend', label: 'FACE TRANSITION' },
-  { type: 'orbitdur', label: 'ORBIT DURATION' },
-  { type: 'orbitsnap', label: 'WEAPON SNAP' },
-  { type: 'handdist', label: 'HAND DISTANCE' },
-  { type: 'depthsize', label: 'DEPTH SIZE' },
   { type: 'weapon', label: () => `${termGearHand.toUpperCase()} WEAPON` },
   { type: 'wscale', label: () => `${termGearHand.toUpperCase()} WPN SIZE` },
   { type: 'wangle', label: () => `${termGearHand.toUpperCase()} WPN ANGLE` },
   { type: 'wx', label: () => `${termGearHand.toUpperCase()} WPN X OFF` },
   { type: 'wy', label: () => `${termGearHand.toUpperCase()} WPN Y OFF` },
-  { type: 'wlayer', label: () => `${termGearHand.toUpperCase()} WPN LAYER` },
-  { type: 'wmirror', label: () => `${termGearHand.toUpperCase()} WPN MIRROR` },
-  { type: 'wtop', label: () => `${termGearHand.toUpperCase()} WPN ON TOP` },
-  { type: 'rigreset', label: 'RESET RIG' },
-  { type: 'previewface', label: 'PREVIEW FACING' },
-  { type: 'guides', label: 'GUIDES' },
-  { type: 'match', label: 'MATCH BOTH HANDS' },
   { type: 'reset', label: 'RESET TO DEFAULT' },
 ];
 
@@ -4168,26 +4144,9 @@ function moveGearCursor(dir) {
   termGearCursor = (termGearCursor + dir + GEAR_ROWS.length) % GEAR_ROWS.length;
 }
 
-// Read-modify-write one hand. `mutate` returns nothing and edits `conf` in
-// place; a null mutate means the row only changed which hand is targeted (the
-// EDITING HAND row), which must NOT be persisted — termGearHand is UI state,
-// and writing it out would be meaningless data in the store.
-// `ensureVisible`: transform rows (size/angle/offsets/flip) pass true —
-// tweaking the shape of a bare ('none') hand would otherwise edit invisible
-// gear, so a visible default (boxing gloves) is equipped first, mirroring how
-// the rig rows materialize a held entry on first use. Type-cycling rows pass
-// false so explicitly unequipping to NONE keeps working.
-function editGearHand(f, side, mutate, ensureVisible) {
-  const gear = loadHandGearFor(f.id, f.handGear);
-  if (mutate) {
-    if (ensureVisible && gear[side].type === 'none') gear[side].type = 'boxinggloves';
-    mutate(gear[side]);
-    saveHandGearFor(f.id, side, gear[side]);
-  }
-  SFX.menuSelect();
-  renderTermMenu();
-}
-
+// Basics-only hand editor: EDITING HAND picks the side (UI state, never
+// persisted); every other row writes the editing hand's held-weapon entry
+// through the rig store via saveRig.
 // ── Rig + held-weapon editing helpers ────────────────────────────────────
 // The editor works on a mutable COPY of the effective held array (def config
 // overlaid by the rig-store override); every write saves the copy back via
@@ -4228,20 +4187,7 @@ function rigEntryWeapon(f, side) {
   const e = rigEntryForValue(f, side);
   return (e && e.weapon) || null;
 }
-function rigEntryProp(f, side, key, fallback) {
-  const e = rigEntryForValue(f, side);
-  if (!e) return fallback;
-  const v = e[key];
-  return v === undefined ? fallback : v;
-}
-function rigRowNumber(f, side, rowType) {  if (rowType === 'blend') {
-  const b = getRig(f.id).blend;
-  return typeof b === 'number' ? b : 0.42;
-}
-  if (rowType === 'orbitdur') return orbitDur(f);
-  if (rowType === 'orbitsnap') return orbitSnap(f);
-  if (rowType === 'handdist') return resolveOrbitRig(f).handDist;
-  if (rowType === 'depthsize') return resolveOrbitRig(f).depthSize;
+function rigRowNumber(f, side, rowType) {
   const copy = editHeldCopy(f);
   const e = copy[rigEntryIndex(copy, f, side)];
   if (rowType === 'wscale') return e && typeof e.scale === 'number' ? e.scale : 1;
@@ -4251,19 +4197,6 @@ function rigRowNumber(f, side, rowType) {  if (rowType === 'blend') {
   return 0;
 }
 function rigWriteNumber(f, side, rowType, v) {
-  if (rowType === 'blend') {
-    saveRig(f.id, { blend: Math.max(0.1, Math.min(1, v)) });
-    return;
-  }
-  if (rowType === 'orbitdur' || rowType === 'orbitsnap' || rowType === 'handdist' || rowType === 'depthsize') {
-    const cur = (getRig(f.id).orbit && typeof getRig(f.id).orbit === 'object') ? { ...getRig(f.id).orbit } : {};
-    if (rowType === 'orbitdur') cur.dur = Math.max(0.05, Math.min(1, v));
-    else if (rowType === 'orbitsnap') cur.snap = Math.max(0, Math.min(1, v));
-    else if (rowType === 'handdist') cur.handDist = Math.max(0.4, Math.min(2.5, v));
-    else cur.depthSize = Math.max(0, Math.min(0.8, v));
-    saveRig(f.id, { orbit: cur });
-    return;
-  }
   const copy = editHeldCopy(f);
   let idx = rigEntryIndex(copy, f, side);
   if (idx < 0) {
@@ -4294,62 +4227,11 @@ function adjustGearRow(row, dir, coarse) {
     renderTermMenu();
     return;
   }
-  if (row.type === 'gearLeft' || row.type === 'gearRight') {
-    const target = row.type === 'gearLeft' ? 'left' : 'right';
-    editGearHand(f, target, (conf) => {
-      let i = HAND_GEAR.findIndex((g) => g.id === conf.type);
-      if (i < 0) i = 0;
-      conf.type = HAND_GEAR[(i + dir + HAND_GEAR.length) % HAND_GEAR.length].id;
-    });
-    return;
-  }
-  if (row.type === 'size') {
-    editGearHand(f, side, (conf) => {
-      conf.scale = Math.min(2.0, Math.max(0.4, (conf.scale || 1) + dir * (coarse ? 0.1 : 0.01)));
-    }, true);
-    return;
-  }
-  if (row.type === 'angle') {
-    editGearHand(f, side, (conf) => {
-      conf.angle = ((conf.angle || 0) + dir * (coarse ? 10 : 1) + 180) % 360 - 180;
-    }, true);
-    return;
-  }
-  // Hand-space nudge in hand-radius units (+x toward the fist's outboard side
-  // after mirroring, +y down) — same bounds as the accessories editor.
-  if (row.type === 'shiftx') {
-    editGearHand(f, side, (conf) => {
-      conf.shiftX = Math.min(2.0, Math.max(-1.2, (conf.shiftX || 0) + dir * (coarse ? 0.1 : 0.02)));
-    }, true);
-    return;
-  }
-  if (row.type === 'shifty') {
-    editGearHand(f, side, (conf) => {
-      conf.shiftY = Math.min(2.0, Math.max(-1.5, (conf.shiftY || 0) + dir * (coarse ? 0.1 : 0.02)));
-    }, true);
-    return;
-  }
-  if (row.type === 'flip') {
-    editGearHand(f, side, (conf) => { conf.flip = !conf.flip; }, true);
-    return;
-  }
-  // ── Universal rig rows ──
-  if (row.type === 'primary') {
-    // Which anatomical slot the 'lead' hand resolves to (trail follows).
-    saveRig(f.id, { primary: dir >= 0 ? 'right' : 'left' });
-    SFX.menuSelect();
-    renderTermMenu();
-    return;
-  }
-  if (row.type === 'blend' || row.type === 'orbitdur' || row.type === 'orbitsnap' || row.type === 'handdist' || row.type === 'depthsize' || row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
+  if (row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
     const cur = rigRowNumber(f, side, row.type);
-    const step = row.type === 'blend' ? 0.01 : row.type === 'orbitdur' ? 0.01
-      : row.type === 'orbitsnap' ? 0.05 : row.type === 'handdist' ? 0.02
-      : row.type === 'depthsize' ? 0.01 : row.type === 'wscale' ? 0.01
+    const step = row.type === 'wscale' ? 0.01
       : row.type === 'wangle' ? 1 : 0.02;
-    const jump = row.type === 'blend' ? 0.1 : row.type === 'orbitdur' ? 0.1
-      : row.type === 'orbitsnap' ? 0.25 : row.type === 'handdist' ? 0.2
-      : row.type === 'depthsize' ? 0.1 : row.type === 'wscale' ? 0.1
+    const jump = row.type === 'wscale' ? 0.1
       : row.type === 'wangle' ? 10 : 0.1;
     rigWriteNumber(f, side, row.type, cur + dir * (coarse ? jump : step));
     SFX.menuSelect();
@@ -4376,54 +4258,10 @@ function adjustGearRow(row, dir, coarse) {
     renderTermMenu();
     return;
   }
-  if (row.type === 'wlayer' || row.type === 'wmirror' || row.type === 'wtop') {
-    const copy = editHeldCopy(f);
-    let idx = rigEntryIndex(copy, f, side);
-    if (idx < 0) {
-      copy.push({ weapon: null, hand: side, scale: 1, angle: 0, dx: 0, dy: 0, mirror: true, layer: 'front' });
-      idx = copy.length - 1;
-    }
-    const e = copy[idx];
-    if (row.type === 'wlayer') e.layer = e.layer === 'back' ? 'front' : 'back';
-    else if (row.type === 'wmirror') e.mirror = e.mirror === false;
-    else e.overHand = !(e.overHand !== false); // toggle from the true default
-    saveRig(f.id, { held: copy });
-    SFX.menuSelect();
-    renderTermMenu();
-    return;
-  }
-  if (row.type === 'rigreset') {
-    // Back to the fighter def (plus rig defaults): clears the whole override.
-    clearRig(f.id);
-    SFX.menuSelect();
-    renderTermMenu();
-    return;
-  }
-  if (row.type === 'previewface') {
-    // Display-only: previews the SAME rig facing the other way.
-    previewFacingRight = dir >= 0;
-    SFX.menuSelect();
-    renderTermMenu();
-    return;
-  }
-  if (row.type === 'guides') {
-    gearGuidesOn = dir >= 0;
-    SFX.menuSelect();
-    renderTermMenu();
-    return;
-  }
-  if (row.type === 'match') {
-    // Copy the edited hand onto the other one. Loaded fresh so the copy
-    // includes the SIZE / ANGLE / FLIP tweaks made above, not just the type.
-    const gear = loadHandGearFor(f.id, f.handGear);
-    saveHandGearSetFor(f.id, { left: { ...gear[side] }, right: { ...gear[side] } });
-    SFX.menuSelect();
-    renderTermMenu();
-    return;
-  }
   if (row.type === 'reset') {
-    // Back to the character's own default loadout on BOTH hands — the boxer
-    // comes out gloved again, everyone else bare.
+    // Back to the character's own defaults: clears held weapons (whole rig
+    // override) plus fist gear on BOTH hands — everyone comes out bare.
+    clearRig(f.id);
     saveHandGearSetFor(f.id, {
       left: defaultHandGear(defaultGearIdFor(f.handGear, 'left')),
       right: defaultHandGear(defaultGearIdFor(f.handGear, 'right')),
@@ -4439,22 +4277,9 @@ function gearRowLabel(row) {
 
 function gearRowValue(row) {
   const f = ALL_FIGHTERS[previewFighterIdx];
-  const gear = loadHandGearFor(f.id, f.handGear);
   switch (row.type) {
     case 'fighter': return f.name;
     case 'hand': return termGearHand === 'left' ? 'LEFT' : 'RIGHT';
-    case 'gearLeft': return handGearName(gear.left.type);
-    case 'gearRight': return handGearName(gear.right.type);
-    case 'size': return gear[termGearHand].scale.toFixed(2);    case 'angle': return `${gear[termGearHand].angle}Â°`;
-    case 'flip': return gear[termGearHand].flip ? 'MIRRORED' : 'NORMAL';
-    case 'shiftx': return (gear[termGearHand].shiftX || 0).toFixed(2);
-    case 'shifty': return (gear[termGearHand].shiftY || 0).toFixed(2);
-    case 'primary': return (getRig(f.id).primary === 'left') ? 'LEFT' : 'RIGHT';
-    case 'blend': return rigRowNumber(f, termGearHand, 'blend').toFixed(2);
-    case 'orbitdur': return rigRowNumber(f, termGearHand, 'orbitdur').toFixed(2);
-    case 'orbitsnap': return rigRowNumber(f, termGearHand, 'orbitsnap').toFixed(2);
-    case 'handdist': return rigRowNumber(f, termGearHand, 'handdist').toFixed(2);
-    case 'depthsize': return rigRowNumber(f, termGearHand, 'depthsize').toFixed(2);
     case 'weapon': {
       const wid = rigEntryWeapon(f, termGearHand);
       if (!wid) return 'NONE';
@@ -4467,12 +4292,6 @@ function gearRowValue(row) {
     case 'wangle': return `${Math.round(rigRowNumber(f, termGearHand, 'wangle'))}°`;
     case 'wx': return rigRowNumber(f, termGearHand, 'wx').toFixed(2);
     case 'wy': return rigRowNumber(f, termGearHand, 'wy').toFixed(2);
-    case 'wlayer': return rigEntryProp(f, termGearHand, 'layer', 'front') === 'back' ? 'BACK' : 'FRONT';
-    case 'wmirror': return rigEntryProp(f, termGearHand, 'mirror', true) === false ? 'NO' : 'YES';
-    case 'wtop': return rigEntryProp(f, termGearHand, 'overHand', true) !== false ? 'YES' : 'NO';
-    case 'rigreset': return 'CLR';
-    case 'previewface': return previewFacingRight ? 'RIGHT' : 'LEFT';
-    case 'guides': return gearGuidesOn ? 'SHOW' : 'HIDE';
     default: return '';
   }
 }
@@ -4574,7 +4393,7 @@ function drawGearPreview() {
 function renderGearEditor() {
   const header = document.createElement('div');
   header.className = 'term-row head';
-  header.textContent = 'HAND GEAR  Â·  gloves & hand gear, per hand (auto-saves)';
+  header.textContent = 'HAND WEAPONS - weapon per hand (auto-saves)';
   termLinesEl.appendChild(header);
 
   GEAR_ROWS.forEach((row, i) => {
@@ -4589,10 +4408,7 @@ function renderGearEditor() {
     line.appendChild(key);
 
     const isStepper = row.type === 'fighter' || row.type === 'hand' ||
-      row.type === 'gearLeft' || row.type === 'gearRight' || row.type === 'flip' ||
-      row.type === 'primary' || row.type === 'weapon' || row.type === 'wlayer' ||
-      row.type === 'wmirror' || row.type === 'wtop' || row.type === 'previewface' ||
-      row.type === 'guides';
+      row.type === 'weapon';
 
     if (isStepper) {
       const prevBtn = document.createElement('span');
@@ -4611,70 +4427,11 @@ function renderGearEditor() {
       line.appendChild(prevBtn);
       line.appendChild(nextBtn);
       line.appendChild(val);
-    } else if (row.type === 'size' || row.type === 'angle' || row.type === 'shiftx' || row.type === 'shifty') {
-      const f = ALL_FIGHTERS[previewFighterIdx];
-      const CONF_KEY = { size: 'scale', angle: 'angle', shiftx: 'shiftX', shifty: 'shiftY' };
-      const confKey = CONF_KEY[row.type] || row.type;
-      const bounds = {
-        size: { min: 0.4, max: 2.0, step: 0.01 },
-        angle: { min: -180, max: 180, step: 1 },
-        shiftx: { min: -1.2, max: 2.0, step: 0.02 },
-        shifty: { min: -1.5, max: 2.0, step: 0.02 },
-      }[row.type];
-      const startVal = loadHandGearFor(f.id, f.handGear)[termGearHand][confKey];
-      // Angles are whole degrees; everything else shows two decimals.
-      const isAngle = row.type === 'angle';
-      const fmt = (v) => (isAngle ? v : v.toFixed(2));
-      const range = document.createElement('input');
-      range.type = 'range';
-      range.min = bounds.min;
-      range.max = bounds.max;
-      range.step = bounds.step;
-      range.value = startVal;
-      const num = document.createElement('input');
-      num.type = 'number';
-      num.min = bounds.min;
-      num.max = bounds.max;
-      num.step = bounds.step;
-      num.className = 'num';
-      num.value = fmt(startVal);
-      // The row is rendered per hand, so it writes the hand that was current
-      // when the control was built â€” re-read from the captured `side` rather
-      // than termGearHand, which can move while a drag is in flight.
-      const side = termGearHand;
-      const write = (v) => {
-        const gear = loadHandGearFor(f.id, f.handGear);
-        // Same visible-gear guarantee as the keyboard path above: shaping a
-        // bare hand equips gloves first so the slider always does something.
-        if (gear[side].type === 'none') gear[side].type = 'boxinggloves';
-        gear[side][confKey] = v;
-        saveHandGearFor(f.id, side, gear[side]);
-        drawGearPreview();
-      };
-      range.addEventListener('input', () => {
-        const v = parseFloat(range.value);
-        write(v);
-        num.value = fmt(v);
-      });
-      num.addEventListener('change', () => {
-        const v = Math.min(bounds.max, Math.max(bounds.min, parseFloat(num.value) || 1));
-        const clamped = Math.round(v * 100) / 100;
-        write(clamped);
-        range.value = clamped;
-        num.value = fmt(clamped);
-      });
-      line.appendChild(range);
-      line.appendChild(num);
-    } else if (row.type === 'blend' || row.type === 'orbitdur' || row.type === 'orbitsnap' || row.type === 'handdist' || row.type === 'depthsize' || row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
-      // Rig-backed numeric rows (shared rig store, not hand gear): same
-      // slider + numeric pattern as above, writing through rigWriteNumber.
+    } else if (row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
+      // Held-weapon numeric rows (rig store): same slider + number pattern,
+      // writing through rigWriteNumber.
       const f = ALL_FIGHTERS[previewFighterIdx];
       const bounds = {
-        blend: { min: 0.1, max: 1, step: 0.01 },
-        orbitdur: { min: 0.05, max: 1, step: 0.01 },
-        orbitsnap: { min: 0, max: 1, step: 0.05 },
-        handdist: { min: 0.4, max: 2.5, step: 0.02 },
-        depthsize: { min: 0, max: 0.8, step: 0.01 },
         wscale: { min: 0.2, max: 2.5, step: 0.01 },
         wangle: { min: -180, max: 180, step: 1 },
         wx: { min: -2, max: 2, step: 0.02 },
@@ -4714,15 +4471,15 @@ function renderGearEditor() {
       });
       line.appendChild(range);
       line.appendChild(num);
-    } else if (row.type === 'match' || row.type === 'reset' || row.type === 'rigreset') {
+    } else if (row.type === 'reset') {
       const btn = document.createElement('span');
       btn.className = 'btn';
-      btn.textContent = row.type === 'match' ? 'MATCH' : 'RESET';
+      btn.textContent = 'RESET';
       btn.addEventListener('click', () => { termGearCursor = i; adjustGearRow(row, 1, false); });
       const val = document.createElement('span');
       val.className = 'v';
       val.style.width = 'auto';
-      val.textContent = row.type === 'match' ? 'COPY' : (row.type === 'rigreset' ? 'CLR' : 'R');
+      val.textContent = 'R';
       line.appendChild(btn);
       line.appendChild(val);
     }

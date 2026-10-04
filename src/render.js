@@ -1178,6 +1178,26 @@ try {
   }
 } catch (_) {}
 
+// Clean-slate refresh: NOBODY starts with hand gear. Drop every stored fist
+// loadout and every stored held-weapon/rig override, so all fighters come out
+// bare-fisted and the trimmed Hand Weapons editor is the only way anything
+// gets equipped from here on. Runs once per browser (separate flag keys).
+const CLEAN_SLATE_GEAR_MIG_KEY = 'smashfighters.handGear.mig.cleanSlate.v1';
+try {
+  if (typeof localStorage !== 'undefined' && !localStorage.getItem(CLEAN_SLATE_GEAR_MIG_KEY)) {
+    localStorage.removeItem(GEAR_STORAGE_KEY);
+    localStorage.setItem(CLEAN_SLATE_GEAR_MIG_KEY, '1');
+  }
+} catch (_) {}
+const CLEAN_SLATE_RIG_MIG_KEY = 'smashfighters.handRig.mig.cleanSlate.v1';
+try {
+  if (typeof localStorage !== 'undefined' && !localStorage.getItem(CLEAN_SLATE_RIG_MIG_KEY)) {
+    for (const k of Object.keys(_rigStore)) delete _rigStore[k];
+    persistRigStore();
+    localStorage.setItem(CLEAN_SLATE_RIG_MIG_KEY, '1');
+  }
+} catch (_) {}
+
 export function handGearName(id) {
   const g = _handGearMap.get(id);
   return g ? g.name : 'NONE';
