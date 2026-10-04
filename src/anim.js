@@ -448,29 +448,6 @@ const DEFAULT_WEAPONS = [
       center: ANCHOR(0, 0), custom: [],
     },
   },
-  // Knight's named arms: the same GA sword/shield art under knight-specific
-  // ids, so the knight's grip, anchors and tuning live apart from the generic
-  // sword/shield entries. Procedural type art remains the automatic fallback.
-  {
-    id: 'knightsword', name: 'Knight Sword', type: 'sword', w: 96, h: 64,
-    color: '#cfd8e3', accent: '#d9a92e', mirror: true,
-    sprite: '/GA/weapons/knightsword.png',
-    pivot: { x: 0, y: 0 },
-    anchors: {
-      grip: ANCHOR(0, 0), tip: ANCHOR(44, 0),
-      center: ANCHOR(0, 0), custom: [],
-    },
-  },
-  {
-    id: 'knightshield', name: 'Knight Shield', type: 'shield', w: 66, h: 66,
-    color: '#2e4a8a', accent: '#d9a92e', mirror: true,
-    sprite: '/GA/weapons/knightshield.png',
-    pivot: { x: 0, y: 0 },
-    anchors: {
-      grip: ANCHOR(0, 0), tip: ANCHOR(0, -30),
-      center: ANCHOR(0, 0), custom: [],
-    },
-  },
 ];
 
 let weaponLib = new Map();
@@ -1304,23 +1281,21 @@ for (const [id, srcId, name] of BOXER_ANIM_SOURCES) {
 }
 
 // ── Knight animations ───────────────────────────────────────────────────
-// Same derive-don't-duplicate convention as the boxer: each move clones the
-// shipped base pose that already reads as that kind of swing, then carries
-// the knight's arms — sword on the right hand, shield on the left. Slots are
-// body-relative and the animator mirrors them with facing, so the sword is
-// always the leading (target-facing) hand and the shield always the trailing
-// one, whichever way the knight turns. vfx/combat are stripped like the
-// boxer's (the Shield Bash ability binds on the attack TABLE row, which is
-// authoritative — the same reason the ninja's table repeats its designation).
+// Bare-handed like the boxer: the exact same deriveUnarmed convention — each
+// move clones the shipped base pose that already reads as that kind of swing,
+// with no weapon on either hand, so the knight's hands run the identical
+// pipeline as every other character. Attack numbers/names live in
+// KNIGHT_ATTACKS (unchanged); vfx/combat are stripped like the boxer's (the
+// Shield Bash ability binds on the attack TABLE row, which is authoritative).
 //
 // The ids here are exactly the `anim` fields in KNIGHT_ATTACKS, plus
-// 'knightShield' (session.js maps a shielding knight here instead of the
-// shared weaponless 'shield') and 'knightVictory' (Game.js victoryAnimFor).
+// 'knightVictory' (Game.js victoryAnimFor needs a weaponless victory anim —
+// the shared cowboyVictory carries a gun). Shielding uses the shared
+// weaponless 'shield' like everyone else.
 const KNIGHT_ANIM_SOURCES = [
   // id,                   source,        display name
   ['knightJab',            'jab',          'Sword Slash'],
   ['knightFtilt',          'ftilt',         'Side Slash'],
-  ['knightNsmash',         'nsmash',        'Shield Counter'],
   ['knightFsmash',         'fsmash',        'Charged Sword Strike'],
   ['knightUtilt',          'ninjaUtilt',    'Rising Guard'],
   ['knightUsmash',         'ninjaUsmash',   'Skyward Oath'],
@@ -1329,42 +1304,13 @@ const KNIGHT_ANIM_SOURCES = [
   ['knightAerialLight',    'nair',          'Rising Sword Slash'],
   ['knightAerialHeavy',    'fair',          'Falling Sword Strike'],
   ['knightDash',           'dash',          'Oath Lunge'],
-  ['knightShield',         'shield',        'Royal Guard'],
+  ['knightShield',         'shield',        'Shield Counter'],
   ['knightVictory',        'cowboyVictory', 'Victory Dance'],
 ];
 
-const _KNIGHT_SWORD_CFG = { id: 'knightsword', mountX: 0, mountY: -2, gripOffsetX: -8, gripOffsetY: 0, gripRot: 0 };
-const _KNIGHT_SHIELD_CFG = { id: 'knightshield', mountX: 0, mountY: -2, gripOffsetX: -6, gripOffsetY: 0, gripRot: 0 };
-
-function deriveKnight(source, id, name) {
-  if (!source) return null;
-  const tracks = {};
-  // Keyframes are copied too, not shared (same reason as deriveUnarmed: the
-  // editor mutates loaded tracks in place).
-  for (const path of Object.keys(source.tracks)) {
-    const t = source.tracks[path];
-    tracks[path] = { ...t, keyframes: t.keyframes.map((k) => ({ ...k })) };
-  }
-  return {
-    id,
-    name,
-    fps: source.fps,
-    loop: source.loop,
-    mirror: source.mirror,
-    blendIn: source.blendIn,
-    weapons: {
-      right: { ...emptyWeaponCfg(), ..._KNIGHT_SWORD_CFG },
-      left: { ...emptyWeaponCfg(), ..._KNIGHT_SHIELD_CFG },
-    },
-    combat: null,
-    vfx: [],
-    tracks,
-  };
-}
-
 const _knightAnims = [];
 for (const [id, srcId, name] of KNIGHT_ANIM_SOURCES) {
-  const derived = deriveKnight(_baseAnimById.get(srcId), id, name);
+  const derived = deriveUnarmed(_baseAnimById.get(srcId), id, name);
   if (!derived) console.warn(`[animlib] knight move "${id}" has no source animation "${srcId}"`);
   else _knightAnims.push(derived);
 }
@@ -1485,6 +1431,50 @@ function migrateAbilityOnlyVfx() {
   try { localStorage.setItem(ABILITY_ONLY_VFX_MIGRATION_KEY, '1'); } catch (_) {}
 }
 
+// ── Bare-knight rebuild migration ─────────────────────────────────────────
+// The knight was rebuilt bare-handed (boxer-style): the knightsword /
+// knightshield weapon defs are deleted and every knight animation derives
+// unarmed. But a saved store REPLACES a built-in animation wholesale (see the
+// load loop below), so any browser where the animator ever saved is still
+// running stored knight copies carrying the old arms — and the stored weapon
+// library still resolves the retired defs. Strip weapons off every stored
+// knight* animation in place (tracks/vfx/combat untouched) and drop the
+// retired defs, once.
+const BARE_KNIGHT_MIGRATION_KEY = 'smashfighters.animlib.bareKnight.v1';
+
+function migrateBareKnight() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (localStorage.getItem(BARE_KNIGHT_MIGRATION_KEY)) return;
+  } catch (_) { return; }
+  let changed = false;
+  for (const a of animLib.values()) {
+    if (!a || typeof a.id !== 'string' || !a.id.startsWith('knight')) continue;
+    const w = a.weapons;
+    if (w && (w.right || w.left)) {
+      a.weapons = { right: null, left: null };
+      changed = true;
+    }
+  }
+  if (changed) persistAnimLib();
+  try {
+    const raw = localStorage.getItem(WEAPON_STORE_KEY);
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const kept = list.filter((w) => w && w.id !== 'knightsword' && w.id !== 'knightshield');
+        if (kept.length !== list.length) {
+          localStorage.setItem(WEAPON_STORE_KEY, JSON.stringify(kept));
+          weaponLib.delete('knightsword');
+          weaponLib.delete('knightshield');
+          invalidateWeaponCache();
+        }
+      }
+    }
+  } catch (_) {}
+  try { localStorage.setItem(BARE_KNIGHT_MIGRATION_KEY, '1'); } catch (_) {}
+}
+
 // Load user-saved library over the defaults.
 try {
   if (typeof localStorage !== 'undefined') {
@@ -1496,11 +1486,16 @@ try {
       migrateShadowStrikeVfx();
       migrateTeleportStrike();
       migrateAbilityOnlyVfx();
+      migrateBareKnight();
     }
   }
 } catch (err) { /* corrupt store — fall back to defaults */ }
 
 if (animLib.size === 0) loadDefaultLibrary();
+// Runs unconditionally (not just with a stored library): the retired weapon
+// defs must be purged from the stored weapon library even on browsers that
+// never saved an animation — a stored rig override could still reference them.
+migrateBareKnight();
 
 function persistAnimLib() {
   try {

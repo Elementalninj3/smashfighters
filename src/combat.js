@@ -2,7 +2,7 @@ import { getAnimationRaw, requestAnimation, updateAnimator, stopAnimation } from
 import { SFX } from './assets.js';
 import { resolveWorldAnchor, playShadowStrikeVFX, playSmokePoofVFX, triggerTimeDilation, emitAbilityFx, emitFlash, emitImpactRing, emitSparks, emitDustPuff, emitStreak, emitGhost, fxStyleFor, spawnFloatingText, releaseTimeDilation, spawnDamageNumber } from './fx.js';
 import { spawnTempVfx, isHeld, isJustPressed, clearGrid, insertObject, queryNearby, projectilePool, hitboxPool, damageNumberPool, scratchVec2, clearTempArray, tempArray32, freezeGame, destructibleList, damageDestructible, AERIAL_LIGHT_RECOVERY_FORCE, AERIAL_LIGHT_RECOVERY_DURATION, BLOCK_COOLDOWN, DI_MAX_ANGLE, DI_WINDOW, stampAbilityCooldown, handleFighterInput, stepFighterPhysics, updateFighterState, resetAbilityCooldowns, applySoftPlayerSeparation, resolvePlatformCollision } from './physics.js';
-import { notifyCinematicHit, getSkinImage, updateHandOrbit } from './render.js';
+import { notifyCinematicHit, getSkinImage, updateHandOrbit, syncHeldRotSnap } from './render.js';
 
 
 // ── merged from fighter/smashCombat.js ──
@@ -1641,7 +1641,7 @@ const BOXER_ATTACKS = {
   dash:   { name: 'Shoulder Charge', anim: 'boxerDash', category: 'dash', direction: 'forward', state: 'ground', startup: 3, active: 7, recovery: 12, dmg: 6.5, kbBase: 115, kbGrowth: 0.65, angle: 22, launchAngle: 22, w: 92, h: 46, ox: 46, oy: 0 },
 };
 
-// Knight attacks — sword-and-shield, balanced defensive. Numbers sit between
+// Knight attacks — bare-handed like the boxer, balanced defensive. Numbers sit between
 // the cowboy's and the boxer's: honest midweight damage with midweight launch,
 // no gimmick multipliers anywhere in the table. The signature mechanics live
 // OUTSIDE the table — the shield parry (below), the Shield Bash ability and
@@ -1792,7 +1792,7 @@ function tryKnightCounter(target, attacker) {
   return true;
 }
 
-// Royal Guard impact: the knight's held block resolves through the standard
+// Royal Guard impact: the knight's block resolves through the standard
 // shield reduction (never full negation, never a bonus) — this is only the
 // restrained shield-hit art that marks it as a guard, not a parry.
 function knightGuardImpact(target) {
@@ -4448,6 +4448,11 @@ export function stepRosterFinish(fighters, dt, victoryNameFor) {
     f._dt = dt; // Pass dt for launchTimer decay in updateFighterState
     updateFighterState(f);
     updateHandOrbit(f, dt); // Shared hand-orbit angle (facing-turn travel)
+    // While the animator owns the hands the held layer is hidden, so a facing
+    // change mid-animation would leave held-weapon rotation stale and sweep
+    // on release — keep it snapped to live facing (same condition drawFighter
+    // uses to pick the animated path).
+    if (f.anim && f.anim.out && (f.anim.animId || f.anim.playing || f.anim.blendFrom)) syncHeldRotSnap(f);
     syncFighterAnim(f, dt, victoryNameFor ? victoryNameFor(f) : null);
   }
   // Landing squish + landing dust. The puff scales with impact speed (soft
@@ -4490,9 +4495,9 @@ function combatAnim(f, victory) {
   // Victory outranks everything: the winner celebrates even if a stray input
   // still has an attack running as the final KO lands.
   if (victory) return victory;
-  // The knight guards behind its own shield animation (carries the registered
-  // shield + sword); everyone else shares the weaponless base 'shield'.
-  if (f.shielding) return (f._fighterDef && f._fighterDef.id === 'knight') ? 'knightShield' : 'shield';
+  // Held-guard pose: the shared weaponless base 'shield' for everyone — the
+  // knight fights bare-handed like the boxer.
+  if (f.shielding) return 'shield';
   if (f.attack) {
     // The attack animation plays while the hitbox can still hit (startup +
     // active). The instant recovery starts the hitbox is gone — return null so

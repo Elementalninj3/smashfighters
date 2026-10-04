@@ -4423,7 +4423,7 @@ function adjustGearRow(row, dir, coarse) {
   }
   if (row.type === 'reset') {
     // Back to the character's own default loadout on BOTH hands — the boxer
-    // comes out gloved again, the knight sword-and-shield, everyone else bare.
+    // comes out gloved again, everyone else bare.
     saveHandGearSetFor(f.id, {
       left: defaultHandGear(defaultGearIdFor(f.handGear, 'left')),
       right: defaultHandGear(defaultGearIdFor(f.handGear, 'right')),
@@ -4553,7 +4553,7 @@ function drawGearPreview() {
   const gc = gear[termGearHand];
   pctx.fillText(`X ${(gc.shiftX || 0).toFixed(2)}  ·  Y ${(gc.shiftY || 0).toFixed(2)}`, 10, 50);
   // Tell the user when the edited gear can't be seen: a gripped held weapon
-  // (e.g. the knight's sword/shield) covers fist gear by design, so shaping
+  // covers fist gear by design, so shaping
   // it looks like nothing happens. Visual aid only — game logic untouched.
   let coverNote = '';
   try {

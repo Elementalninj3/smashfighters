@@ -51,20 +51,19 @@ function persistRigStore() {
   try { localStorage.setItem(RIG_STORE_KEY, JSON.stringify(_rigStore)); } catch (_) {}
 }
 
-// One-time cleanup: the Knight's persistent held weapons (lead sword + trailing
-// shield) were removed from its roster def so it fights bare-handed. Drop any
-// stored rig override that would otherwise re-add them, so the change takes
-// effect without a manual RESET RIG. Runs once per browser (separate flag key).
-const KNIGHT_BARE_MIG_KEY = 'smashfighters.handRig.mig.knightBare.v1';
+// One-time cleanup: the knight was rebuilt bare-handed (boxer-style), so drop
+// any stored rig override that would otherwise re-add held weapons onto him.
+// Runs once per browser (separate flag key).
+const KNIGHT_BARE_HELD_MIG_KEY = 'smashfighters.handRig.mig.knightBare.v2';
 try {
-  if (typeof localStorage !== 'undefined' && !localStorage.getItem(KNIGHT_BARE_MIG_KEY)) {
+  if (typeof localStorage !== 'undefined' && !localStorage.getItem(KNIGHT_BARE_HELD_MIG_KEY)) {
     const k = _rigStore.knight;
     if (k && k.held) {
       delete k.held;
       if (!Object.keys(k).length) delete _rigStore.knight;
       persistRigStore();
     }
-    localStorage.setItem(KNIGHT_BARE_MIG_KEY, '1');
+    localStorage.setItem(KNIGHT_BARE_HELD_MIG_KEY, '1');
   }
 } catch (_) {}
 
@@ -212,6 +211,28 @@ export function heldRot(fighter, i, target) {
   const hr = fighter && fighter._heldRot;
   const cur = hr ? hr[i] : undefined;
   return (typeof cur === 'number' && Number.isFinite(cur)) ? cur : target;
+}
+// Keep one-handed held-weapon rotation state synced while the held layer is
+// hidden (attack/shield/victory animations own the hands, so neither the
+// orbit snap nor easeHeldRots runs for them). A facing change mid-animation
+// otherwise leaves _heldRot behind: at rest the sprite flip is instant
+// (scaleX) but the angle eases over frames, so the weapon visibly sweeps
+// under a flipped sprite — on the angled hand only, which reads as a
+// one-sided turn bug. Stamping (the orbit snap's rule) keeps flip and angle
+// atomic; the rest-path easing is untouched, so editor live-tweaks still
+// ease smoothly.
+export function syncHeldRotSnap(fighter) {
+  if (!fighter) return;
+  const cfg = resolveHeld(fighter._fighterDef);
+  if (!cfg || !cfg.length) return;
+  const dir = facingDir(fighter);
+  let hr = fighter._heldRot;
+  if (!hr) hr = fighter._heldRot = {};
+  for (let i = 0; i < cfg.length; i++) {
+    const e = cfg[i];
+    if (!e || e.hands === 'both') continue;
+    hr[i] = heldTargetRot(e, dir);
+  }
 }
 
 // ── Shared hand orbit (facing-turn travel) ─────────────────────────────
@@ -1138,6 +1159,24 @@ export function saveHandGearSetFor(fighterId, gear) {
     localStorage.setItem(GEAR_STORAGE_KEY, JSON.stringify(all));
   } catch (_) {}
 }
+
+// One-time cleanup: the knight was rebuilt bare-handed (boxer-style), so drop
+// his stored fist gear — otherwise a saved sword/shield loadout would keep
+// painting weapons onto his fists. Runs once per browser (separate flag key).
+const KNIGHT_BARE_GEAR_MIG_KEY = 'smashfighters.handGear.mig.knightBare.v1';
+try {
+  if (typeof localStorage !== 'undefined' && !localStorage.getItem(KNIGHT_BARE_GEAR_MIG_KEY)) {
+    const raw = localStorage.getItem(GEAR_STORAGE_KEY);
+    if (raw) {
+      const all = JSON.parse(raw);
+      if (all && all.knight) {
+        delete all.knight;
+        localStorage.setItem(GEAR_STORAGE_KEY, JSON.stringify(all));
+      }
+    }
+    localStorage.setItem(KNIGHT_BARE_GEAR_MIG_KEY, '1');
+  }
+} catch (_) {}
 
 export function handGearName(id) {
   const g = _handGearMap.get(id);
