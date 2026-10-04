@@ -4083,6 +4083,31 @@ export function drawCombatDebug(ctx, fighters) {
     const _wt = fighter._fighterDef && fighter._fighterDef.weight;
     ctx.fillText(`${fighter.percent.toFixed(0)}%${_wt ? ' W' + _wt : ''}`, fighter.x, hurt.y + hurt.h + 13);
 
+    // Anatomical hand labels (L / R) so the facing-turn hand switch is readable
+    // at a glance. `_handWorld` is written every draw by drawFighter.
+    const hw = fighter._handWorld;
+    if (hw) {
+      ctx.font = 'bold 12px Consolas, "Courier New", monospace';
+      const tag = (h, txt) => {
+        if (!h) return;
+        ctx.fillStyle = '#00e5ff';
+        ctx.beginPath();
+        ctx.arc(h.x, h.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#001f26';
+        ctx.fillText(txt, h.x, h.y - 8);
+        ctx.fillStyle = '#00e5ff';
+        ctx.strokeStyle = '#001f26';
+        ctx.lineWidth = 3;
+        ctx.strokeText(txt, h.x, h.y - 8);
+        ctx.fillText(txt, h.x, h.y - 8);
+        ctx.lineWidth = 2;
+      };
+      tag(hw.left, 'L');
+      tag(hw.right, 'R');
+      ctx.font = '11px Consolas, "Courier New", monospace';
+    }
+
     if (fighter.hitstun > 0) {
       ctx.fillStyle = '#ffd24a';
       ctx.fillText(`STUN ${fighter.hitstun.toFixed(2)}`, fighter.x, fighter.y - fighter.radius - 8);
@@ -4243,16 +4268,12 @@ export const ALL_FIGHTERS = [
   // No `attacks` entry: it uses the KNIGHT_ATTACKS table, picked by id in
   // attacksFor, the same way the ninja and boxer are.
   //
-  // `heldWeapons` is this character's persistent equipment, drawn by the
-  // universal held-weapons layer (Effects.js) — no character-specific render
-  // code. Lead sword (points at the opponent, both facings) + trailing
-  // shield, following the eased hands through every movement. Angles and
-  // offsets are tunable here without touching shared code.
-  //
-  // No `handGear`: the sword/shield used to ship as default hand gear, but
-  // that drew them twice once the held layer existed (gear on the fist plus
-  // the gripped weapon). Bare hands by default; fist gear set on a gripping
-  // hand stays hidden while the weapon grips it (see holdCoversSide).
+  // No `heldWeapons` for now: the persistent lead-sword + trailing-shield
+  // equipment was removed so the Knight fights (and previews) with bare hands,
+  // which lets fist gear be seen and edited on both hands. Attacks are still
+  // animation-driven, so combat is unchanged; re-add a `heldWeapons` array here
+  // to bring the persistent equipment back. The universal held-weapons layer
+  // (Effects.js) remains and works for any fighter that defines one.
   {
     id: 'knight',
     name: 'Knight',
@@ -4271,10 +4292,6 @@ export const ALL_FIGHTERS = [
     recoveryStrength: 1.25, // Heroic Ascent: strong rising recovery
     recoveryRange: 1.0,
     recoveryCooldown: 0,
-    heldWeapons: [
-      { weapon: 'knightsword', hand: 'lead', scale: 1, angle: -25, dx: 0.15, dy: -0.1, mirror: true, layer: 'front' },
-      { weapon: 'knightshield', hand: 'trail', scale: 1, angle: 0, dx: -0.15, dy: 0, mirror: true, layer: 'front' },
-    ],
   },
 ];
 

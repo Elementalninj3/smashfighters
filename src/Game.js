@@ -4,8 +4,8 @@ import { SFX } from './assets.js';
 import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resolveFighterSkin, drawCombatDebug, resetCombat, removeAttackerHitboxes, clearHitLocks, clearDeadeye, clearBoxerState, __debugHitboxes, startAttackForKey, resolveAttackDef, setCombatStage, ALL_FIGHTERS, setCustomHitboxes, clearCustomHitboxes } from './combat.js';
 import { openEditor, closeEditor, updateEditor, renderEditor, setEditorCloseHandler, openHitboxCustomizer, closeHitboxCustomizer, updateHitboxCustomizer, renderHitboxCustomizer, setHitboxCustomizerCloseHandler, setCustomizerMove, setWorkingBoxValue, saveCustomizer, resetCustomizerMove, getWorkingBoxes } from './editors.js';
 import { drawFighterVfx, setVfxViewBounds, warmEffectSprites, stepTimeDilation, timeDilationState, peekTimeDilation, resetTimeDilation, drawTimeDilationPost, updateDamageIndicators, drawDamageIndicators, resetDamageIndicators, updateWorldFx, drawWorldFx, resetWorldFx, setWorldFxViewBounds, setFxQuality, setParticleDetail, setPostDetail, setWorldFxBatch, setDamageTextCache, worldFxState } from './fx.js';
-import { initInput, flushInput, isJustPressed, createFighter, createDefaultStage, drawStage, updatePlatforms, isInBlastZone, onLoopQualityChange, setDestructibleViewBounds, clearDestructibleViewBounds } from './physics.js';
-import { updateCamera, applyCameraTransform, resetCamera, snapCameraToFit, updateCameraZoom, updateMatchZoom, getCameraState, getCameraStateInto, VIEW_W, VIEW_H, syncCanvasBacking, backingScaleFor, setRenderScale, getSkinImage, drawFighter, drawAbilityFx, drawHorse, drawBoxerRollUnder, drawHeldLayer, holdCoversSide, handConfig, resolveHandColor, setViewBounds, setEffectBatch, warmFighterSprites, getRig, saveRig, clearRig, resolveHeld, resolveHoldSlot, orbitDur, orbitSnap, orbitHandPose, orbitFrontSide, orbitTarget, updateCinematic, drawCinematicWorld, cinematicTint, resetCinematic, notifyCinematicKO, ACCESSORIES, accessoryName, loadAccessoryFor, saveAccessoryFor, cloneAccessory, drawAccessory, tickSkinImageRetries, HAND_GEAR, handGearName, loadHandGearFor, saveHandGearFor, saveHandGearSetFor, defaultHandGear, defaultGearIdFor, drawHandGear } from './render.js';
+import { initInput, flushInput, isJustPressed, createFighter, createDefaultStage, drawStage, updatePlatforms, isInBlastZone, onLoopQualityChange, setDestructibleViewBounds, clearDestructibleViewBounds, sanitizeDeathZone, applyDeathZoneToStage, blastRectFor, DEFAULT_DEATH_MARGINS, DEATHZONE_MIN, DEATHZONE_MAX, DEATHZONE_STEP } from './physics.js';
+import { updateCamera, applyCameraTransform, resetCamera, snapCameraToFit, updateCameraZoom, updateMatchZoom, getCameraState, getCameraStateInto, worldToScreen, VIEW_W, VIEW_H, syncCanvasBacking, backingScaleFor, setRenderScale, getSkinImage, drawFighter, drawAbilityFx, drawHorse, drawBoxerRollUnder, drawHeldLayer, holdCoversSide, handConfig, resolveHandColor, setViewBounds, setEffectBatch, warmFighterSprites, getRig, saveRig, clearRig, resolveHeld, resolveHoldSlot, orbitDur, orbitSnap, orbitHandPose, orbitFrontSide, orbitTarget, resolveOrbitRig, resolveSkinMeta, updateCinematic, drawCinematicWorld, cinematicTint, resetCinematic, notifyCinematicKO, ACCESSORIES, accessoryName, loadAccessoryFor, saveAccessoryFor, cloneAccessory, drawAccessory, tickSkinImageRetries, HAND_GEAR, handGearName, loadHandGearFor, saveHandGearFor, saveHandGearSetFor, defaultHandGear, defaultGearIdFor, drawHandGear } from './render.js';
 import { openSandboxEditor, closeSandboxEditor, updateSandboxEditor, renderSandboxEditor, isSandboxEditorOpen, getSandboxDocument, setSandboxArenaSize, startSandboxSession, stopSandboxSession, updateSandboxSession, renderSandboxSession, isSandboxPlaying, toggleSandboxPause, isSandboxPaused, setSandboxTimeScale, getSandboxTimeScale, toggleSandboxDebug, getSandboxRoster, getSandboxStage, getSandboxSessionCount } from './sandbox.js';
 
 
@@ -37,7 +37,13 @@ let ctx = null;
 // Sharpness comes from the DPR-scaled backing store, not from a larger
 // logical size — world coordinates, physics, hitboxes and character sizes
 // are unchanged, only the camera framing adapts to the square format.
-let arena = { width: VIEW_W, height: VIEW_H };
+// The ARENA (playable world) is wider than tall-vista: same 1080 width, but
+// extended downward so there is real fall space below the stage. The stage
+// layout itself stays anchored to the top 1080 (ground/platform/spawns exactly
+// where they always were); only the pit + bottom KO line move down.
+const ARENA_W = VIEW_W;
+const ARENA_H = 1400;
+let arena = { width: ARENA_W, height: ARENA_H };
 let stage = null;
 let fighter1 = null;
 let fighter2 = null;
@@ -60,8 +66,15 @@ let aiControllers = [null, null]; // AI controllers for fighter 1 and 2
 // in gameplay reads it.
 let matchOver = false;
 let matchWinner = null;
-let matchElapsed = 0; // real seconds since match start â€” stopwatch source only
+let matchElapsed = 0; // real seconds since match start — stopwatch source only
 let matchOverAge = 0;
+// Match-ending camera zoom starts only after the deciding-KO disappearance +
+// KO pillar (see onBlastKO sequence). matchOver flips immediately; the camera
+// layers wait for this delay so the pillar is visible before the push-in.
+const MATCH_ZOOM_DELAY = 0.45;
+function cameraMatchOver() {
+  return matchOver && matchOverAge >= MATCH_ZOOM_DELAY;
+}
 
 // Hitbox debug visualization
 let showHitboxes = false;
@@ -107,13 +120,32 @@ let mapSettings = (() => {
       // 1440×1440 backing — the 1440p-display equivalent, never stretched).
       // Render-only like quality above: world units and physics never see it.
       resolution: ['performance', '720p', '1080p', '1440p'].includes(saved.resolution) ? saved.resolution : '1080p',
+      // Death-zone margins (px beyond each arena edge). 0/0/0/0 preserves the
+      // historical behavior exactly (death box == arena edge). Validated and
+      // applied to stage.blastZones; older saves without it load fine.
+      deathZone: sanitizeDeathZone(saved.deathZone),
     };
   } catch (_) {
-    return { backgroundColor: DEFAULT_BACKGROUND_COLOR, platformColor: null, stopwatch: true, showStocks: true, quality: 'high', resolution: '1080p' };
+    return { backgroundColor: DEFAULT_BACKGROUND_COLOR, platformColor: null, stopwatch: true, showStocks: true, quality: 'high', resolution: '1080p', deathZone: { ...DEFAULT_DEATH_MARGINS } };
   }
 })();
 function persistMapSettings() {
   try { localStorage.setItem(MAP_SETTINGS_KEY, JSON.stringify(mapSettings)); } catch (_) {}
+}
+// Live-apply the menu's death-zone margins onto the active match stage.
+function syncDeathZoneToStage() {
+  try {
+    mapSettings.deathZone = sanitizeDeathZone(mapSettings.deathZone);
+    if (stage) applyDeathZoneToStage(stage, mapSettings.deathZone, arena.width, arena.height);
+  } catch (_) {}
+}
+// Build the match stage: platform/spawn layout anchored to the top-1080 vista
+// (identical to the old map), with the blast box extended to the full arena
+// height so the extra pit below is real KO space, not decoration.
+function buildMatchStage() {
+  const st = createDefaultStage(arena.width, VIEW_H, mapSettings.deathZone);
+  applyDeathZoneToStage(st, mapSettings.deathZone, arena.width, arena.height);
+  return st;
 }
 
 // Rebuild the background canvas with current settings
@@ -322,11 +354,60 @@ function _drawPips(ctx, stocks, right, color, total, cx, y, pillH, pipR, gap) {
 
 const _viewRect = { x0: -1e9, y0: -1e9, x1: 1e9, y1: 1e9 };
 const _camScratch = { x: 0, y: 0, zoom: 1 };
+const _w2sScratch = { x: 0, y: 0 };
+// Off-screen fighter markers (Smash-style edge pips): visual aid only. A live
+// fighter outside the camera view gets a small colored triangle + P1/P2 tag
+// pinned to the viewport edge pointing toward them. Never affects physics,
+// KO detection, or timing; removed when the fighter returns or is eliminated.
+function drawOffscreenMarkers() {
+  try {
+    if (!fighter1 && !fighter2) return;
+    screenTransform();
+    const pair = fightersPair();
+    for (let i = 0; i < pair.length; i++) {
+      const f = pair[i];
+      if (!f || f.eliminated || f.state === 'dead') continue;
+      if (f.x >= _viewRect.x0 && f.x <= _viewRect.x1 && f.y >= _viewRect.y0 && f.y <= _viewRect.y1) continue;
+      worldToScreen(f.x, f.y, _w2sScratch, VIEW_W, VIEW_H);
+      const m = 34;
+      const cx = Math.max(m, Math.min(VIEW_W - m, _w2sScratch.x));
+      const cy = Math.max(m, Math.min(VIEW_H - m, _w2sScratch.y));
+      const ang = Math.atan2(_w2sScratch.y - cy || (f.y - cy), _w2sScratch.x - cx || 1);
+      const col = f === fighter1 ? '#4a9eff' : '#ff4a4a';
+      const tag = f === fighter1 ? 'P1' : 'P2';
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(ang);
+      ctx.fillStyle = col;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(14, 0);
+      ctx.lineTo(-8, -10);
+      ctx.lineTo(-8, 10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.rotate(-ang);
+      ctx.font = 'bold 13px Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.strokeText(tag, 0, -12);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(tag, 0, -12);
+      ctx.restore();
+    }
+  } catch (_) {}
+}
 function updateViewBounds() {
   try {
     const cam = getCameraStateInto(_camScratch);
     const zoom = cam.zoom || 1;
-    const w = arena.width / zoom, h = arena.height / zoom;
+    // Visible window = the 1080² viewport at the live zoom (not the taller
+    // arena — the screen itself is still square).
+    const w = VIEW_W / zoom, h = VIEW_H / zoom;
     // Margin: culling bounds in Effects/worldFx carry their own margins; the
     // rect itself is exact, with a small slack for the stage skip.
     _viewRect.x0 = cam.x - w / 2 - 40;
@@ -365,6 +446,13 @@ function persistSkinScaleCache() {
 function skinScaleFor(f) {
   const s = skinScaleCache[f.id];
   return typeof s === 'number' ? s : (f.skinScale || 0.85);
+}
+// Skin scale actually used for rendering: a skin-meta override (SKIN_META /
+// fighter def / rig store) wins, otherwise the skin customiser's stored value.
+// Keeps every preview and the in-game body on one value.
+function effectiveSkinScale(f) {
+  const m = resolveSkinMeta(f);
+  return (m && m.skinScale != null) ? m.skinScale : skinScaleFor(f);
 }
 
 let matchSettings = {
@@ -605,6 +693,13 @@ const MAP_SETTINGS_ROWS = [
   { id: 'showStocks', label: 'STOCK COUNTER', type: 'toggle', value: () => (mapSettings.showStocks !== false ? 'ON' : 'OFF') },
   { id: 'quality', label: 'QUALITY', type: 'quality', value: () => (mapSettings.quality || 'high').toUpperCase() },
   { id: 'resolution', label: 'RESOLUTION', type: 'resolution', value: () => (mapSettings.resolution || '1080p').toUpperCase() },
+  // Death zone: px beyond each arena edge. 0 = KO exactly at the edge
+  // (historical default). Positive = more forgiving, negative = tighter.
+  { id: 'dzLeft', label: 'DEATH ZONE LEFT', type: 'deathzone', value: () => `${mapSettings.deathZone.left >= 0 ? '+' : ''}${mapSettings.deathZone.left}px` },
+  { id: 'dzRight', label: 'DEATH ZONE RIGHT', type: 'deathzone', value: () => `${mapSettings.deathZone.right >= 0 ? '+' : ''}${mapSettings.deathZone.right}px` },
+  { id: 'dzTop', label: 'DEATH ZONE TOP', type: 'deathzone', value: () => `${mapSettings.deathZone.top >= 0 ? '+' : ''}${mapSettings.deathZone.top}px` },
+  { id: 'dzBottom', label: 'DEATH ZONE BOTTOM', type: 'deathzone', value: () => `${mapSettings.deathZone.bottom >= 0 ? '+' : ''}${mapSettings.deathZone.bottom}px` },
+  { id: 'dzReset', label: 'RESET DEATH ZONE', type: 'deathzoneReset', value: () => 'ENTER' },
   { id: 'mapBack', label: 'BACK', type: 'action' },
 ];
 const QUALITY_SCALES = { high: 1, balanced: 0.6, performance: 0.35 };
@@ -720,32 +815,60 @@ const _healthLut = (() => {
 function drawHealthBar(ctx, fighter, time) {
   // Damage percent meter above the fighter.
   // Called inside the camera transform, so fighter.x/y are already world coords.
+  // Stroke + subtle drop shadow keep the bar readable over any background;
+  // dimensions and values are unchanged (gameplay-agnostic).
   const pct = Math.max(0, Math.min(1, fighter.percent / 150));
+  const bx = fighter.x - 40, by = fighter.y - fighter.radius - 20;
 
+  ctx.save();
+  // Subtle drop shadow: one shadowed fill only (bg), fg drawn without shadow
+  // so no double-blur cost per frame.
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 2;
   // Background bar
   ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-  ctx.fillRect(fighter.x - 40, fighter.y - fighter.radius - 20, 80, 8);
+  ctx.fillRect(bx, by, 80, 8);
+  ctx.shadowColor = 'rgba(0,0,0,0)';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
 
   // Health color via precomputed LUT (48 buckets white → yellow → orange →
   // red). Identical colors within ~3%; replaces the per-frame rgb() template.
   const _hbIdx = Math.min(47, (pct * 47) | 0);
 
-  // Foreground bar (health/damage) â€” always full width, color changes with damage
+  // Foreground bar (health/damage) — always full width, color changes with damage
   ctx.fillStyle = _healthLut[_hbIdx];
-  ctx.fillRect(fighter.x - 40, fighter.y - fighter.radius - 20, 80, 8);
+  ctx.fillRect(bx, by, 80, 8);
+  // Crisp outline following the bar's exact shape.
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeRect(bx + 0.75, by + 0.75, 80 - 1.5, 8 - 1.5);
+  ctx.restore();
 
   // Text. Cached per rounded percent value: fillText is a full text shaping +
   // rasterization pass, and this ran for both fighters every frame for a
   // string drawn from a small, repeating set. Sprites are rasterized at the
   // backing density and blitted at logical size, so they stay sharp on hidpi.
+  // The sprite itself carries the outline + shadow bake (see _pctSprite).
   const label = Math.round(fighter.percent) + '%';
   const spr = _pctSprite(label);
   if (spr) ctx.drawImage(spr.c, fighter.x - spr.w / 2, fighter.y - fighter.radius - 25 - spr.h / 2, spr.w, spr.h);
   else {
-    ctx.fillStyle = 'white';
+    ctx.save();
     ctx.font = _fontHealth;
     ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 3;
+    ctx.shadowOffsetY = 1;
+    ctx.strokeText(label, fighter.x, fighter.y - fighter.radius - 25);
+    ctx.fillStyle = 'white';
     ctx.fillText(label, fighter.x, fighter.y - fighter.radius - 25);
+    ctx.restore();
   }
 }
 
@@ -765,8 +888,8 @@ function _pctSprite(text) {
   try {
     const m = document.createElement('canvas').getContext('2d');
     m.font = _fontHealth;
-    const w = Math.ceil(m.measureText(text).width) + 4;
-    const h = 16;
+    const w = Math.ceil(m.measureText(text).width) + 8;
+    const h = 20;
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.ceil(w * s));
     c.height = Math.max(1, Math.ceil(h * s));
@@ -775,6 +898,17 @@ function _pctSprite(text) {
     g.font = _fontHealth;
     g.textAlign = 'center';
     g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    // Outline + subtle shadow baked once per label: per-frame blits stay free.
+    g.shadowColor = 'rgba(0,0,0,0.5)';
+    g.shadowBlur = 2;
+    g.shadowOffsetY = 1;
+    g.lineWidth = 3;
+    g.strokeStyle = 'rgba(0,0,0,0.85)';
+    g.strokeText(text, w / 2, h / 2);
+    g.shadowColor = 'rgba(0,0,0,0)';
+    g.shadowBlur = 0;
+    g.shadowOffsetY = 0;
     g.fillStyle = 'white';
     g.fillText(text, w / 2, h / 2);
     rec = { c, w, h };
@@ -792,8 +926,8 @@ export function initGame(canvasEl) {
   // physics and character sizes are therefore untouched by the viewport work.
   try { syncCanvasBacking(canvas); } catch (_) {}
   screenTransform();
-  arena = { width: VIEW_W, height: VIEW_H };
-  stage = createDefaultStage(arena.width, arena.height);
+  arena = { width: ARENA_W, height: ARENA_H };
+  stage = buildMatchStage();
   // Abilities that need to know where the stage is (the Teleport Strike's
   // placement checks) read it from the combat context, so the stage is
   // registered with the combat system whenever it is (re)built.
@@ -1043,6 +1177,26 @@ function getProbeApi() {
     },
     pose(pn) {
       return poseSnapshot(pn === 1 ? fighter1 : fighter2);
+    },
+    // Anatomical hand positions + orbit state, live (written by drawFighter).
+    // Used to watch the facing-turn hand switch without rendering guesses.
+    hands(pn) {
+      const f = pn === 1 ? fighter1 : fighter2;
+      if (!f) return null;
+      const hw = f._handWorld;
+      const o = f._orbit;
+      const pt = (p) => (p ? { x: +p.x.toFixed(2), y: +p.y.toFixed(2) } : null);
+      return {
+        facingRight: !!f.facingRight,
+        x: +f.x.toFixed(2), y: +f.y.toFixed(2),
+        phi: o && typeof o.phi === 'number' ? +o.phi.toFixed(4) : null,
+        orbitT: o ? +o.t.toFixed(4) : null,
+        orbitActive: !!(o && o.t < 1),
+        left: pt(hw && hw.left),
+        right: pt(hw && hw.right),
+        handL: pt(f._handL),
+        handR: pt(f._handR),
+      };
     },
     // Re-resolve the CURRENT animation frame for a given facing without
     // advancing it â€” the same updateAnimator/sampleInto path the renderer
@@ -1697,6 +1851,19 @@ function cycleMapSetting(row, dir) {
     mapSettings.resolution = order[(cur + dir + order.length) % order.length];
     persistMapSettings();
     applyQuality();
+  } else if (row.id === 'dzLeft' || row.id === 'dzRight' || row.id === 'dzTop' || row.id === 'dzBottom') {
+    // Death-zone margin per edge (px beyond the arena). Live-applies to the
+    // active stage so KO detection uses it immediately; validated + persisted.
+    const key = row.id === 'dzLeft' ? 'left' : row.id === 'dzRight' ? 'right' : row.id === 'dzTop' ? 'top' : 'bottom';
+    mapSettings.deathZone = sanitizeDeathZone(mapSettings.deathZone);
+    const cur = mapSettings.deathZone[key] || 0;
+    mapSettings.deathZone[key] = Math.max(DEATHZONE_MIN, Math.min(DEATHZONE_MAX, cur + dir * DEATHZONE_STEP));
+    persistMapSettings();
+    syncDeathZoneToStage();
+  } else if (row.id === 'dzReset') {
+    mapSettings.deathZone = { ...DEFAULT_DEATH_MARGINS };
+    persistMapSettings();
+    syncDeathZoneToStage();
   }
   renderTermMenu();
 }
@@ -1705,7 +1872,6 @@ function renderMapSettings() {
   if (!termLinesEl) return;
   termLinesEl.innerHTML = '';
   updateTermHints();
-
   const header = document.createElement('div');
   header.className = 'term-row head';
   header.textContent = 'MAP SETTINGS';
@@ -1798,6 +1964,18 @@ function renderMapSettings() {
         SFX.menuSelect();
         cycleMapSetting(row, 1);
       });
+    } else if (row.type === 'deathzone') {
+      line.addEventListener('click', () => {
+        termMapCursor = i;
+        SFX.menuSelect();
+        cycleMapSetting(row, 1);
+      });
+    } else if (row.type === 'deathzoneReset') {
+      line.addEventListener('click', () => {
+        termMapCursor = i;
+        SFX.menuSelect();
+        cycleMapSetting(row, 1);
+      });
     } else if (row.type === 'action') {
       line.addEventListener('click', () => {
         SFX.menuSelect();
@@ -1806,6 +1984,101 @@ function renderMapSettings() {
     }
     termLinesEl.appendChild(line);
   });
+  // Live side preview: the actual map inside its death-zone box. The whole
+  // preview fits the DEATH ZONE (outer red box); the arena + platforms draw
+  // inside at their true relative size, so widening a margin visibly pushes
+  // the KO line outward and shrinking pulls it in. Visual aid only.
+  try { drawDeathZonePreview(); } catch (_) {}
+}
+
+// Death-zone preview on the menu side canvas (hand-preview). Layout mirrors
+// createDefaultStage proportions so it reads as the real map: sky fill,
+// main ground + floating platform, spawn dots, arena edge (white) and the
+// death-zone KO box (red, dashed). The selected edge row highlights yellow.
+function drawDeathZonePreview() {
+  if (!previewCtx || !previewCanvas) return;
+  const pctx = previewCtx;
+  const W = previewCanvas.width, H = previewCanvas.height;
+  const dz = sanitizeDeathZone(mapSettings.deathZone);
+  const bz = blastRectFor(arena.width, arena.height, dz);
+  // Fit the whole DEATH ZONE into the canvas with a label band on top.
+  const topBand = 64;
+  const pad = 14;
+  const availW = W - pad * 2, availH = H - topBand - pad;
+  const bw = Math.max(1, bz.right - bz.left), bh = Math.max(1, bz.bottom - bz.top);
+  const s = Math.min(availW / bw, availH / bh);
+  const ox = pad + (availW - bw * s) / 2 - bz.left * s;
+  const oy = topBand + (availH - bh * s) / 2 - bz.top * s;
+  const X = (wx) => ox + wx * s;
+  const Y = (wy) => oy + wy * s;
+
+  pctx.clearRect(0, 0, W, H);
+  pctx.fillStyle = '#f3ead1';
+  pctx.fillRect(0, 0, W, H);
+  // Title + live values.
+  pctx.textAlign = 'center';
+  pctx.fillStyle = '#111';
+  pctx.font = 'bold 15px monospace';
+  pctx.fillText('DEATH ZONE PREVIEW', W / 2, 22);
+  pctx.font = '11px monospace';
+  pctx.fillStyle = '#555';
+  pctx.fillText(`L${dz.left >= 0 ? '+' : ''}${dz.left} R${dz.right >= 0 ? '+' : ''}${dz.right} T${dz.top >= 0 ? '+' : ''}${dz.top} B${dz.bottom >= 0 ? '+' : ''}${dz.bottom} px`, W / 2, 40);
+  pctx.fillText('red = KO line  ·  white = arena edge', W / 2, 54);
+
+  // Death-zone KO box (outer). The preview IS the size of the deadzone.
+  pctx.save();
+  pctx.strokeStyle = '#c0392b';
+  pctx.lineWidth = 2;
+  pctx.setLineDash([6, 4]);
+  pctx.strokeRect(X(bz.left), Y(bz.top), bw * s, bh * s);
+  pctx.setLineDash([]);
+  pctx.fillStyle = 'rgba(192,57,43,0.08)';
+  pctx.fillRect(X(bz.left), Y(bz.top), bw * s, bh * s);
+  pctx.restore();
+
+  // Arena (inner — full height including the deep pit; stage layout itself is
+  // anchored to the top-1080 vista, same as in-game).
+  pctx.fillStyle = mapSettings.backgroundColor || '#87CEFA';
+  pctx.fillRect(X(0), Y(0), arena.width * s, arena.height * s);
+  pctx.strokeStyle = '#ffffff';
+  pctx.lineWidth = 2;
+  pctx.strokeRect(X(0), Y(0), arena.width * s, arena.height * s);
+
+  // Platforms at the real anchored stage proportions (groundY=.78*1080,
+  // width=.65W, floater -140) — identical to buildMatchStage.
+  try {
+    const gY = VIEW_H * 0.78, gW = arena.width * 0.65, gX = (arena.width - gW) / 2;
+    const pW = arena.width * 0.14, pX = arena.width / 2 - pW / 2, pY = gY - 140;
+    pctx.fillStyle = mapSettings.platformColor || '#3a5a3a';
+    pctx.fillRect(X(gX), Y(gY), gW * s, Math.max(2, 16 * s));
+    pctx.fillStyle = '#4a7a4a';
+    pctx.fillRect(X(pX), Y(pY), pW * s, Math.max(2, 12 * s));
+    // Spawn dots.
+    pctx.fillStyle = '#111';
+    for (const sx of [arena.width * 0.35, arena.width * 0.65]) {
+      pctx.beginPath();
+      pctx.arc(X(sx), Y(gY - 30), Math.max(2.5, 6 * s), 0, Math.PI * 2);
+      pctx.fill();
+    }
+  } catch (_) {}
+
+  // Highlight the selected edge row, if any.
+  try {
+    const row = MAP_SETTINGS_ROWS[termMapCursor];
+    const edge = row && row.id === 'dzLeft' ? 'left' : row && row.id === 'dzRight' ? 'right' : row && row.id === 'dzTop' ? 'top' : row && row.id === 'dzBottom' ? 'bottom' : null;
+    if (edge) {
+      pctx.save();
+      pctx.strokeStyle = '#f1c40f';
+      pctx.lineWidth = 3;
+      pctx.beginPath();
+      if (edge === 'left') { pctx.moveTo(X(bz.left), Y(bz.top)); pctx.lineTo(X(bz.left), Y(bz.bottom)); }
+      else if (edge === 'right') { pctx.moveTo(X(bz.right), Y(bz.top)); pctx.lineTo(X(bz.right), Y(bz.bottom)); }
+      else if (edge === 'top') { pctx.moveTo(X(bz.left), Y(bz.top)); pctx.lineTo(X(bz.right), Y(bz.top)); }
+      else { pctx.moveTo(X(bz.left), Y(bz.bottom)); pctx.lineTo(X(bz.right), Y(bz.bottom)); }
+      pctx.stroke();
+      pctx.restore();
+    }
+  } catch (_) {}
 }
 
 // â”€â”€ AI TRAINING submenu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -3001,10 +3274,11 @@ function updateTermHints() {
       + 'ESC/Backspace = back. Auto-saves per fighter.';
   } else if (termMode === 'handGear') {
     h.innerHTML = 'HAND GEAR dresses each hand separately. EDITING HAND picks which arm LEFT/RIGHT GEAR, SIZE, ANGLE and FLIP act on. '
+      + 'Shaping a bare hand auto-equips gloves so the change is visible; LEFT/RIGHT HAND GEAR still unequips to NONE. '
       + 'MATCH BOTH HANDS copies the edited hand onto the other, R resets both to the character default. '
       + 'ESC/Backspace = back. Auto-saves per fighter.'
   } else if (termMode === 'mapSettings') {
-     h.innerHTML = 'MAP SETTINGS: UP/DOWN to select. LEFT/RIGHT to cycle colors. ENTER to input custom color, CLICK to cycle. ESC/BACKSPACE to go back.';
+      h.innerHTML = 'MAP SETTINGS: UP/DOWN to select. LEFT/RIGHT to cycle colors and death-zone margins (±20px). The side preview fits the DEATH ZONE (red KO box) with the real arena + platforms inside — selected edge highlights yellow. ESC/BACKSPACE to go back.';
    } else if (termMode === 'aiTraining') {
      h.innerHTML = 'AI TRAINING: UP/DOWN pick a row. LEFT/RIGHT cycle values. ENTER on POPULATION/GENERATIONS types a custom number, on START/STOP begins/ends evolution. ESC/BACKSPACE = back. '
        + 'Two gene pools (one per character) fight real 1-stock bouts â€” selection keeps the best, crossover + mutation breed the rest. Best models auto-save per character and load via AI DIFFICULTY (Hard/Expert/Trained, * = model present).';
@@ -3190,6 +3464,10 @@ function onMapSettingsKey(e) {
       cycleMapSetting(row, 1);
       return;
     }
+    if (row.type === 'deathzoneReset') {
+      cycleMapSetting(row, 1);
+      return;
+    }
     // For color settings, focus the row's inline hex field for custom input.
     if (row.type === 'color') {
       try {
@@ -3257,7 +3535,7 @@ function drawSkinPreview() {
   let drawW = 0, drawH = 0;
   if (skinEntry && skinEntry.status === 'loaded' && skinEntry.img) {
     const img = skinEntry.img;
-    const scale = (r * 2 * skinScaleFor(f)) / Math.min(img.width, img.height);
+    const scale = (r * 2 * effectiveSkinScale(f)) / Math.min(img.width, img.height);
     drawW = img.width * scale;
     drawH = img.height * scale;
   }
@@ -3477,27 +3755,34 @@ function drawAccyMinifig(ctx, x, y, R, f, conf, gear, opts) {
   const facing = !opts || opts.facingRight !== false;
   const showGuides = !!(opts && opts.guides);
 
+  // One coordinate record for the preview body, hands and equipment — the same
+  // SKIN_META + orbit rig the in-game renderer uses, so the preview can never
+  // drift from the real rest pose.
+  const meta = resolveSkinMeta(f);
+  const rig = resolveOrbitRig(f);
+  const vR = (typeof meta.bodyRadiusMul === 'number' && meta.bodyRadiusMul > 0) ? R * meta.bodyRadiusMul : R;
+
   // Ground shadow
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.beginPath();
-  ctx.ellipse(x, y + R + 1.5, R * 0.8, R * 0.28, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y + vR + 1.5, vR * 0.8, vR * 0.28, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Behind-layer accessory sits behind the body
   if (conf && conf.type && conf.type !== 'none' && conf.layer === 'behind') {
-    drawAccessory(ctx, x, y, R, conf);
+    drawAccessory(ctx, x, y, vR, conf);
   }
 
   // Orbit base hands at the preview facing (settled orbit angle, no travel):
   // the same canonical arrangement the game draws, so the preview shows the
   // real rest pose with correct anatomical sides in both facings.
   const previewPhi = orbitTarget(facing);
-  const oPR = orbitHandPose(previewPhi, 'right', {});
-  const oPL = orbitHandPose(previewPhi, 'left', {});
+  const oPR = orbitHandPose(previewPhi, 'right', {}, rig);
+  const oPL = orbitHandPose(previewPhi, 'left', {}, rig);
   const previewFront = orbitFrontSide(previewPhi, facing, false);
   const previewBack = previewFront === 'right' ? 'left' : 'right';
   const previewPosOf = (side) => (side === 'right' ? oPR : oPL);
-  const handR = R * 0.35;
+  const handR = vR * (typeof meta.handRadius === 'number' ? meta.handRadius : 0.35);
   const handFill = resolveHandColor(f.id, f.color);
   const handState = (hx, hy, side) => {
     const px = x + hx, py = y + hy;
@@ -3516,50 +3801,48 @@ function drawAccyMinifig(ctx, x, y, R, f, conf, gear, opts) {
   };
 
   // Fake fighter for the shared held layer (orbit rest pose, preview facing).
+  // Anatomical hand records (left/right), matching the in-game fighter.
   const fake = {
-    x, y, radius: R, facingRight: facing, _fighterDef: f,
-    _handFront: { x: previewPosOf(previewFront).x * R, y: previewPosOf(previewFront).y * R },
-    _handBack: { x: previewPosOf(previewBack).x * R, y: previewPosOf(previewBack).y * R },
+    x, y, radius: vR, facingRight: facing, _fighterDef: f,
+    _handL: { x: previewPosOf('left').x * vR, y: previewPosOf('left').y * vR },
+    _handR: { x: previewPosOf('right').x * vR, y: previewPosOf('right').y * vR },
   };
 
-  // Back hand (behind the body)
-  const backPt = handState(previewPosOf(previewBack).x * R, previewPosOf(previewBack).y * R, previewBack);
+  // Rear-layer weapons that are explicitly layer 'back' sit behind the body.
+  drawHeldLayer(ctx, fake, x, y, 'back', false, vR);
+  drawHeldLayer(ctx, fake, x, y, 'back', true, vR);
 
-  // Persistent held weapons through the shared layer — back under the body,
-  // front over it (grip hidden unless overHand), exactly like the game.
-  drawHeldLayer(ctx, fake, x, y, 'back', false);
-  drawHeldLayer(ctx, fake, x, y, 'back', true);
-
-  // Body ball + skin, exactly the in-game formula
+  // Body ball + skin, exactly the in-game formula (meta scale + centre offset)
   const skinEntry = getSkinImage(f.skin);
   const skinLoaded = skinEntry && skinEntry.status === 'loaded' && skinEntry.img;
   if (skinLoaded) {
     const img = skinEntry.img;
-    const scale = (R * 2 * skinScaleFor(f)) / Math.min(img.width, img.height);
+    const scale = (vR * 2 * effectiveSkinScale(f)) / Math.min(img.width, img.height);
+    const ccx = meta.skinCenterX != null ? meta.skinCenterX : 0;
+    const ccy = meta.skinCenterY != null ? meta.skinCenterY : 0;
     ctx.save();
     ctx.beginPath();
-    ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.arc(x, y, vR, 0, Math.PI * 2);
     ctx.clip();
-    ctx.drawImage(img, x - (img.width * scale) / 2, y - (img.height * scale) / 2, img.width * scale, img.height * scale);
+    ctx.drawImage(img, x + ccx * scale - (img.width * scale) / 2, y + ccy * scale - (img.height * scale) / 2, img.width * scale, img.height * scale);
     ctx.restore();
   } else {
     ctx.beginPath();
-    ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.arc(x, y, vR, 0, Math.PI * 2);
     ctx.fillStyle = f.color;
     ctx.fill();
   }
   ctx.beginPath();
-  ctx.arc(x, y, R, 0, Math.PI * 2);
+  ctx.arc(x, y, vR, 0, Math.PI * 2);
   ctx.strokeStyle = '#222222';
   ctx.lineWidth = 3 / ACCY_PREVIEW_ZOOM;
   ctx.stroke();
 
-  // Front hand (over the body)
-  const frontPt = handState(previewPosOf(previewFront).x * R, previewPosOf(previewFront).y * R, previewFront);
-
-  // Front-layer held weapons (grip hidden unless overHand), then guides.
-  drawHeldLayer(ctx, fake, x, y, 'front', false);
-  drawHeldLayer(ctx, fake, x, y, 'front', true);
+  // Fists draw over the body (rear then front), weapons over their fist.
+  const backPt = handState(previewPosOf(previewBack).x * vR, previewPosOf(previewBack).y * vR, previewBack);
+  drawHeldLayer(ctx, fake, x, y, 'front', false, vR);
+  const frontPt = handState(previewPosOf(previewFront).x * vR, previewPosOf(previewFront).y * vR, previewFront);
+  drawHeldLayer(ctx, fake, x, y, 'front', true, vR);
 
   // Anchor + grip guides (gear editor toggle): gold rings on the fist
   // anchors, cyan dots on each held weapon's grip with a connecting line.
@@ -3581,9 +3864,9 @@ function drawAccyMinifig(ctx, x, y, R, f, conf, gear, opts) {
           if (!e) continue;
           const slot = { _fighterDef: f, facingRight: facing };
           const bs = resolveHoldSlot(e.hand || (e.hands === 'both' ? (e.primary || 'lead') : 'right'), slot);
-          const hp = bs === previewFront ? fake._handFront : fake._handBack;
-          const gx = x + hp.x + (e.mirror !== false ? dir : 1) * (e.dx || 0) * R;
-          const gy = y + hp.y + (e.dy || 0) * R;
+          const hp = bs === 'right' ? fake._handR : fake._handL;
+          const gx = x + hp.x + (e.mirror !== false ? dir : 1) * (e.dx || 0) * vR;
+          const gy = y + hp.y + (e.dy || 0) * vR;
           ctx.strokeStyle = '#1d6fd6';
           ctx.beginPath();
           ctx.moveTo(x + hp.x, y + hp.y);
@@ -3601,7 +3884,7 @@ function drawAccyMinifig(ctx, x, y, R, f, conf, gear, opts) {
 
   // Front-layer accessory on top
   if (conf && conf.type && conf.type !== 'none' && conf.layer !== 'behind') {
-    drawAccessory(ctx, x, y, R, conf);
+    drawAccessory(ctx, x, y, vR, conf);
   }
 }
 
@@ -3864,6 +4147,8 @@ const GEAR_ROWS = [
   { type: 'blend', label: 'FACE TRANSITION' },
   { type: 'orbitdur', label: 'ORBIT DURATION' },
   { type: 'orbitsnap', label: 'WEAPON SNAP' },
+  { type: 'handdist', label: 'HAND DISTANCE' },
+  { type: 'depthsize', label: 'DEPTH SIZE' },
   { type: 'weapon', label: () => `${termGearHand.toUpperCase()} WEAPON` },
   { type: 'wscale', label: () => `${termGearHand.toUpperCase()} WPN SIZE` },
   { type: 'wangle', label: () => `${termGearHand.toUpperCase()} WPN ANGLE` },
@@ -3885,11 +4170,17 @@ function moveGearCursor(dir) {
 
 // Read-modify-write one hand. `mutate` returns nothing and edits `conf` in
 // place; a null mutate means the row only changed which hand is targeted (the
-// EDITING HAND row), which must NOT be persisted â€” termGearHand is UI state,
+// EDITING HAND row), which must NOT be persisted — termGearHand is UI state,
 // and writing it out would be meaningless data in the store.
-function editGearHand(f, side, mutate) {
+// `ensureVisible`: transform rows (size/angle/offsets/flip) pass true —
+// tweaking the shape of a bare ('none') hand would otherwise edit invisible
+// gear, so a visible default (boxing gloves) is equipped first, mirroring how
+// the rig rows materialize a held entry on first use. Type-cycling rows pass
+// false so explicitly unequipping to NONE keeps working.
+function editGearHand(f, side, mutate, ensureVisible) {
   const gear = loadHandGearFor(f.id, f.handGear);
   if (mutate) {
+    if (ensureVisible && gear[side].type === 'none') gear[side].type = 'boxinggloves';
     mutate(gear[side]);
     saveHandGearFor(f.id, side, gear[side]);
   }
@@ -3949,6 +4240,8 @@ function rigRowNumber(f, side, rowType) {  if (rowType === 'blend') {
 }
   if (rowType === 'orbitdur') return orbitDur(f);
   if (rowType === 'orbitsnap') return orbitSnap(f);
+  if (rowType === 'handdist') return resolveOrbitRig(f).handDist;
+  if (rowType === 'depthsize') return resolveOrbitRig(f).depthSize;
   const copy = editHeldCopy(f);
   const e = copy[rigEntryIndex(copy, f, side)];
   if (rowType === 'wscale') return e && typeof e.scale === 'number' ? e.scale : 1;
@@ -3962,10 +4255,12 @@ function rigWriteNumber(f, side, rowType, v) {
     saveRig(f.id, { blend: Math.max(0.1, Math.min(1, v)) });
     return;
   }
-  if (rowType === 'orbitdur' || rowType === 'orbitsnap') {
+  if (rowType === 'orbitdur' || rowType === 'orbitsnap' || rowType === 'handdist' || rowType === 'depthsize') {
     const cur = (getRig(f.id).orbit && typeof getRig(f.id).orbit === 'object') ? { ...getRig(f.id).orbit } : {};
     if (rowType === 'orbitdur') cur.dur = Math.max(0.05, Math.min(1, v));
-    else cur.snap = Math.max(0, Math.min(1, v));
+    else if (rowType === 'orbitsnap') cur.snap = Math.max(0, Math.min(1, v));
+    else if (rowType === 'handdist') cur.handDist = Math.max(0.4, Math.min(2.5, v));
+    else cur.depthSize = Math.max(0, Math.min(0.8, v));
     saveRig(f.id, { orbit: cur });
     return;
   }
@@ -4011,13 +4306,13 @@ function adjustGearRow(row, dir, coarse) {
   if (row.type === 'size') {
     editGearHand(f, side, (conf) => {
       conf.scale = Math.min(2.0, Math.max(0.4, (conf.scale || 1) + dir * (coarse ? 0.1 : 0.01)));
-    });
+    }, true);
     return;
   }
   if (row.type === 'angle') {
     editGearHand(f, side, (conf) => {
       conf.angle = ((conf.angle || 0) + dir * (coarse ? 10 : 1) + 180) % 360 - 180;
-    });
+    }, true);
     return;
   }
   // Hand-space nudge in hand-radius units (+x toward the fist's outboard side
@@ -4025,17 +4320,17 @@ function adjustGearRow(row, dir, coarse) {
   if (row.type === 'shiftx') {
     editGearHand(f, side, (conf) => {
       conf.shiftX = Math.min(2.0, Math.max(-1.2, (conf.shiftX || 0) + dir * (coarse ? 0.1 : 0.02)));
-    });
+    }, true);
     return;
   }
   if (row.type === 'shifty') {
     editGearHand(f, side, (conf) => {
       conf.shiftY = Math.min(2.0, Math.max(-1.5, (conf.shiftY || 0) + dir * (coarse ? 0.1 : 0.02)));
-    });
+    }, true);
     return;
   }
   if (row.type === 'flip') {
-    editGearHand(f, side, (conf) => { conf.flip = !conf.flip; });
+    editGearHand(f, side, (conf) => { conf.flip = !conf.flip; }, true);
     return;
   }
   // ── Universal rig rows ──
@@ -4046,13 +4341,15 @@ function adjustGearRow(row, dir, coarse) {
     renderTermMenu();
     return;
   }
-  if (row.type === 'blend' || row.type === 'orbitdur' || row.type === 'orbitsnap' || row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
+  if (row.type === 'blend' || row.type === 'orbitdur' || row.type === 'orbitsnap' || row.type === 'handdist' || row.type === 'depthsize' || row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
     const cur = rigRowNumber(f, side, row.type);
     const step = row.type === 'blend' ? 0.01 : row.type === 'orbitdur' ? 0.01
-      : row.type === 'orbitsnap' ? 0.05 : row.type === 'wscale' ? 0.01
+      : row.type === 'orbitsnap' ? 0.05 : row.type === 'handdist' ? 0.02
+      : row.type === 'depthsize' ? 0.01 : row.type === 'wscale' ? 0.01
       : row.type === 'wangle' ? 1 : 0.02;
     const jump = row.type === 'blend' ? 0.1 : row.type === 'orbitdur' ? 0.1
-      : row.type === 'orbitsnap' ? 0.25 : row.type === 'wscale' ? 0.1
+      : row.type === 'orbitsnap' ? 0.25 : row.type === 'handdist' ? 0.2
+      : row.type === 'depthsize' ? 0.1 : row.type === 'wscale' ? 0.1
       : row.type === 'wangle' ? 10 : 0.1;
     rigWriteNumber(f, side, row.type, cur + dir * (coarse ? jump : step));
     SFX.menuSelect();
@@ -4089,7 +4386,7 @@ function adjustGearRow(row, dir, coarse) {
     const e = copy[idx];
     if (row.type === 'wlayer') e.layer = e.layer === 'back' ? 'front' : 'back';
     else if (row.type === 'wmirror') e.mirror = e.mirror === false;
-    else e.overHand = !e.overHand;
+    else e.overHand = !(e.overHand !== false); // toggle from the true default
     saveRig(f.id, { held: copy });
     SFX.menuSelect();
     renderTermMenu();
@@ -4156,6 +4453,8 @@ function gearRowValue(row) {
     case 'blend': return rigRowNumber(f, termGearHand, 'blend').toFixed(2);
     case 'orbitdur': return rigRowNumber(f, termGearHand, 'orbitdur').toFixed(2);
     case 'orbitsnap': return rigRowNumber(f, termGearHand, 'orbitsnap').toFixed(2);
+    case 'handdist': return rigRowNumber(f, termGearHand, 'handdist').toFixed(2);
+    case 'depthsize': return rigRowNumber(f, termGearHand, 'depthsize').toFixed(2);
     case 'weapon': {
       const wid = rigEntryWeapon(f, termGearHand);
       if (!wid) return 'NONE';
@@ -4170,7 +4469,7 @@ function gearRowValue(row) {
     case 'wy': return rigRowNumber(f, termGearHand, 'wy').toFixed(2);
     case 'wlayer': return rigEntryProp(f, termGearHand, 'layer', 'front') === 'back' ? 'BACK' : 'FRONT';
     case 'wmirror': return rigEntryProp(f, termGearHand, 'mirror', true) === false ? 'NO' : 'YES';
-    case 'wtop': return rigEntryProp(f, termGearHand, 'overHand', false) ? 'YES' : 'NO';
+    case 'wtop': return rigEntryProp(f, termGearHand, 'overHand', true) !== false ? 'YES' : 'NO';
     case 'rigreset': return 'CLR';
     case 'previewface': return previewFacingRight ? 'RIGHT' : 'LEFT';
     case 'guides': return gearGuidesOn ? 'SHOW' : 'HIDE';
@@ -4196,27 +4495,55 @@ function drawGearPreview() {
   pctx.save();
   pctx.translate(W / 2, 240);
   pctx.scale(S, S);
-  drawAccyMinifig(pctx, 0, 0, R, f, conf, gear, { facingRight: previewFacingRight, guides: gearGuidesOn });
+  // Isolated: a failure in the minifig paint must never freeze the preview or
+  // swallow the value updates — the ring + status text below always paint, and
+  // the error itself is shown on-canvas so a silent freeze becomes reportable.
+  let minifigError = null;
+  try {
+    drawAccyMinifig(pctx, 0, 0, R, f, conf, gear, { facingRight: previewFacingRight, guides: gearGuidesOn });
+  } catch (err) {
+    minifigError = err;
+    try { console.error('[gear-preview]', err); } catch (_) {}
+  }
   pctx.restore();
+  if (minifigError) {
+    pctx.save();
+    pctx.textAlign = 'center';
+    pctx.font = 'bold 12px monospace';
+    pctx.fillStyle = '#c0392b';
+    pctx.fillText('PREVIEW PAINT ERROR', W / 2, 200);
+    pctx.font = '10px monospace';
+    pctx.fillStyle = '#555';
+    const msg = String((minifigError && minifigError.message) || minifigError).slice(0, 44);
+    pctx.fillText(msg, W / 2, 216);
+    pctx.restore();
+  }
 
   // Mark the hand currently being edited so the rows have a visible subject.
   // A ring, not a fill: it must not obscure the gear underneath. Uses the same
   // orbit rest pose as the minifig above, so the ring sits on the edited
   // anatomical hand in both facings.
-  const editPose = orbitHandPose(orbitTarget(previewFacingRight), termGearHand, {});
-  const handR = R * 0.35;
-  const hx = editPose.x * R;
-  const hy = editPose.y * R;
-  pctx.save();
-  pctx.translate(W / 2, 240);
-  pctx.scale(S, S);
-  pctx.beginPath();
-  pctx.arc(hx, hy, handR * 2.05, 0, Math.PI * 2);
-  pctx.strokeStyle = '#1d6fd6';
-  pctx.lineWidth = 2 / ACCY_PREVIEW_ZOOM;
-  pctx.setLineDash([6 / ACCY_PREVIEW_ZOOM, 4 / ACCY_PREVIEW_ZOOM]);
-  pctx.stroke();
-  pctx.restore();
+  const editRig = resolveOrbitRig(f);
+  const editMeta = resolveSkinMeta(f);
+  const editVR = (typeof editMeta.bodyRadiusMul === 'number' && editMeta.bodyRadiusMul > 0) ? R * editMeta.bodyRadiusMul : R;
+  const editPose = orbitHandPose(orbitTarget(previewFacingRight), termGearHand, {}, editRig);
+  const handR = editVR * (typeof editMeta.handRadius === 'number' ? editMeta.handRadius : 0.35);
+  const hx = editPose.x * editVR;
+  const hy = editPose.y * editVR;
+  try {
+    pctx.save();
+    pctx.translate(W / 2, 240);
+    pctx.scale(S, S);
+    pctx.beginPath();
+    pctx.arc(hx, hy, handR * 2.05, 0, Math.PI * 2);
+    pctx.strokeStyle = '#1d6fd6';
+    pctx.lineWidth = 2 / ACCY_PREVIEW_ZOOM;
+    pctx.setLineDash([6 / ACCY_PREVIEW_ZOOM, 4 / ACCY_PREVIEW_ZOOM]);
+    pctx.stroke();
+    pctx.restore();
+  } catch (_) {
+    try { pctx.restore(); } catch (_) {}
+  }
 
   pctx.textAlign = 'left';
   pctx.font = '11px monospace';
@@ -4225,7 +4552,16 @@ function drawGearPreview() {
   pctx.fillText(`L: ${handGearName(gear.left.type)}  ·  R: ${handGearName(gear.right.type)}`, 10, 34);
   const gc = gear[termGearHand];
   pctx.fillText(`X ${(gc.shiftX || 0).toFixed(2)}  ·  Y ${(gc.shiftY || 0).toFixed(2)}`, 10, 50);
-  pctx.fillText(`FACING ${previewFacingRight ? 'RIGHT' : 'LEFT'}${gearGuidesOn ? '  ·  GUIDES ON' : ''}`, 10, 64);
+  // Tell the user when the edited gear can't be seen: a gripped held weapon
+  // (e.g. the knight's sword/shield) covers fist gear by design, so shaping
+  // it looks like nothing happens. Visual aid only — game logic untouched.
+  let coverNote = '';
+  try {
+    if (gc.type !== 'none' && holdCoversSide({ _fighterDef: f }, termGearHand)) {
+      coverNote = '  ·  HIDDEN BY HELD WEAPON';
+    }
+  } catch (_) {}
+  pctx.fillText(`FACING ${previewFacingRight ? 'RIGHT' : 'LEFT'}${gearGuidesOn ? '  ·  GUIDES ON' : ''}${coverNote}`, 10, 64);
   pctx.textAlign = 'center';
   pctx.font = 'bold 16px monospace';
   pctx.fillStyle = '#111';
@@ -4308,6 +4644,9 @@ function renderGearEditor() {
       const side = termGearHand;
       const write = (v) => {
         const gear = loadHandGearFor(f.id, f.handGear);
+        // Same visible-gear guarantee as the keyboard path above: shaping a
+        // bare hand equips gloves first so the slider always does something.
+        if (gear[side].type === 'none') gear[side].type = 'boxinggloves';
         gear[side][confKey] = v;
         saveHandGearFor(f.id, side, gear[side]);
         drawGearPreview();
@@ -4326,7 +4665,7 @@ function renderGearEditor() {
       });
       line.appendChild(range);
       line.appendChild(num);
-    } else if (row.type === 'blend' || row.type === 'orbitdur' || row.type === 'orbitsnap' || row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
+    } else if (row.type === 'blend' || row.type === 'orbitdur' || row.type === 'orbitsnap' || row.type === 'handdist' || row.type === 'depthsize' || row.type === 'wscale' || row.type === 'wangle' || row.type === 'wx' || row.type === 'wy') {
       // Rig-backed numeric rows (shared rig store, not hand gear): same
       // slider + numeric pattern as above, writing through rigWriteNumber.
       const f = ALL_FIGHTERS[previewFighterIdx];
@@ -4334,6 +4673,8 @@ function renderGearEditor() {
         blend: { min: 0.1, max: 1, step: 0.01 },
         orbitdur: { min: 0.05, max: 1, step: 0.01 },
         orbitsnap: { min: 0, max: 1, step: 0.05 },
+        handdist: { min: 0.4, max: 2.5, step: 0.02 },
+        depthsize: { min: 0, max: 0.8, step: 0.01 },
         wscale: { min: 0.2, max: 2.5, step: 0.01 },
         wangle: { min: -180, max: 180, step: 1 },
         wx: { min: -2, max: 2, step: 0.02 },
@@ -4480,7 +4821,8 @@ function openSandbox() {
   // and sandbox fighters can never both be simulating.
   try { stopTraining(); } catch (_) {}
   stopSandboxSession();
-  setSandboxArenaSize(arena.width, arena.height);
+  // The sandbox keeps its own square arena — the taller match pit stays out.
+  setSandboxArenaSize(VIEW_W, VIEW_H);
   openSandboxEditor(canvas, {
     onClose: closeSandbox,
     onPlay: startSandboxPlay,
@@ -4504,8 +4846,8 @@ function startSandboxPlay() {
   // Silent close: the editor steps aside, it is not dismissed â€” firing the close
   // handler here would bounce straight back to the main menu.
   closeSandboxEditor(true);
-  setSandboxArenaSize(arena.width, arena.height);
-  startSandboxSession(document_, arena.width, arena.height);
+  setSandboxArenaSize(VIEW_W, VIEW_H);
+  startSandboxSession(document_, VIEW_W, VIEW_H);
   currentGameState = 'sandboxPlay';
 }
 
@@ -4519,11 +4861,11 @@ function endSandboxPlay() {
   resetDamageIndicators();
   // The match owns the stage again. Safe even if no match has run yet, because
   // the default stage is a pure function of the arena size.
-  stage = createDefaultStage(arena.width, arena.height);
+  stage = buildMatchStage();
   setCombatStage(stage);
 }
 
-// The sandbox session's per-frame entry. Its own key handling lives in
+ // The sandbox session's per-frame entry. Its own key handling lives in
 // onPlayKey (I / V are two bindings of the same 'grab' action, so an edge query
 // cannot tell them apart â€” raw key codes can), and the rest is the shared step.
 function updateSandboxPlay(dt, now) {
@@ -4552,7 +4894,7 @@ function startNewMatch() {
   const skin1 = resolveFighterSkin(f1Def);
   const skin2 = resolveFighterSkin(f2Def);
 
-  stage = createDefaultStage(arena.width, arena.height);
+  stage = buildMatchStage();
   setCombatStage(stage);
   const sp1 = stage.spawnPoints[0];
   const sp2 = stage.spawnPoints[1];
@@ -4656,7 +4998,7 @@ function startNewMatch() {
   // Frame-1 final zoom: snap pan + dynamic zoom straight onto the spawn
   // formation, synchronously â€” no intro animation, no easing from wide.
   // updateCamera() then tracks dynamically from these correct values.
-  try { snapCameraToFit(fightersPair(), arena.width, arena.height, stage); } catch (_) {}
+  try { snapCameraToFit(fightersPair(), VIEW_W, VIEW_H, stage); } catch (_) {}
   isPaused = false;
   tweakEditing = false; tweakDraft = '';
   matchOver = false;
@@ -4684,57 +5026,64 @@ function startNewMatch() {
 // eliminated ('dead' â€” skipped by camera, physics and rendering) and the
 // match ends immediately. Same-frame double KOs: both lose a stock; if both
 // hit zero it is a draw, otherwise the survivor wins.
+function _eliminateFighter(who) {
+  who.eliminated = true;
+  who.state = 'dead';
+  who.vx = 0; who.vy = 0;
+  removeAttackerHitboxes(who);
+  clearHitLocks(who);
+  who.attack = null;
+  who.attackBuffer = null;
+  who.hitstun = 0;
+  who.launchTimer = 0;
+  if (who._projectiles) who._projectiles.length = 0;
+  who._teleportPending = null;
+  who._horse = null;
+  who._parryWindow = 0;
+  who._parryBuff = null;
+  who._knightCounter = 0;
+  who._counterResolving = false;
+  clearDeadeye(who);
+  clearBoxerState(who);
+}
+
+// Completed disappearance event: the fighter is already removed above, is no
+// longer rendered/tracked, and its final world position (captured before the
+// removal) is handed to the existing KO pillar exactly once.
+function _onFighterDisappeared(x, y) {
+  try {
+    if (Number.isFinite(x) && Number.isFinite(y)) notifyCinematicKO(x, y);
+  } catch (_) {}
+}
 function onBlastKO(f) {
   if (matchOver || !f || f.eliminated) return;
-  // Cinematic KO pillar at the victim's exit point (before the reset moves
-  // them). Side-blast exits happen far outside the camera view, so the point
-  // is clamped into the visible rect — the pillar reads as erupting at the
-  // screen edge the fighter flew out of instead of spawning off-screen.
-  try {
-    let kx = f.x, ky = f.y;
-    try {
-      const cam = getCameraStateInto(_camScratch);
-      const zoom = cam.zoom || 1;
-      const hw = Math.max(80, arena.width / zoom / 2 - 90);
-      const hh = Math.max(80, arena.height / zoom / 2 - 90);
-      kx = Math.max(cam.x - hw, Math.min(cam.x + hw, kx));
-      ky = Math.max(cam.y - hh, Math.min(cam.y + hh, ky));
-    } catch (_) {}
-    notifyCinematicKO(kx, ky);
-  } catch (_) {}
+  // Capture the final valid world position FIRST (before any reset moves
+  // the fighter), then register the KO exactly once.
+  const kx = f.x, ky = f.y;
   f.stocks = Math.max(0, (f.stocks ?? 1) - 1);
   const other = f === fighter1 ? fighter2 : fighter1;
   const otherBlasted = other && !other.eliminated && isInBlastZone(other, stage);
+  let okx = null, oky = null;
   if (otherBlasted) {
+    okx = other.x; oky = other.y;
     other.stocks = Math.max(0, (other.stocks ?? 1) - 1);
   }
+  // Deciding-KO from authoritative stock state (existing winner rules).
   const fOut = f.stocks <= 0;
   const otherOut = otherBlasted && other.stocks <= 0;
-  if (fOut || otherOut) {
-    for (const [who, blasted] of [[f, true], [other, otherBlasted]]) {
+  const deciding = fOut || otherOut;
+  if (deciding) {
+    // Remove the decided fighter(s) from active gameplay + rendering.
+    const pairs = [[f, true], [other, otherBlasted]];
+    for (let pi = 0; pi < pairs.length; pi++) {
+      const who = pairs[pi][0], blasted = pairs[pi][1];
       if (!who || !blasted) continue;
-      if (who.stocks <= 0) {
-        who.eliminated = true;
-        who.state = 'dead';
-        who.vx = 0; who.vy = 0;
-        removeAttackerHitboxes(who);
-        clearHitLocks(who);
-        who.attack = null;
-        who.attackBuffer = null;
-        who.hitstun = 0;
-        if (who._projectiles) who._projectiles.length = 0;
-        who._teleportPending = null;
-        who._horse = null;
-        who._parryWindow = 0;
-        who._parryBuff = null;
-        who._knightCounter = 0;
-        who._counterResolving = false;
-        clearDeadeye(who);
-        clearBoxerState(who);
-      } else {
-        softResetFighter(who, stage);
-      }
+      if (who.stocks <= 0) _eliminateFighter(who);
+      else softResetFighter(who, stage);
     }
+    // Pillar(s) at the exact disappearance point(s) - before any zoom.
+    _onFighterDisappeared(kx, ky);
+    if (otherBlasted) _onFighterDisappeared(okx, oky);
     if (fOut && otherOut) {
       matchWinner = 0; // draw
     } else if (fOut) {
@@ -4742,13 +5091,20 @@ function onBlastKO(f) {
     } else {
       matchWinner = f === fighter1 ? 1 : 2;
     }
+    // Match ends now; the CAMERA zoom itself is gated until
+    // MATCH_ZOOM_DELAY elapses (see cameraMatchOver), so the zoom provably
+    // starts after disappearance + pillar.
     matchOver = true;
     matchOverAge = 0;
-    resetTimeDilation(); // no lingering slow-mo over the result
+    resetTimeDilation();
     return;
   }
+  // Non-deciding KO: disappearance via soft reset, pillar at that point,
+  // match continues with no match-ending zoom.
   softResetFighter(f, stage);
   if (otherBlasted) softResetFighter(other, stage);
+  _onFighterDisappeared(kx, ky);
+  if (otherBlasted) _onFighterDisappeared(okx, oky);
 }
 
 // Soft blast-zone respawn (costs one stock, handled in onBlastKO above) now
@@ -4939,8 +5295,8 @@ export function update(dt, now) {
   stepRosterFinish(fightersPair(), effDt, victoryAnimFor);
 
   updateCameraZoom(effDt);
-  updateMatchZoom(effDt, matchOver);
-  updateCamera(fightersPair(), arena.width, arena.height, effDt, stage, matchOver);
+  updateMatchZoom(effDt, cameraMatchOver());
+  updateCamera(fightersPair(), VIEW_W, VIEW_H, effDt, stage, cameraMatchOver());
 
   // Commit AI edge detection (held â†’ prevHeld) AFTER every consumer has read
   // this frame's synthetic inputs, then clear the frame's real-key edges.
@@ -5149,7 +5505,7 @@ export function render(now) {
   // opaque-fill fast path instead: no source sampling, no per-pixel alpha
   // blend, no image surface lookup. Per-frame fill+blit pixels drop ~30x.
   ctx.fillStyle = mapSettings.backgroundColor || DEFAULT_BACKGROUND_COLOR;
-  ctx.fillRect(0, 0, arena.width, arena.height);
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
   // Visible world rect for this frame (derived from the composed camera zoom +
   // pan): feeds the view-culling bounds in Effects / worldFx and the stage
@@ -5159,7 +5515,7 @@ export function render(now) {
   ctx.save();
   // Backing scale snaps the camera pan to whole device pixels (no pan
   // shimmer on sharp edges); the camera state itself stays fractional.
-  applyCameraTransform(ctx, arena.width, arena.height, screenScale());
+  applyCameraTransform(ctx, VIEW_W, VIEW_H, screenScale());
 
   drawStage(ctx, stage, time, mapSettings.platformColor, _viewRect);
 
@@ -5218,6 +5574,9 @@ export function render(now) {
   try { drawCinematicWorld(ctx); } catch (_) {}
 
   ctx.restore();
+
+  // Off-screen markers: alive-but-outside-view fighters only (visual aid).
+  try { drawOffscreenMarkers(); } catch (_) {}
 
   // Down Light time-dilation overlay: a full-screen ORANGE tint across the
   // entire arena while the world is in slow motion (semi-transparent so the

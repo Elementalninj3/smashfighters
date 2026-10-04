@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Golden Slash VFX Particle System</title>
+<style>
+:root{--bg:#0d1017;--ink:#e8ecf5;--panel:#161b26cc;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+:root[data-theme="light"]{--bg:#f4f5f8;--ink:#1d2330;--panel:#ffffffcc}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px system-ui,sans-serif;overflow:hidden}
+canvas{position:fixed;inset:0;width:100%;height:100%}
+.ui{position:fixed;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:0 10px}
+.ui>*{background:var(--panel);color:var(--ink);border:1px solid #8885;border-radius:10px;padding:9px 14px;font:inherit;backdrop-filter:blur(6px)}
+label{display:flex;gap:8px;align-items:center;font-size:12px}input{width:90px}
+button:active{background:#f5b800;color:#000}
+#hint{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:0;right:0;text-align:center;font-size:12px;opacity:.6;pointer-events:none}
+</style></head><body>
+<canvas id="c"></canvas><div id="hint">Click canvas / 1 / Space = Slash</div>
+<div class="ui">
+ <button id="bs">Slash</button><button id="ba">Auto: on</button><button id="bf">Flip</button><button id="bb">Light bg</button>
+ <label>Glow <input id="glow" type="range" min="0.2" max="2" step="0.1" value="1"></label>
+ <label>Particles <input id="cnt" type="range" min="0.2" max="2.5" step="0.1" value="1"></label>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');let W,H,DPR,SC=1;
+function resize(){DPR=Math.min(3,Math.max(2,devicePixelRatio||1));W=cv.clientWidth;H=cv.clientHeight;cv.width=W*DPR;cv.height=H*DPR}
+addEventListener('resize',resize);resize();
+const TAU=Math.PI*2,rnd=(a,b)=>a+Math.random()*(b-a),clamp=(v,a=0,b=1)=>Math.min(b,Math.max(a,v)),lerp=(a,b,t)=>a+(b-a)*t;
+const eo=t=>1-Math.pow(1-t,3),ei=t=>t*t*t;
+const S={glow:1,count:1,add:true,facing:1,auto:true},IDLE=-1.15;
+let fx=null,parts=[],time=0,shake=0,nextAuto=.5;
+
+// ---------- effect timeline: a pose for body / hand / blade as a function of fx time ----------
+function trigger(type){fx={type,t:0};shake=type==='slash'?9:6}
+function pose(){
+  const P={off:0,th:IDLE,hx:88,hy:20,len:150,tt:-1};if(!fx)return P;const t=fx.t;
+  if(fx.type==='slash'){const SW=.12,tt=t-SW,rec=ei(clamp((t-.5)/.25));P.tt=tt;
+    if(tt<0){P.th=lerp(IDLE,-2.5,eo(t/SW));P.off=-12*eo(t/SW)}
+    else{P.th=lerp(lerp(-2.5,.75,eo(clamp(tt/.26))),IDLE,rec);P.off=lerp(-12+36*eo(clamp(tt/.2)),0,rec)}
+    P.hx=88+14*Math.cos(P.th);P.hy=20+14*Math.sin(P.th)}
+  return P}
+
+// ---------- particles: dot / star glint / streak ----------
+function emit(p){if(parts.length<1800)parts.push(Object.assign({life:1,max:1,drag:2,vx:0,vy:0,size:3,c:'#4aa8ff',kind:'dot'},p,{max:p.life||1}))}
+const GOLD=['#4aa8ff','#2f7bff','#a8dcff','#ffffff','#1f5cff'];
+function spawn(P,dt){
+  if(!fx||P.tt<0)return;const n=S.count;
+  if(fx.type==='slash'&&P.tt<.42){const h=lerp(-2.5,.75,eo(clamp(P.tt/.26))),px=P.off+55,py=5;
+    for(let i=0,k=Math.round(14*n*dt*60/ 4);i<k;i++){const R=235+rnd(-40,40),a=h+rnd(-.12,.02);
+      emit({x:px+R*Math.cos(a),y:py+R*Math.sin(a),vx:-Math.sin(a)*rnd(80,260)+Math.cos(a)*rnd(-60,120),vy:Math.cos(a)*rnd(80,260)+Math.sin(a)*rnd(-60,120),
+        life:rnd(.3,.7),size:rnd(1.5,4.5),c:GOLD[rnd(0,5)|0],kind:Math.random()<.25?'star':'dot'})}}
+}
+function updateParts(dt){for(const p of parts){p.x+=p.vx*dt;p.y+=p.vy*dt;const d=Math.exp(-p.drag*dt);p.vx*=d;p.vy*=d;p.life-=dt}parts=parts.filter(p=>p.life>0)}
+
+// ---------- drawing ----------
+function crescent(px,py,R,Wd,a0,a1,alpha){
+  if(a1-a0<.02||alpha<=0)return;const N=30,pts=(sgn)=>{for(let i=sgn>0?0:N;sgn>0?i<=N:i>=0;i+=sgn){const u=i/N,a=lerp(a0,a1,u),w=Wd*Math.pow(Math.sin(Math.PI*u),.7)*.5*sgn;
+    ctx.lineTo(px+(R+w)*Math.cos(a),py+(R+w)*Math.sin(a))}};
+  ctx.beginPath();pts(1);pts(-1);ctx.closePath();
+  const g=ctx.createRadialGradient(px,py,Math.max(0,R-Wd/2),px,py,R+Wd/2);
+  g.addColorStop(0,'rgba(0,110,255,0)');g.addColorStop(.3,`rgba(40,150,255,${.85*alpha})`);g.addColorStop(.58,`rgba(200,235,255,${alpha})`);g.addColorStop(1,'rgba(0,100,255,0)');
+  ctx.fillStyle=g;ctx.fill()}
+const LAYERS=[{R:235,W:70,d:0},{R:200,W:36,d:.015},{R:270,W:30,d:.03},{R:250,W:12,d:.045},{R:215,W:14,d:.06}];
+function drawSlashFx(P){if(!fx||fx.type!=='slash'||P.tt<0)return;const px=P.off+55,py=5,gl=S.glow;
+  const g=ctx.createRadialGradient(px,py,20,px,py,330);const ga=.2*gl*(1-clamp(P.tt/.5));g.addColorStop(0,`rgba(60,150,255,${ga})`);g.addColorStop(1,'rgba(0,110,255,0)');
+  ctx.fillStyle=g;ctx.fillRect(px-340,py-340,680,680);
+  for(const L of LAYERS){const t2=P.tt-L.d,head=lerp(-2.5,.75,eo(clamp(t2/.26))),tail=lerp(-2.5,.75,ei(clamp((t2-.04)/.34))),al=1-clamp((t2-.3)/.3);
+    crescent(px,py,L.R,L.W*2.3*gl,tail,head,al*.25);crescent(px,py,L.R,L.W,tail,head,al)}}
+function drawSword(P){ctx.save();ctx.translate(P.off+P.hx,P.hy);ctx.rotate(P.th);ctx.lineJoin='round';const L=P.len,INK='#0a0c12';
+  ctx.shadowColor='rgba(60,150,255,.9)';ctx.shadowBlur=(fx?28:10)*S.glow*DPR*SC;
+  let g=ctx.createLinearGradient(16,0,16+L,0);g.addColorStop(0,'#fff6b8');g.addColorStop(.5,'#ffd33d');g.addColorStop(1,'#ff9f0a');
+  ctx.fillStyle=g;ctx.beginPath();ctx.moveTo(16,-10);ctx.lineTo(16+L*.72,-15);ctx.lineTo(16+L,0);ctx.lineTo(16+L*.72,15);ctx.lineTo(16,10);ctx.closePath();ctx.fill();
+  ctx.shadowBlur=0;ctx.strokeStyle='#2a1d00';ctx.lineWidth=4;ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,.55)';ctx.beginPath();ctx.moveTo(20,0);ctx.lineTo(16+L*.7,-8);ctx.lineTo(16+L*.95,0);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#7a4b12';ctx.strokeStyle=INK;ctx.lineWidth=4;ctx.fillRect(-36,-5,46,10);ctx.strokeRect(-36,-5,46,10);
+  ctx.fillStyle='#ffb21f';ctx.fillRect(6,-32,14,64);ctx.strokeRect(6,-32,14,64);ctx.beginPath();ctx.arc(-40,0,9,0,TAU);ctx.fill();ctx.stroke();
+  g=ctx.createRadialGradient(-18,-8,4,-10,0,28);g.addColorStop(0,'#3a4358');g.addColorStop(1,'#1a1f2b');ctx.fillStyle=g;ctx.lineWidth=6;
+  ctx.beginPath();ctx.arc(-10,0,26,0,TAU);ctx.fill();ctx.stroke();ctx.restore()}
+function drawChar(P){const INK='#0a0c12';ctx.save();ctx.translate(P.off,0);ctx.lineJoin='round';
+  let g=ctx.createRadialGradient(-30,-40,10,0,0,105);g.addColorStop(0,'#3a4358');g.addColorStop(1,'#1a1f2b');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,100,0,TAU);ctx.fill();
+  ctx.save();ctx.beginPath();ctx.arc(0,0,100,0,TAU);ctx.clip();
+  g=ctx.createLinearGradient(0,40,0,130);g.addColorStop(0,'#9aa0ad');g.addColorStop(1,'#4b505d');ctx.fillStyle=g;ctx.strokeStyle=INK;ctx.lineWidth=5;
+  for(const pts of[[[-95,35],[-20,62],[-12,150],[-110,150]],[[62,60],[110,30],[120,150],[52,150]]]){ctx.beginPath();pts.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();ctx.fill();ctx.stroke()}
+  const strap=()=>{ctx.beginPath();ctx.moveTo(-105,18);ctx.quadraticCurveTo(-20,62,32,66);ctx.quadraticCurveTo(80,60,108,22);ctx.moveTo(32,66);ctx.lineTo(32,128)};
+  ctx.lineCap='round';strap();ctx.strokeStyle=INK;ctx.lineWidth=36;ctx.stroke();strap();ctx.strokeStyle='#ffb21f';ctx.lineWidth=24;ctx.stroke();
+  ctx.save();ctx.translate(0,-5);strap();ctx.strokeStyle='#ffe07a';ctx.lineWidth=6;ctx.stroke();ctx.restore();
+  ctx.fillStyle='#fff';ctx.strokeStyle=INK;ctx.lineWidth=5;
+  for(const[x,y,r]of[[22,-42,25],[84,-36,24]]){ctx.beginPath();ctx.arc(x,y,r,0,TAU);ctx.fill();ctx.stroke()}
+  ctx.restore();ctx.strokeStyle=INK;ctx.lineWidth=7;ctx.beginPath();ctx.arc(0,0,100,0,TAU);ctx.stroke();ctx.restore()}
+function drawParts(){for(const p of parts){const k=p.life/p.max;ctx.fillStyle=p.c;
+  if(p.kind==='streak'){ctx.globalAlpha=k;ctx.beginPath();ctx.moveTo(p.x-p.len,p.y);ctx.lineTo(p.x,p.y-p.w/2);ctx.lineTo(p.x+p.len*.2,p.y);ctx.lineTo(p.x,p.y+p.w/2);ctx.fill()}
+  else if(p.kind==='star'){ctx.globalAlpha=k;const s=p.size*(.4+k);ctx.beginPath();ctx.moveTo(p.x-s*2.2,p.y);ctx.lineTo(p.x,p.y-s*.35);ctx.lineTo(p.x+s*2.2,p.y);ctx.lineTo(p.x,p.y+s*.35);
+    ctx.moveTo(p.x,p.y-s*2.2);ctx.lineTo(p.x+s*.35,p.y);ctx.lineTo(p.x,p.y+s*2.2);ctx.lineTo(p.x-s*.35,p.y);ctx.fill()}
+  else{ctx.globalAlpha=k*.35;ctx.beginPath();ctx.arc(p.x,p.y,p.size*2.2,0,TAU);ctx.fill();ctx.globalAlpha=k;ctx.beginPath();ctx.arc(p.x,p.y,p.size*.9,0,TAU);ctx.fill()}}
+  ctx.globalAlpha=1}
+
+// ---------- loop ----------
+let last=performance.now();
+function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;time+=dt;
+  if(fx){fx.t+=dt;if(fx.t>.85)fx=null}
+  if(S.auto&&!fx){nextAuto-=dt;if(nextAuto<=0){trigger('slash');nextAuto=.9}}
+  const P=pose();spawn(P,dt);updateParts(dt);shake*=Math.exp(-dt*10);
+  ctx.setTransform(DPR,0,0,DPR,0,0);ctx.clearRect(0,0,W,H);SC=clamp(Math.min(W/900,H/640),.45,1.3);
+  ctx.save();ctx.translate(W/2+(Math.random()-.5)*shake,H*.46+(Math.random()-.5)*shake+Math.sin(time*2.2)*3);ctx.scale(S.facing*SC,SC);
+  const ADD=S.add?'lighter':'source-over';
+  ctx.globalCompositeOperation=ADD;drawSlashFx(P);                       // arcs sit behind the body
+  ctx.globalCompositeOperation='source-over';drawChar(P);drawSword(P);
+  ctx.globalCompositeOperation=ADD;drawParts();             // sparks in front
+  ctx.globalCompositeOperation='source-over';ctx.restore();requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+
+// ---------- UI ----------
+const $=id=>document.getElementById(id);
+$('bs').onclick=()=>trigger('slash');
+$('ba').onclick=e=>{S.auto=!S.auto;e.target.textContent='Auto: '+(S.auto?'on':'off')};
+$('bf').onclick=()=>S.facing*=-1;
+$('bb').onclick=e=>{const l=document.documentElement.dataset.theme!=='light';document.documentElement.dataset.theme=l?'light':'dark';S.add=!l;e.target.textContent=l?'Dark bg':'Light bg'};
+$('glow').oninput=e=>S.glow=+e.target.value;$('cnt').oninput=e=>S.count=+e.target.value;
+cv.onpointerdown=()=>trigger('slash');
+addEventListener('keydown',e=>{if(e.code==='Digit1'||e.code==='Space'){trigger('slash');e.preventDefault()}});
+</script></body></html>

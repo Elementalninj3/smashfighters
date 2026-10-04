@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Weapon Hand-Switch Prototype</title>
+<style>
+:root{--bg:#eef1f5;--ground:#c9d1dc;--ink:#1d2330;--panel:#fffc;--body:#5b6b86;--skin:#e9b98f;--blade:#8a94a6;--shield:#b4543a;--accent:#2f6fed;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#151a24;--ground:#2a3242;--ink:#e6eaf2;--panel:#1e2533cc;--body:#7d8fb0;--blade:#c3cad6}}
+:root[data-theme="dark"]{--bg:#151a24;--ground:#2a3242;--ink:#e6eaf2;--panel:#1e2533cc;--body:#7d8fb0;--blade:#c3cad6}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,sans-serif;overflow:hidden;position:relative}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.hud{position:absolute;left:10px;right:10px;top:calc(10px + env(safe-area-inset-top,0px));display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;pointer-events:none}
+.card{background:var(--panel);border-radius:10px;padding:8px 12px;backdrop-filter:blur(6px);pointer-events:auto}
+.card label{display:flex;gap:8px;align-items:center;font-size:12px}
+.card input{width:110px}
+#st{font:12px ui-monospace,monospace;white-space:pre}
+.ctl{position:absolute;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center;gap:10px}
+button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid #8884;border-radius:10px;padding:12px 18px;touch-action:none}
+button:active{background:var(--accent);color:#fff}
+</style></head><body>
+<canvas id="c"></canvas>
+<div class="hud">
+ <div class="card" id="st"></div>
+ <div class="card">
+  <label>Rotate time <input id="dur" type="range" min="0.1" max="1.2" step="0.05" value="0.5"></label>
+  <label>Depth scale <input id="arc" type="range" min="0" max="0.6" step="0.05" value="0.3"></label>
+  <label>Weapon snap <input id="snap" type="range" min="0.05" max="0.95" step="0.01" value="0.5"></label>
+  <label>Hand distance <input id="gap" type="range" min="16" max="50" step="1" value="24"></label>
+ </div>
+</div>
+<div class="ctl">
+ <button id="bl">◀ Left</button><button id="bt">Turn (Space)</button><button id="br">Right ▶</button>
+</div>
+<script>
+// ---- Centralized prototype config (sliders write into this) ----
+const CFG={dur:.5,arc:.3,gap:24,snap:.5,ease:t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2};
+for(const k of['dur','arc','gap','snap'])document.getElementById(k).oninput=e=>CFG[k]=+e.target.value;
+
+// ---- Facing system: one canonical right-facing setup + facingRight boolean ----
+const facingDir=f=>f.facingRight?1:-1;
+// Anatomical hands are fixed: R holds the sword, L holds the shield (canonical right-facing: R at angle 0, L at PI).
+const HAND_OFF={R:0,L:Math.PI};
+const GRIP={sword:{hand:'R',ox:6,oy:-4,rot:.55},shield:{hand:'L',ox:9,oy:0,rot:.1}};
+const BODY_Y=-34;
+const lerp=(a,b,t)=>a+(b-a)*t;
+
+const fighter={x:0,vx:0,facingRight:true,bob:0};
+// Hand orbit state: phi is the shared rotation of both hands around the body (0 = canonical right-facing, -PI = mirrored).
+// Going 0 -> -PI slides the sword hand behind the body and the shield hand in front of it, so they never collide.
+const orbit={phi:0,from:0,to:0,t:1,dur:CFG.dur};
+const phiTarget=f=>facingDir(f)>0?0:-Math.PI;
+// Rotation about the X axis seen from the side: hands slide along X at a constant height; z (depth) = in front of / behind the body.
+const handAt=(f,id,phi)=>{const a=phi+HAND_OFF[id];
+  return{x:f.x+Math.cos(a)*CFG.gap,y:BODY_Y+Math.sin(f.bob)*1.5,z:Math.sin(a)}};
+const handPos=(f,id)=>handAt(f,id,orbit.phi);
+
+// Persistent weapons: they never move between hands, they follow their hand and TELEPORT to the mirrored grip when hand progress crosses CFG.snap.
+const weapons=['sword','shield'].map(id=>({id,pose:null}));
+function gripPose(f,w){ // weapon rides its hand; its mirror sign flips exactly when the hands pass the snap point
+  const p=-orbit.phi/Math.PI,d=p<CFG.snap?1:-1,g=GRIP[w.id],h=handAt(f,g.hand,orbit.phi);
+  return{x:h.x+g.ox*d,y:h.y+g.oy,rot:g.rot*d,flip:d};
+}
+// Single centralized function: weapons snap, hands retarget smoothly from their CURRENT angle (no queue, no spins)
+function onFacingChanged(f){
+  orbit.from=orbit.phi;orbit.to=phiTarget(f);orbit.t=0;
+  orbit.dur=Math.max(.05,CFG.dur*Math.abs(orbit.to-orbit.from)/Math.PI);
+}
+function update(f,dt){
+  if(orbit.t<1){orbit.t=Math.min(1,orbit.t+dt/orbit.dur);orbit.phi=lerp(orbit.from,orbit.to,CFG.ease(orbit.t))}
+  else orbit.phi=orbit.to;
+  weapons.forEach(w=>w.pose=gripPose(f,w));   // follows the hand; mirrored grip teleports at CFG.snap
+}
+weapons.forEach(w=>w.pose=gripPose(fighter,w));
+
+// ---- Input ----
+const keys={};let turnReq=null;
+addEventListener('keydown',e=>{keys[e.code]=1;if(e.code==='Space'){fighter.facingRight=!fighter.facingRight;e.preventDefault()}});
+addEventListener('keyup',e=>keys[e.code]=0);
+const hold=(id,k)=>{const b=document.getElementById(id);b.onpointerdown=()=>keys[k]=1;b.onpointerup=b.onpointerleave=()=>keys[k]=0};
+hold('bl','ArrowLeft');hold('br','ArrowRight');
+document.getElementById('bt').onpointerdown=()=>fighter.facingRight=!fighter.facingRight;
+
+// ---- Render ----
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');let W,H,dpr;
+function resize(){dpr=devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr}
+addEventListener('resize',resize);resize();
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let camX=0;
+function drawSword(){ctx.fillStyle=css('--blade');ctx.fillRect(-2.5,-38,5,34);ctx.beginPath();ctx.moveTo(-2.5,-38);ctx.lineTo(0,-45);ctx.lineTo(2.5,-38);ctx.fill();
+  ctx.fillStyle='#6b4a2b';ctx.fillRect(-8,-5,16,3.5);ctx.fillRect(-2,-2,4,11)}
+function drawShield(){ctx.fillStyle=css('--shield');ctx.beginPath();ctx.ellipse(0,-2,8,19,0,0,7);ctx.fill();
+  ctx.fillStyle='#e8d9a8';ctx.beginPath();ctx.arc(4,-2,4,0,7);ctx.fill()} // boss on +x shows mirroring
+function drawW(w){const p=w.pose;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.rot);ctx.scale(p.flip,1);(w.id==='sword'?drawSword:drawShield)();ctx.restore()}
+function layer(front){ // each weapon is drawn with its hand (hand over weapon), in the hand's depth layer
+  for(const id of['L','R']){const h=handPos(fighter,id);if((h.z>-1e-6)!==front)continue;
+    drawW(weapons.find(w=>GRIP[w.id].hand===id));
+    ctx.fillStyle=css('--skin');ctx.beginPath();ctx.arc(h.x,h.y,6*(1+CFG.arc*h.z),0,7);ctx.fill()}}
+function draw(){
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+  const gy=H*.68;camX+=(fighter.x-camX)*.1;
+  ctx.save();ctx.translate(W/2-camX*1.6,gy);ctx.scale(1.6,1.6);
+  ctx.fillStyle=css('--ground');ctx.fillRect(camX-W,0,W*2,H);
+  for(let x=Math.floor((camX-W)/60)*60;x<camX+W;x+=60)ctx.fillRect(x,-6,3,6);
+  const f=fighter,d=facingDir(f);
+  layer(false);                                   // hands + weapons behind the body                              // shield: fixed layer behind body
+  ctx.fillStyle=css('--body');ctx.beginPath();ctx.arc(f.x,BODY_Y,18,0,7);ctx.fill();   // player: one circle
+  layer(true);                                    // hands + weapons in front of the body
+  ctx.restore();
+  document.getElementById('st').textContent=`facing: ${f.facingRight?'RIGHT':'LEFT'}\nhand rotation: ${(orbit.t*100|0)}%\nweapon grips: ${weapons[0].pose.flip>0?'right':'left'}-facing (snap @ ${CFG.snap})`;
+}
+let last=performance.now(),prevFacing=fighter.facingRight;
+function loop(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;
+  const f=fighter,ax=(keys.ArrowRight||keys.KeyD?1:0)-(keys.ArrowLeft||keys.KeyA?1:0);
+  if(ax)f.facingRight=ax>0;
+  f.vx=lerp(f.vx,ax*130,.2);f.x+=f.vx*dt;f.bob+=Math.abs(f.vx)*dt*.12;
+  if(f.facingRight!==prevFacing){onFacingChanged(f);prevFacing=f.facingRight}
+  update(f,dt);
+  draw();requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

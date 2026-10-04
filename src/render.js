@@ -51,9 +51,34 @@ function persistRigStore() {
   try { localStorage.setItem(RIG_STORE_KEY, JSON.stringify(_rigStore)); } catch (_) {}
 }
 
+// One-time cleanup: the Knight's persistent held weapons (lead sword + trailing
+// shield) were removed from its roster def so it fights bare-handed. Drop any
+// stored rig override that would otherwise re-add them, so the change takes
+// effect without a manual RESET RIG. Runs once per browser (separate flag key).
+const KNIGHT_BARE_MIG_KEY = 'smashfighters.handRig.mig.knightBare.v1';
+try {
+  if (typeof localStorage !== 'undefined' && !localStorage.getItem(KNIGHT_BARE_MIG_KEY)) {
+    const k = _rigStore.knight;
+    if (k && k.held) {
+      delete k.held;
+      if (!Object.keys(k).length) delete _rigStore.knight;
+      persistRigStore();
+    }
+    localStorage.setItem(KNIGHT_BARE_MIG_KEY, '1');
+  }
+} catch (_) {}
+
 // Merged live config for a fighter id. Returned record is the stored one (or
 // a shared default) — readers must not mutate it; writers go through saveRig.
 const _DEFAULT_RIG = { primary: 'right', blend: RIG_DEFAULT_BLEND, held: null };
+
+// Revision counter for the rig store. The derived orbit-geometry and skin-meta
+// records are cached per (fighter id, revision); every write through saveRig /
+// clearRig bumps this so a customiser edit is picked up on the next frame with
+// no per-frame recompute and no leaked stale records.
+let _rigRev = 0;
+function _bumpRigRev() { _rigRev++; _orbitRigCache.clear(); _skinMetaCache.clear(); }
+
 export function getRig(fighterId) {
   if (!fighterId) return _DEFAULT_RIG;
   const r = _rigStore[fighterId];
@@ -72,6 +97,7 @@ export function saveRig(fighterId, patch) {
     if (!Object.keys(cur).length) delete _rigStore[fighterId];
     else _rigStore[fighterId] = cur;
     persistRigStore();
+    _bumpRigRev();
     return true;
   } catch (_) {
     return false;
@@ -80,7 +106,7 @@ export function saveRig(fighterId, patch) {
 export function clearRig(fighterId) {
   if (!fighterId) return false;
   try {
-    if (_rigStore[fighterId]) { delete _rigStore[fighterId]; persistRigStore(); }
+    if (_rigStore[fighterId]) { delete _rigStore[fighterId]; persistRigStore(); _bumpRigRev(); }
     return true;
   } catch (_) {
     return false;
@@ -142,14 +168,20 @@ export function facingDir(fighter) {
   return fighter && fighter.facingRight ? 1 : -1;
 }
 
-// ── Weapon-rotation easing ───────────────────────────────────────────
-// One-handed weapon orientation target (degrees): canonical angle, mirrored
-// across the facing axis when the entry mirrors. Shared by the easer and the
-// drawer so both always agree.
+// ── Weapon-rotation mirroring (prototype 1:1) ────────────────────────
+// One-handed weapon orientation target (degrees): the entry's canonical
+// angle multiplied by the facing sign when the entry mirrors. This is the
+// prototype's exact rule (`rot = g.rot * d`, `flip = d`) and the
+// mathematically correct mirror of the right-facing pose:
+//     S(-1,1)·R(a)  ==  R(-a)·S(-1,1)
+// i.e. mirror the sprite in x AND negate the angle. It is deliberately NOT
+// `180 - a` (a true mirror rotated an extra 180), which draws mirrored
+// weapons — a sword blade, a shield boss — upside down. Shared by the easer
+// and the drawer so both always agree.
 export function heldTargetRot(entry, dir) {
   const a = (entry && entry.angle) || 0;
   if (entry && entry.mirror === false) return a;
-  return dir > 0 ? a : 180 - a;
+  return dir > 0 ? a : -a;
 }
 // Ease each one-handed weapon's rotation toward its live target along the
 // shortest arc. Call ONCE per frame per fighter (the legacy draw path does);
@@ -192,16 +224,57 @@ export function heldRot(fighter, i, target) {
 // produced by the orbit, never by reassigning weapons or redrawing gear on
 // the other fist.
 export const HAND_OFF = { right: 0, left: Math.PI };
-// Centralized switching parameters: transition duration for a full half
-// orbit, the weapon grip-orientation snap point (0..1 of the turn), the hand
-// ring radius/height in body radii, and the depth intensity scaler.
+// Centralized switching parameters, in body radii. handDist pulled in to 1.0
+// (hand centres on the body edge) per request; because the fists draw OVER the
+// body (see drawFighter) a hand never ducks behind it, so pulling them in does
+// not introduce a layer pop — the depth→size swell is what still reads as depth.
+//   baseDur    0.5s rotation duration for a full half orbit (prototype `dur`)
+//   snap       weapon grip-orientation snap point, 0..1 of the turn
+//   handDist   hand ring radius, body radii (1.0 = hand centre on the body edge)
+//   handY      hand ring height on the body centre line (+y is down)
+//   depthScale orbit depth intensity (prototype z = sin(a), unit)
+//   depthSize  depth→hand-size factor: r = h*(1 + depthSize*z) (prototype `arc`)
+//   handRadius hand circle radius, body radii (prototype 6/18 ≈ 0.33; 0.35 here)
 export const ORBIT = {
-  baseDur: 0.28,
+  baseDur: 0.5,
   snap: 0.5,
-  handDist: 0.9,
-  handY: -0.03,
+  handDist: 1.0,
+  handY: 0,
   depthScale: 1,
+  depthSize: 0.3,
+  handRadius: 0.35,
 };
+
+// Overridable orbit GEOMETRY (handDist/handY/depthScale/depthSize/handRadius).
+// A fighter def may carry an `orbit` record, and the Hand Gear customiser can
+// store one under the rig store; the merged record is cached per (id, rev) and
+// read allocation-free every frame. No override → the shared ORBIT record
+// itself, so untouched fighters stay on the exact prototype defaults and the
+// per-frame path never copies an object.
+const _ORBIT_GEOM_KEYS = ['handDist', 'handY', 'depthScale', 'depthSize', 'handRadius'];
+const _orbitRigCache = new Map();
+export function resolveOrbitRig(fighterDef) {
+  const id = fighterDef && fighterDef.id;
+  if (!id) return ORBIT;
+  const o = fighterDef.orbit;
+  const st = _rigStore[id] && _rigStore[id].orbit;
+  if (!o && !st) return ORBIT;
+  const ck = id + '\u0000' + _rigRev;
+  const hit = _orbitRigCache.get(ck);
+  if (hit) return hit;
+  const merged = { ...ORBIT };
+  for (const src of [o, st]) {
+    if (!src) continue;
+    for (let k = 0; k < _ORBIT_GEOM_KEYS.length; k++) {
+      const key = _ORBIT_GEOM_KEYS[k];
+      const v = src[key];
+      if (typeof v === 'number' && Number.isFinite(v)) merged[key] = v;
+    }
+  }
+  if (_orbitRigCache.size > 64) _orbitRigCache.clear();
+  _orbitRigCache.set(ck, merged);
+  return merged;
+}
 function orbitEase(t) {
   // Smooth ease-in-out cubic: still at both ends, fastest mid-transition.
   t = t < 0 ? 0 : t > 1 ? 1 : t;
@@ -271,7 +344,10 @@ export function updateHandOrbit(fighter, dt) {
     o.to = want;
     o.t = 0;
     const dist = Math.abs(o.to - o.from);
-    o.dur = dist < 1e-4 ? 1e-4 : Math.max(1e-4, orbitDur(fighter._fighterDef) * dist / Math.PI);
+    // Prototype 1:1: duration scales with the remaining arc and is floored at
+    // 0.05s, so even a nearly-complete re-turn still eases the last sliver
+    // instead of snapping the final frame.
+    o.dur = Math.max(0.05, orbitDur(fighter._fighterDef) * dist / Math.PI);
   }
   if (o.t < 1 && dt > 0) {
     o.t = Math.min(1, o.t + dt / o.dur);
@@ -281,15 +357,27 @@ export function updateHandOrbit(fighter, dt) {
   return o.phi;
 }
 // Base pose of one anatomical hand ('left' | 'right'): fighter-relative
-// offsets in body radii plus depth. Written into `out` ({x, y, z}) so the
-// per-frame path allocates nothing.
-export function orbitHandPose(phi, side, out) {
+// offsets in body radii plus depth. `rig` is a resolveOrbitRig record (shared
+// ORBIT when omitted). Written into `out` ({x, y, z}) so the per-frame path
+// allocates nothing.
+export function orbitHandPose(phi, side, out, rig) {
+  const r = rig || ORBIT;
   const a = phi + (HAND_OFF[side] || 0);
   out = out || {};
-  out.x = Math.cos(a) * ORBIT.handDist;
-  out.y = ORBIT.handY;
-  out.z = Math.sin(a) * ORBIT.depthScale;
+  out.x = Math.cos(a) * r.handDist;
+  out.y = r.handY;
+  out.z = Math.sin(a) * r.depthScale;
   return out;
+}
+// Depth → hand size, straight from the prototype: r = h*(1 + depthSize*z).
+// z ∈ [-1, 1], so a hand is depthSize larger in front and smaller behind
+// (0.3 default → ±30%), which is what sells the hands travelling around a
+// body with 3D-like depth. Gear rides the hand and scales with it for free.
+export function orbitHandScale(z, rig) {
+  const r = rig || ORBIT;
+  // Clamped positive: a data-driven depthSize must never yield a non-positive
+  // ellipse radius (canvas throws on those) or an inverted hand.
+  return Math.max(0.1, 1 + r.depthSize * z);
 }
 // Which anatomical hand draws in front. Mid-orbit the depth decides (under
 // the -PI convention the left hand always rides the frontal arc, the right
@@ -302,6 +390,98 @@ export function orbitFrontSide(phi, facingRight, transitioning) {
   if (dz < -1e-3) return 'left';
   if (transitioning) return 'left';
   return facingRight ? 'right' : 'left';
+}
+
+// ── Shared skin / body metadata ────────────────────────────────────────
+// ONE coordinate system for the body, hands and equipment. Every visual size
+// the fighter renderer uses is read from here: the rendered body circle, the
+// hand ring/radius the orbit places hands on, the depth intensity, and the
+// grip scale for held weapons. That is what keeps a skin aligned with the
+// hands and weapons as they orbit and switch — the skin cannot drift out of
+// the hand system because both derive from the same record.
+//
+//   bodyRadiusMul  rendered body circle vs the PHYSICS radius. Combat,
+//                  hitboxes and hurtboxes keep reading fighter.radius, so a
+//                  skin can be drawn larger/smaller without touching balance.
+//   handRadius     hand circle radius, body radii
+//   handDist       hand ring radius, body radii (orbit geometry)
+//   handY          hand ring height, body radii
+//   depthScale     orbit depth intensity
+//   depthSize      depth→hand-size factor (prototype `arc`)
+//   gripScale      multiplies held-weapon grip offsets for this skin
+//   skinScale      overrides the skin customiser's scale when set
+//   skinCenterX/Y  skin image centre offset, source-image pixels (matches the
+//                  pre-existing fighter.skinCenter field)
+//
+// Resolution order: shared defaults → SKIN_META[id] → fighterDef.skinMeta →
+// the rig store's `visual` record. Every entry currently inherits the shared
+// defaults, so existing skins keep their exact proportions and identity; the
+// table is the per-skin extension point, not a forced re-proportioning.
+export const SKIN_META_DEFAULTS = {
+  bodyRadiusMul: 1,
+  handRadius: ORBIT.handRadius,
+  handDist: ORBIT.handDist,
+  handY: ORBIT.handY,
+  depthScale: ORBIT.depthScale,
+  depthSize: ORBIT.depthSize,
+  gripScale: 1,
+  skinScale: null,
+  skinCenterX: null,
+  skinCenterY: null,
+};
+// Per-character overrides. Empty = inherit every shared default (the current
+// roster, whose art was authored on the shared proportions). Add keys here to
+// give one skin its own body size, hand attachment or grip without touching
+// the shared hand system.
+export const SKIN_META = {
+  cowboy: {},
+  ninja: {},
+  boxer: {},
+  knight: {},
+};
+const _SKIN_META_KEYS = [
+  'bodyRadiusMul', 'handRadius', 'handDist', 'handY', 'depthScale',
+  'depthSize', 'gripScale', 'skinScale', 'skinCenterX', 'skinCenterY',
+];
+// Ids whose table entry actually overrides something — lets the hot path skip
+// the merge entirely for every fighter that uses the shared defaults.
+const _skinMetaOverrideIds = new Set();
+for (const k of Object.keys(SKIN_META)) {
+  const e = SKIN_META[k];
+  if (e && Object.keys(e).length) _skinMetaOverrideIds.add(k);
+}
+const _skinMetaCache = new Map();
+export function resolveSkinMeta(fighterDef) {
+  const id = fighterDef && fighterDef.id;
+  const table = id && _skinMetaOverrideIds.has(id) ? SKIN_META[id] : null;
+  const defMeta = fighterDef && fighterDef.skinMeta;
+  const stMeta = id ? (_rigStore[id] && _rigStore[id].visual) : null;
+  if (!table && !defMeta && !stMeta) return SKIN_META_DEFAULTS;
+  const ck = (id || '') + '\u0000' + _rigRev;
+  const hit = _skinMetaCache.get(ck);
+  if (hit) return hit;
+  const merged = { ...SKIN_META_DEFAULTS };
+  for (const src of [table, defMeta, stMeta]) {
+    if (!src) continue;
+    for (let k = 0; k < _SKIN_META_KEYS.length; k++) {
+      const key = _SKIN_META_KEYS[k];
+      const v = src[key];
+      if (v === null || v === undefined) continue;
+      if (typeof v === 'number' && !Number.isFinite(v)) continue;
+      merged[key] = v;
+    }
+  }
+  if (_skinMetaCache.size > 64) _skinMetaCache.clear();
+  _skinMetaCache.set(ck, merged);
+  return merged;
+}
+// Rendered body radius for a fighter: physics radius × the skin's body-size
+// multiplier. Combat geometry is untouched (it reads fighter.radius).
+export function visualRadius(fighter, meta) {
+  const r = (fighter && fighter.radius) || 31;
+  const m = meta || resolveSkinMeta(fighter && fighter._fighterDef);
+  const mul = m.bodyRadiusMul;
+  return (typeof mul === 'number' && mul > 0) ? r * mul : r;
 }
 
 
@@ -1100,6 +1280,14 @@ const WINNER_MATCH_ZOOM = 1.6;
 const FOLLOW_ZOOM = 1.15;  // closer default view; zoom math still fits both
 const CAM_DEADZONE = 5; // px — ignore smaller target moves (no jitter)
 const MAX_PAN_PER_FRAME = 14; // px at 60fps — avoids snapping on launches
+// Smash-style group-framing extras (single controller, no second system):
+// restrained velocity look-ahead + zoom hysteresis deadband so the view never
+// pumps around a threshold. Look-ahead dies in close combat, cinematics and
+// match-end; the deadband only holds the target, never the easing itself.
+const LOOKAHEAD_TIME = 0.18;   // seconds of velocity to peek ahead
+const LOOKAHEAD_MAX = 60;      // px clamp per axis — never yanks off the group
+const LOOKAHEAD_CLOSE_SPREAD = 220; // below this spread, no look-ahead (infight)
+const ZOOM_DEADBAND = 0.03;    // hold target inside this band (no oscillation)
 
 let cameraX = 0;
 let cameraY = 0;
@@ -1292,6 +1480,38 @@ function computeFraming(fighters, canvasWidth, canvasHeight, stage, isMatchOver)
   // itself instead of clipping.
   const vSpread = maxY - minY;
   if (vSpread > 260) wantY -= Math.min(60, (vSpread - 260) * 0.12);
+  // Restrained velocity look-ahead: peek a fraction of a second along the
+  // group's mean velocity so fast launches/dashes don't feel cramped. Killed
+  // in close combat (would fight infight framing), cinematics and match-end,
+  // and hard-clamped so it can never pull off the group or jitter on DI flips.
+  try {
+    if (!isMatchOver && !cutsceneTarget && (alive + liveExcluded) >= 2) {
+      const spreadX = maxX - minX, spreadY = maxY - minY;
+      const spread = spreadX > spreadY ? spreadX : spreadY;
+      if (spread >= LOOKAHEAD_CLOSE_SPREAD) {
+        let svx = 0, svy = 0, n = 0;
+        for (let i = 0; i < fighters.length; i++) {
+          const f = fighters[i];
+          if (!f || f.state === 'dead' || f.state === 'respawn') continue;
+          if (offstageCut !== null && f.y > offstageCut) continue;
+          if (Number.isFinite(f.vx)) svx += f.vx;
+          if (Number.isFinite(f.vy)) svy += f.vy;
+          n++;
+        }
+        if (n > 0) {
+          let lx = (svx / n) * LOOKAHEAD_TIME;
+          let ly = (svy / n) * LOOKAHEAD_TIME;
+          if (lx > LOOKAHEAD_MAX) lx = LOOKAHEAD_MAX;
+          else if (lx < -LOOKAHEAD_MAX) lx = -LOOKAHEAD_MAX;
+          if (ly > LOOKAHEAD_MAX) ly = LOOKAHEAD_MAX;
+          else if (ly < -LOOKAHEAD_MAX) ly = -LOOKAHEAD_MAX;
+          // Vertical look-ahead is halved: full vertical chase pumps on jumps.
+          wantX += lx;
+          wantY += ly * 0.5;
+        }
+      }
+    }
+  } catch (_) {}
 
   let clampL = W * 0.15, clampR = W * 0.85, clampT = H * 0.1, clampB = H * 0.95;
   // Sandbox-only override (stage.cameraFraming). The main map never sets it,
@@ -1300,19 +1520,15 @@ function computeFraming(fighters, canvasWidth, canvasHeight, stage, isMatchOver)
   // guess — a sandbox arena has an authored shape that does not have to match
   // its widest block — and the fit uses the real roster count instead of
   // "exactly two or treat it as a winner shot".
+  // NOTE: camera bounds are deliberately NOT the death-zone bounds. The pan
+  // box follows the playable arena (ground platform); death-zone margins only
+  // drive KO detection in physics.js and never move the camera by themselves.
   const cf = (stage && stage.cameraFraming) || null;
   if (cf && cf.pan) {
     clampL = cf.pan.left; clampR = cf.pan.right; clampT = cf.pan.top; clampB = cf.pan.bottom;
   } else if (g) {
     clampL = g.x - 120; clampR = g.x + g.width + 120;
     clampT = g.y - 520; clampB = g.y + 260;
-  } else {
-    try {
-      if (stage && stage.blastZones) {
-        clampL = stage.blastZones.left + 80; clampR = stage.blastZones.right - 80;
-        clampT = stage.blastZones.top + 80; clampB = stage.blastZones.bottom - 80;
-      }
-    } catch (_) {}
   }
   wantX = Math.max(clampL, Math.min(clampR, wantX));
   wantY = Math.max(clampT, Math.min(clampB, wantY));
@@ -1417,10 +1633,16 @@ export function updateCamera(fighters, canvasWidth, canvasHeight, dt, stage, isM
   // to open up, so a hard side-special carried the player clean off screen
   // before the view had moved. Tightening keeps the old lazy rate, since
   // eagerly chasing a shrink is what makes a camera pump.
-  const widening = fr.zoom < targetTrackZoom;
-  const maxStep = (widening ? ZOOM_OUT_RATE : ZOOM_IN_RATE) * dt + 0.002;
-  const dZoom = fr.zoom - targetTrackZoom;
-  targetTrackZoom += Math.max(-maxStep, Math.min(maxStep, dZoom));
+  // Hysteresis deadband: ignore framing wants inside ZOOM_DEADBAND so the
+  // target never oscillates around a threshold (no zoom pumping).
+  const _dz = fr.zoom - targetTrackZoom;
+  const widening = _dz < -ZOOM_DEADBAND;
+  if (_dz > -ZOOM_DEADBAND && _dz < ZOOM_DEADBAND) {
+    // hold: inside the band the current target already frames the group.
+  } else {
+    const maxStep = (widening ? ZOOM_OUT_RATE : ZOOM_IN_RATE) * dt + 0.002;
+    targetTrackZoom += Math.max(-maxStep, Math.min(maxStep, _dz));
+  }
 
   // Smooth follow pan, capped per-frame (no snapping on launches) and eased at
   // CAMERA_SMOOTHING, so the handover from two-player to winner framing glides
@@ -1506,6 +1728,23 @@ export function getCameraStateInto(out) {
   o.x = cameraX; o.y = cameraY; o.zoom = getComposedZoom();
   o.targetX = targetX; o.targetY = targetY; o.targetZoom = targetTrackZoom;
   o.baseZoom = baseZoom; o.matchZoom = matchZoom; o.trackZoom = trackZoom;
+  return o;
+}
+
+// World → logical-screen conversion using the live camera (single source of
+// truth with applyCameraTransform). Screen-space off-screen indicators reuse
+// this so Canvas markers and world rendering can never disagree.
+const _w2s = { x: 0, y: 0 };
+export function worldToScreen(x, y, out, canvasWidth, canvasHeight) {
+  const o = out || _w2s;
+  try {
+    const W = canvasWidth || VIEW_W, H = canvasHeight || VIEW_H;
+    const z = getComposedZoom();
+    o.x = W / 2 + (x - cameraX) * z + shakeOffsetX;
+    o.y = H / 2 + (y - cameraY) * z + shakeOffsetY;
+  } catch (_) {
+    o.x = x; o.y = y;
+  }
   return o;
 }
 
@@ -2450,6 +2689,16 @@ function _hb(fighter, key, x, y) {
   return obj;
 }
 
+// Per-fighter ANATOMICAL hand world positions (left/right — the hands
+// themselves, never the screen roles). Written every draw by both the legacy
+// and animator paths; read by the ` hitbox-debug hand labels and the ?probe
+// hands() snapshot. One reusable record, never reallocated.
+function _handWorldOf(fighter) {
+  let hw = fighter._handWorld;
+  if (!hw) hw = fighter._handWorld = { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } };
+  return hw;
+}
+
 // Per-fighter cached hand draw-state (layer, px, py, scale, rotation,
 // opacity, visibility). Updated in place each frame.
 function _hst(fighter, key, px, py, layer) {
@@ -2606,16 +2855,20 @@ function _bodySprite(img, radius, ss, ccx, ccy) {
   return c;
 }
 
-function drawBody(ctx, fighter, skin) {
-  const { x, y, radius, color, skinScale, skinCenter } = fighter;
+function drawBody(ctx, fighter, skin, vr) {
+  // Rendered body radius: the skin metadata's size multiplier applied to the
+  // physics radius (see SKIN_META). Combat never sees this value.
+  const radius = (typeof vr === 'number' && vr > 0) ? vr : ((fighter.radius) || 31);
+  const { x, y, color } = fighter;
+  const meta = resolveSkinMeta(fighter._fighterDef);
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
   if (skin && skin.img) {
-    const ss = skinScale || 1;
-    const ccx = skinCenter ? skinCenter.x : 0;
-    const ccy = skinCenter ? skinCenter.y : 0;
+    const ss = (meta.skinScale != null ? meta.skinScale : (fighter.skinScale || 1));
+    const ccx = (meta.skinCenterX != null ? meta.skinCenterX : (fighter.skinCenter ? fighter.skinCenter.x : 0));
+    const ccy = (meta.skinCenterY != null ? meta.skinCenterY : (fighter.skinCenter ? fighter.skinCenter.y : 0));
     const spr = _bodySprite(skin.img, radius, ss, ccx, ccy);
     // Blit to the clip CIRCLE's bounding box, not the image size — the circle
     // is what the outline below strokes, so the two must match exactly.
@@ -2675,7 +2928,12 @@ function drawAnimatedWeapon(ctx, st) {
   ctx.scale(st.scaleX || 1, st.scaleY || 1);
   _animWeaponDef.color = st.def.color;
   _animWeaponDef.accent = st.def.accent;
+  // Sprite weapons go through drawImage; high quality keeps their edges crisp
+  // under the camera zoom. (Procedural art is vector and unaffected.)
+  const prevQ = ctx.imageSmoothingQuality;
+  ctx.imageSmoothingQuality = 'high';
   drawWeapon(ctx, st.def, _animWeaponDef);
+  if (prevQ) ctx.imageSmoothingQuality = prevQ;
   ctx.restore();
 }
 
@@ -2738,14 +2996,11 @@ const _orbHands = { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } };
 
 // (Side resolution lives in handRig.js resolveHoldSlot — single source.)
 
-// Eased world position of a body slot: body-right rides the screen-front hand
-// facing right and the screen-back hand facing left (mirrored); body-left the
-// converse. Reads the SAME eased records the hands draw from, so every
-// movement offset already applies.
+// Eased world position of an ANATOMICAL hand slot ('left' | 'right'). Reads the
+// per-hand displayed offsets directly — never a screen-role record — so a facing
+// turn can never map a weapon onto the wrong side.
 function holdSlotPos(fighter, x, y, slot, out) {
-  const rightSide = slot === 'right';
-  const useFront = rightSide === !!fighter.facingRight;
-  const h = useFront ? fighter._handFront : fighter._handBack;
+  const h = (slot === 'right') ? fighter._handR : fighter._handL;
   if (!h) return null;
   out.x = x + h.x;
   out.y = y + h.y;
@@ -2776,18 +3031,23 @@ export function holdCoversSide(fighter, bodySide) {
 // gripping hand). Safe to call with any fighter: missing config, missing
 // eased hands, or an unknown weapon id all skip silently with no state
 // touched.
-export function drawHeldLayer(ctx, fighter, x, y, layer, over = false) {
+export function drawHeldLayer(ctx, fighter, x, y, layer, over = false, vr) {
   const def = fighter && fighter._fighterDef;
   const cfg = resolveHeld(def);
   if (!cfg || !cfg.length) return;
   const facingRight = !!fighter.facingRight;
   const dir = facingRight ? 1 : -1;
-  const radius = fighter.radius || 31;
+  // Rendered body radius (skin body-size multiplier included) — offsets and
+  // weapon scale ride it so equipment stays glued to the visual body.
+  const radius = (typeof vr === 'number' && vr > 0) ? vr : (fighter.radius || 31);
   const baseScale = radius / 31;
+  const gs = resolveSkinMeta(def).gripScale || 1;
   for (let i = 0; i < cfg.length; i++) {
     const e = cfg[i];
     if (!e || (e.layer || 'front') !== layer) continue;
-    if (!!e.overHand !== over) continue;
+    // overHand defaults to TRUE: a weapon normally renders in front of the
+    // fist. Set overHand:false to tuck one behind the fist instead.
+    if ((e.overHand !== false) !== over) continue;
     let wdef = null;
     try { wdef = getWeapon(e.weapon); } catch (_) { wdef = null; }
     if (!wdef) continue;
@@ -2799,7 +3059,7 @@ export function drawHeldLayer(ctx, fighter, x, y, layer, over = false) {
       const ss = otherBodySide(ps);
       if (!holdSlotPos(fighter, x, y, ps, _holdA)) continue;
       if (!holdSlotPos(fighter, x, y, ss, _holdB)) continue;
-      const ox = (e.dx || 0) * radius, oy = (e.dy || 0) * radius;
+      const ox = (e.dx || 0) * radius * gs, oy = (e.dy || 0) * radius * gs;
       _heldSt.def = wdef;
       _heldSt.px = _holdA.x + dir * ox;
       _heldSt.py = _holdA.y + oy;
@@ -2812,21 +3072,27 @@ export function drawHeldLayer(ctx, fighter, x, y, layer, over = false) {
     }
     const slot = resolveHoldSlot(e.hand || 'right', fighter);
     if (!holdSlotPos(fighter, x, y, slot, _holdA)) continue;
-    drawHeldOneHanded(ctx, fighter, e, i, wdef, _holdA.x, _holdA.y, dir, S, false);
+    drawHeldOneHanded(ctx, fighter, e, i, wdef, _holdA.x, _holdA.y, dir, S, false, radius, gs);
   }
   _heldSt.def = null;
 }
 
-// Shared one-handed weapon draw core: seat a held entry at a resolved hand
-// point (hx, hy, world space) with facing sign `dir`, using the canonical
-// mirroring rules (mirrored offsets, mirrored art, negated-but-never-double-
-// negated rotation). `snap` selects the orbit-transition behavior — snapped
-// grip orientation stamped for a seamless rest handoff — instead of the
-// continuous rest easing. Both paths draw identically at rest.
-function drawHeldOneHanded(ctx, fighter, e, i, wdef, hx, hy, dir, S, snap) {
+// Shared one-handed weapon draw core — the prototype's gripPose/drawW pair,
+// 1:1. Seat a held entry at a resolved hand point (hx, hy, world space) with
+// facing sign `dir`:
+//     px = hx + dir*ox      (grip offset mirrored in x)
+//     py = hy + oy          (y never mirrored)
+//     rot = angle * dir     (angle negated on the mirrored side)
+//     scaleX = dir * S      (sprite flipped in x)
+// exactly the prototype's `x = h.x + ox*d, y = h.y + oy, rot = g.rot*d,
+// flip = d`. `snap` selects the orbit-transition behavior — the snapped grip
+// orientation stamped for a seamless rest handoff — instead of the continuous
+// rest easing. Both paths draw identically at rest.
+function drawHeldOneHanded(ctx, fighter, e, i, wdef, hx, hy, dir, S, snap, radiusIn, gsIn) {
   const mir = e.mirror !== false;
-  const radius = fighter.radius || 31;
-  const ox = (e.dx || 0) * radius, oy = (e.dy || 0) * radius;
+  const radius = (typeof radiusIn === 'number' && radiusIn > 0) ? radiusIn : (fighter.radius || 31);
+  const gs = (typeof gsIn === 'number' && gsIn > 0) ? gsIn : 1;
+  const ox = (e.dx || 0) * radius * gs, oy = (e.dy || 0) * radius * gs;
   const mdir = mir ? dir : 1;
   const target = heldTargetRot(e, dir);
   let rot;
@@ -2852,15 +3118,17 @@ function drawHeldOneHanded(ctx, fighter, e, i, wdef, hx, hy, dir, S, snap) {
 // position with snap-based grip orientation, preserving the under/over fist
 // relationship inside its depth group. Runs only while the orbit travels;
 // at rest the configured drawHeldLayer sequence above runs unchanged.
-function drawOrbitEntries(ctx, fighter, x, y, side, hands, gripDir, over) {
+function drawOrbitEntries(ctx, fighter, x, y, side, hands, gripDir, over, vr) {
   const def = fighter && fighter._fighterDef;
   const cfg = resolveHeld(def);
   if (!cfg || !cfg.length) return;
-  const radius = fighter.radius || 31;
+  const radius = (typeof vr === 'number' && vr > 0) ? vr : (fighter.radius || 31);
   const baseScale = radius / 31;
+  const gs = resolveSkinMeta(def).gripScale || 1;
   for (let i = 0; i < cfg.length; i++) {
     const e = cfg[i];
-    if (!e || !!e.overHand !== over) continue;
+    // overHand defaults to TRUE (weapon draws in front of the fist).
+    if (!e || (e.overHand !== false) !== over) continue;
     let wdef = null;
     try { wdef = getWeapon(e.weapon); } catch (_) { wdef = null; }
     if (!wdef) continue;
@@ -2874,7 +3142,7 @@ function drawOrbitEntries(ctx, fighter, x, y, side, hands, gripDir, over) {
       const ss = otherBodySide(ps);
       const pa = hands[ps], sa = hands[ss];
       if (!pa || !sa) continue;
-      const ox = (e.dx || 0) * radius, oy = (e.dy || 0) * radius;
+      const ox = (e.dx || 0) * radius * gs, oy = (e.dy || 0) * radius * gs;
       _heldSt.def = wdef;
       _heldSt.px = x + pa.x + gripDir * ox;
       _heldSt.py = y + pa.y + oy;
@@ -2888,7 +3156,7 @@ function drawOrbitEntries(ctx, fighter, x, y, side, hands, gripDir, over) {
     if (resolveHoldSlot(e.hand || 'right', fighter) !== side) continue;
     const hp = hands[side];
     if (!hp) continue;
-    drawHeldOneHanded(ctx, fighter, e, i, wdef, x + hp.x, y + hp.y, gripDir, S, true);
+    drawHeldOneHanded(ctx, fighter, e, i, wdef, x + hp.x, y + hp.y, gripDir, S, true, radius, gs);
   }
 }
 
@@ -3057,7 +3325,13 @@ export function drawFighter(ctx, fighter, time) {
   // Whole-fighter cull (margin: hands/weapons/shadow/arrow reach).
   if (!_inView(fighter.x, fighter.y, 160)) return;
 
-  const { x, y, radius, color, skin } = fighter;
+  const { x, y, color, skin } = fighter;
+  // Skin/body metadata: the one record the body, hands and equipment all size
+  // from. `vradius` is the RENDERED body radius (physics radius × the skin's
+  // body-size multiplier); combat still reads fighter.radius untouched.
+  const meta = resolveSkinMeta(fighter._fighterDef);
+  const orbitRig = resolveOrbitRig(fighter._fighterDef);
+  const vradius = visualRadius(fighter, meta);
 
   // Invulnerability blink (used by the soft blast-zone respawn)
   if (fighter.invulnTimer > 0) {
@@ -3076,18 +3350,18 @@ export function drawFighter(ctx, fighter, time) {
   }
 
   // Draw shadow on ground
-  if (fighter.grounded) directionalShadow(ctx, x, y, radius);
+  if (fighter.grounded) directionalShadow(ctx, x, y, vradius);
 
   // Behind-the-player accessories (hides behind the body).
   if (fighter.accessory && fighter.accessory.type && fighter.accessory.layer === 'behind') {
-    drawAccessory(ctx, x, y, radius, fighter.accessory);
+    drawAccessory(ctx, x, y, vradius, fighter.accessory);
   }
 
   // Look up live skin status from the cache (skin.path is set by resolveSkin)
   const skinLive = lookUpSkin(skin);
 
   // ── Body + hands/layers ────────────────────────────────────────────────
-  const handR = radius * 0.35;
+  const handR = vradius * (typeof meta.handRadius === 'number' ? meta.handRadius : ORBIT.handRadius);
   const handFill = resolveHandColor(fighter._fighterDef ? fighter._fighterDef.id : fighter.id, color);
   // Cosmetic gear worn on the hands — drawn by the hand passes below, in the
   // hand's own transform, so it inherits the pose and z-order for free.
@@ -3106,17 +3380,22 @@ export function drawFighter(ctx, fighter, time) {
   );
 
   if (animated) {
+    // Animation is authoritative: hands, weapons and their depth come straight
+    // from the animator, exactly as before. The procedural orbit is not applied.
     const items = collectAnimatedItems(fighter);
+    // Publish anatomical hand positions for the debug overlay / probe.
+    const oh = fighter.anim.out.hands;
+    const hwA = _handWorldOf(fighter);
+    if (oh.left) { hwA.left.x = oh.left.px; hwA.left.y = oh.left.py; }
+    if (oh.right) { hwA.right.x = oh.right.px; hwA.right.y = oh.right.py; }
     drawAnimatedLayer(ctx, items, true, handR, handFill, handGear, fighter);
-    drawBody(ctx, fighter, skinLive);
+    drawBody(ctx, fighter, skinLive, vradius);
     // Front-layer accessories sit above the body but below the hands: hats
     // stay on the head while fists, gloves, swords and shields (drawn with
     // their hand) always read in front of them.
-    drawFrontAccessory(ctx, fighter, x, y, radius);
+    drawFrontAccessory(ctx, fighter, x, y, vradius);
     drawAnimatedLayer(ctx, items, false, handR, handFill, handGear, fighter);
   } else {
-    const dirHand = fighter.facingRight ? 1 : -1;
-
     // Orbit base per anatomical hand (fighter-relative, radius units). The
     // shared orbit angle already encodes facing — +x is screen-right in both
     // facings — so no mirror sign is applied here, exactly like the
@@ -3124,83 +3403,111 @@ export function drawFighter(ctx, fighter, time) {
     const phi = orbitPhi(fighter);
     const orbiting = orbitActive(fighter);
     const gripDir = orbitGripDir(phi, fighter._fighterDef);
-    const oR = orbitHandPose(phi, 'right', _orbR);
-    const oL = orbitHandPose(phi, 'left', _orbL);
-    // Screen roles from depth; rest ties fall back to facing, matching the
-    // old front/back assignment exactly at rest.
+    const oR = orbitHandPose(phi, 'right', _orbR, orbitRig);
+    const oL = orbitHandPose(phi, 'left', _orbL, orbitRig);
+
+    // Screen roles from depth — LAYERING ONLY (the front-arc hand draws over
+    // the body, the rear-arc hand behind it; at rest the facing side leads).
+    // These roles are never used to place hands, so the moment a turn swaps
+    // them the hands do not move.
     const frontAnat = orbitFrontSide(phi, fighter.facingRight, orbiting);
     const backAnat = frontAnat === 'right' ? 'left' : 'right';
-    const fO = frontAnat === 'right' ? oR : oL;
-    const bO = backAnat === 'right' ? oR : oL;
-    const frontBase = _hb(fighter, 'frontBase', fO.x * radius, fO.y * radius);
-    const backBase = _hb(fighter, 'backBase', bO.x * radius, bO.y * radius);
-    // Airborne hand lift/spread still comes from the hand config (unchanged).
-    const neutralAir = (handConfig.actions && handConfig.actions.neutral) || { airLiftY: 0.22, airSpreadX: 0.08 };
+    const frontZ = (frontAnat === 'right' ? oR : oL).z;
+    const backZ = (backAnat === 'right' ? oR : oL).z;
 
-    const neutralBack = _hb(fighter, 'neutralBack', backBase.x, backBase.y);
-    const neutralFront = _hb(fighter, 'neutralFront', frontBase.x, frontBase.y);
+    // Movement offsets are computed PER ANATOMICAL HAND, never per screen role.
+    // If the bob/pump/air offsets followed the front/rear roles, they would
+    // jump the instant a turn swapped the roles — the left↔right flicker.
+    // `faceB` is the continuous facing (+1 right, −1 left, 0 mid-turn); the
+    // offsets interpolate on it, so a turn reverses them smoothly instead of
+    // stepping a sign in a single frame.
+    const faceB = Math.cos(phi);
+    const neutralAir = (handConfig.actions && handConfig.actions.neutral) || { airLiftY: 0.22, airSpreadX: 0.08 };
+    // Facing-side ("lead") weights: the lead hand carries +1, the trail hand
+    // −0.6, and they cross-fade through 0 at the mid-turn.
+    const leadR = 0.2 + 0.8 * faceB;
+    const leadL = 0.2 - 0.8 * faceB;
+
+    const baseR = _hb(fighter, 'baseR', oR.x * vradius, oR.y * vradius);
+    const baseL = _hb(fighter, 'baseL', oL.x * vradius, oL.y * vradius);
+    const neutralR = _hb(fighter, 'neutralR', baseR.x, baseR.y);
+    const neutralL = _hb(fighter, 'neutralL', baseL.x, baseL.y);
+    neutralR.x = baseR.x; neutralR.y = baseR.y;
+    neutralL.x = baseL.x; neutralL.y = baseL.y;
+
     const bob = Math.sin(time * 0.005) * 2; // subtle breathing
-    neutralFront.y = frontBase.y + bob;
-    neutralBack.y = backBase.y - bob * 0.6;
+    neutralR.y += bob * leadR;
+    neutralL.y += bob * leadL;
 
     if (fighter.grounded && !fighter.dodging && Math.abs(fighter.vx) > 120) {
-      const pump = Math.abs(Math.sin(time * 0.016)) * radius * 0.28;
-      neutralFront.x = frontBase.x + dirHand * pump;
-      neutralFront.y = frontBase.y - pump * 0.5;
-      neutralBack.x = backBase.x - dirHand * pump * 0.6;
-      neutralBack.y = backBase.y + pump * 0.4;
+      const pump = Math.abs(Math.sin(time * 0.016)) * vradius * 0.28;
+      neutralR.x += pump * leadR;
+      neutralL.x += pump * leadL;
+      neutralR.y += pump * (-0.05 - 0.45 * faceB);
+      neutralL.y += pump * (-0.05 + 0.45 * faceB);
     }
 
     if (!fighter.grounded && !fighter.dodging) {
-      neutralFront.y -= radius * neutralAir.airLiftY;
-      neutralBack.y -= radius * neutralAir.airLiftY;
-      neutralFront.x += dirHand * radius * neutralAir.airSpreadX;
-      neutralBack.x -= dirHand * radius * neutralAir.airSpreadX;
+      neutralR.y -= vradius * neutralAir.airLiftY;
+      neutralL.y -= vradius * neutralAir.airLiftY;
+      const spread = vradius * neutralAir.airSpreadX;
+      neutralR.x += spread * faceB;
+      neutralL.x -= spread * faceB;
     }
 
     if (fighter.dodging) {
-      neutralFront.x = frontBase.x * 0.35;
-      neutralBack.x = backBase.x * 0.35;
-      neutralFront.y = frontBase.y + radius * 0.15;
-      neutralBack.y = backBase.y + radius * 0.1;
+      neutralR.x = baseR.x * 0.35;
+      neutralL.x = baseL.x * 0.35;
+      neutralR.y += vradius * 0.12;
+      neutralL.y += vradius * 0.12;
     }
 
-    // Ease the displayed hands toward the neutral targets so every pose settles
-    // back onto the same resting offsets. Rate is the rig's facing-transition
-    // blend. While the orbit travels the angle itself is already eased, so the
-    // arc is stamped exactly — chasing it with a second ease would cut across
-    // the circle instead of travelling around it.
+    // Ease the DISPLAYED hands PER ANATOMICAL SIDE (never per screen role). The
+    // front/back roles only decide draw ORDER below — they must never store the
+    // hand positions, because `frontAnat` flips when the orbit ends and storing
+    // role-based positions made the anatomical hands jump ~half a body width in
+    // one frame (the "hands switch" glitch). While the orbit travels the angle
+    // is already eased, so the arc is stamped; otherwise the pose settles.
     const smooth = Math.min(1, rigBlend(fighter._fighterDef));
     if (!orbiting) {
       // Weapon-rotation easing, once per frame (see handRig.js easeHeldRots).
       // Skipped mid-orbit: the orbit pass stamps snapped orientations instead.
       easeHeldRots(fighter);
     }
-    if (!fighter._handBack) fighter._handBack = { x: backBase.x, y: backBase.y };
-    if (!fighter._handFront) fighter._handFront = { x: frontBase.x, y: frontBase.y };
+    if (!fighter._handL) fighter._handL = { x: neutralL.x, y: neutralL.y };
+    if (!fighter._handR) fighter._handR = { x: neutralR.x, y: neutralR.y };
     if (orbiting) {
-      fighter._handBack.x = neutralBack.x;
-      fighter._handBack.y = neutralBack.y;
-      fighter._handFront.x = neutralFront.x;
-      fighter._handFront.y = neutralFront.y;
+      fighter._handL.x = neutralL.x; fighter._handL.y = neutralL.y;
+      fighter._handR.x = neutralR.x; fighter._handR.y = neutralR.y;
     } else {
-      fighter._handBack.x += (neutralBack.x - fighter._handBack.x) * smooth;
-      fighter._handBack.y += (neutralBack.y - fighter._handBack.y) * smooth;
-      fighter._handFront.x += (neutralFront.x - fighter._handFront.x) * smooth;
-      fighter._handFront.y += (neutralFront.y - fighter._handFront.y) * smooth;
+      fighter._handL.x += (neutralL.x - fighter._handL.x) * smooth;
+      fighter._handL.y += (neutralL.y - fighter._handL.y) * smooth;
+      fighter._handR.x += (neutralR.x - fighter._handR.x) * smooth;
+      fighter._handR.y += (neutralR.y - fighter._handR.y) * smooth;
     }
-    // Fighter-relative orbit hand positions for equipment: screen roles
-    // mapped back onto anatomical sides, so each weapon stays glued to the
-    // hand that holds it while the pair exchanges front and rear.
-    const hF = fighter._handFront, hB = fighter._handBack;
-    _orbHands.left.x = frontAnat === 'left' ? hF.x : hB.x;
-    _orbHands.left.y = frontAnat === 'left' ? hF.y : hB.y;
-    _orbHands.right.x = frontAnat === 'right' ? hF.x : hB.x;
-    _orbHands.right.y = frontAnat === 'right' ? hF.y : hB.y;
+    const rl = fighter._handL, rr = fighter._handR;
+    // Anatomical offsets for equipment — read straight from the per-hand
+    // records, so each weapon stays glued to the hand that holds it.
+    _orbHands.left.x = rl.x; _orbHands.left.y = rl.y;
+    _orbHands.right.x = rr.x; _orbHands.right.y = rr.y;
+    // Publish anatomical hand world positions for the debug overlay / probe.
+    {
+      const hw = _handWorldOf(fighter);
+      hw.left.x = x + rl.x; hw.left.y = y + rl.y;
+      hw.right.x = x + rr.x; hw.right.y = y + rr.y;
+    }
 
-    // Reuse pre-allocated state objects for rendering.
-    const backSt = _hst(fighter, 'back', x + fighter._handBack.x, y + fighter._handBack.y, 'back');
-    const frontSt = _hst(fighter, 'front', x + fighter._handFront.x, y + fighter._handFront.y, 'front');
+    // Reuse pre-allocated state objects for rendering. Depth → size rides on
+    // the cached draw state: a hand swells as it swings in front of the body
+    // and shrinks behind it, exactly like the prototype (radius = h*(1+arc*z)).
+    const frontHand = frontAnat === 'right' ? rr : rl;
+    const backHand = backAnat === 'right' ? rr : rl;
+    const backSt = _hst(fighter, 'back', x + backHand.x, y + backHand.y, 'back');
+    const frontSt = _hst(fighter, 'front', x + frontHand.x, y + frontHand.y, 'front');
+    const backScale = orbitHandScale(backZ, orbitRig);
+    const frontScale = orbitHandScale(frontZ, orbitRig);
+    backSt.sx = backScale; backSt.sy = backScale;
+    frontSt.sx = frontScale; frontSt.sy = frontScale;
     // Gear rides anatomical hands (never swaps fists) and mirrors with the
     // snap-based grip orientation — at rest this agrees with facing exactly.
     const mirrorGear = gripDir < 0;
@@ -3209,38 +3516,39 @@ export function drawFighter(ctx, fighter, time) {
     const backGearShown = (handGear && handGear[backAnat] && !holdCoversSide(fighter, backAnat)) ? handGear[backAnat] : null;
 
     if (orbiting) {
-      // Depth-resolved groups: each weapon rides its anatomical hand's orbit
-      // position (grip snapped at the threshold); fists stay glued to their
-      // gear, and the body stays between the rear and front groups.
-      drawOrbitEntries(ctx, fighter, x, y, backAnat, _orbHands, gripDir, false);
+      // Body first, then BOTH fists over it (rear group then front group),
+      // weapons over their fist. The hands sit on the body edge, so nothing may
+      // duck behind the body — that swap popped a hand at each turn.
+      drawBody(ctx, fighter, skinLive, vradius);
+      drawFrontAccessory(ctx, fighter, x, y, vradius);
+      drawOrbitEntries(ctx, fighter, x, y, backAnat, _orbHands, gripDir, false, vradius);
       _drawHandState(ctx, backSt, handR, handFill, backGearShown, mirrorGear);
-      drawOrbitEntries(ctx, fighter, x, y, backAnat, _orbHands, gripDir, true);
-      drawBody(ctx, fighter, skinLive);
-      drawFrontAccessory(ctx, fighter, x, y, radius);
-      drawOrbitEntries(ctx, fighter, x, y, frontAnat, _orbHands, gripDir, false);
+      drawOrbitEntries(ctx, fighter, x, y, backAnat, _orbHands, gripDir, true, vradius);
+      drawOrbitEntries(ctx, fighter, x, y, frontAnat, _orbHands, gripDir, false, vradius);
       _drawHandState(ctx, frontSt, handR, handFill, frontGearShown, mirrorGear);
-      drawOrbitEntries(ctx, fighter, x, y, frontAnat, _orbHands, gripDir, true);
+      drawOrbitEntries(ctx, fighter, x, y, frontAnat, _orbHands, gripDir, true, vradius);
     } else if (backSt.layer === 'front') {
-      _drawHandState(ctx, frontSt, handR, handFill, frontGearShown, mirrorGear);
-      // Back-layer held weapons ride with the trailing side, under the body.
-      drawHeldLayer(ctx, fighter, x, y, 'back', false);
-      drawBody(ctx, fighter, skinLive);
-      drawFrontAccessory(ctx, fighter, x, y, radius);
+      drawHeldLayer(ctx, fighter, x, y, 'back', false, vradius);
+      drawHeldLayer(ctx, fighter, x, y, 'back', true, vradius);
+      drawBody(ctx, fighter, skinLive, vradius);
+      drawFrontAccessory(ctx, fighter, x, y, vradius);
       _drawHandState(ctx, backSt, handR, handFill, backGearShown, mirrorGear);
-      // Front-layer held weapons ride with the leading side, over the body
-      // but under the fist so the grip stays hidden in the hand (unless the
-      // entry configures overHand, which draws after the fist instead).
-      drawHeldLayer(ctx, fighter, x, y, 'front', false);
-      drawHeldLayer(ctx, fighter, x, y, 'front', true);
+      drawHeldLayer(ctx, fighter, x, y, 'front', false, vradius);
+      _drawHandState(ctx, frontSt, handR, handFill, frontGearShown, mirrorGear);
+      drawHeldLayer(ctx, fighter, x, y, 'front', true, vradius);
     } else {
+      // Explicit layer:'back' weapons stay behind the body (the WPN LAYER row).
+      drawHeldLayer(ctx, fighter, x, y, 'back', false, vradius);
+      drawHeldLayer(ctx, fighter, x, y, 'back', true, vradius);
+      drawBody(ctx, fighter, skinLive, vradius);
+      drawFrontAccessory(ctx, fighter, x, y, vradius);
+      // Both fists draw over the body (rear group then front group), weapons
+      // over their fist by default. No hand is occluded by the body, so close
+      // hands and the facing turn can never pop one.
       _drawHandState(ctx, backSt, handR, handFill, backGearShown, mirrorGear);
-      drawHeldLayer(ctx, fighter, x, y, 'back', false);
-      drawHeldLayer(ctx, fighter, x, y, 'back', true);
-      drawBody(ctx, fighter, skinLive);
-      drawFrontAccessory(ctx, fighter, x, y, radius);
-      drawHeldLayer(ctx, fighter, x, y, 'front', false);
+      drawHeldLayer(ctx, fighter, x, y, 'front', false, vradius);
       _drawHandState(ctx, frontSt, handR, handFill, frontGearShown, mirrorGear);
-      drawHeldLayer(ctx, fighter, x, y, 'front', true);
+      drawHeldLayer(ctx, fighter, x, y, 'front', true, vradius);
     }
   }
 
@@ -3252,14 +3560,14 @@ export function drawFighter(ctx, fighter, time) {
     const a = Math.min(0.45, fighter._hitFlash * 3);
     ctx.globalAlpha = a;
     ctx.beginPath();
-    ctx.arc(x, y, radius + 2, 0, Math.PI * 2);
+    ctx.arc(x, y, vradius + 2, 0, Math.PI * 2);
     ctx.fillStyle = '#ff2222';
     ctx.fill();
     ctx.globalAlpha = 1;
   }
 
   // Direction indicator (small arrow on top)
-  const arrowY = y - radius - 10;
+  const arrowY = y - vradius - 10;
   const arrowX = x;
   ctx.fillStyle = '#111111';
   ctx.beginPath();

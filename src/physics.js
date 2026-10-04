@@ -1077,9 +1077,12 @@ _tempVfx: [],
     // ends it. Finite — the recovery is never infinite.
     _aerialRecoveryTimer: 0,
 
-    // Hands runtime state (rendering only)
-    _handBack: null,    // smoothed back-hand pose (rendering only)
-    _handFront: null,   // smoothed front-hand pose (rendering only)
+    // Hands runtime state (rendering only). Per ANATOMICAL side — the displayed
+    // offsets are never stored per screen role (that made the hands jump on a
+    // turn). `_handWorld` is the world-space pair for debug/probe.
+    _handL: null,       // smoothed left-hand pose (rendering only)
+    _handR: null,       // smoothed right-hand pose (rendering only)
+    _handWorld: null,   // { left:{x,y}, right:{x,y} } world positions (debug)
 
     // Free-fall: recovery is consumed after a double jump once airborne —
     // the free-fall glow shows while falling without a jump left.
@@ -2428,12 +2431,67 @@ export function drawDestructibleHp(ctx, d) {
 export const BLAST_MARGIN = 0; // the death box IS the arena edge — any hurtbox
 // touch past it KOs immediately, no grace zone
 
+// ── Customizable death zone (menu-owned persistence, physics-owned math) ──
+// Margins are extra pixels BEYOND each arena edge. 0 preserves the historical
+// behavior exactly (death box == arena edge). Positive pushes the KO line
+// outward (more forgiving), negative pulls it inward (less forgiving, can
+// overlap the playable arena if the player insists).
+export const DEFAULT_DEATH_MARGINS = { left: 0, right: 0, top: 0, bottom: 0 };
+export const DEATHZONE_MIN = -2000; // inward: may overlap deep into (or past) the arena (allowed, validated)
+export const DEATHZONE_MAX = 6000;  // outward: very forgiving, still bounded so the preview/camera stay sane
+export const DEATHZONE_STEP = 20;
+
+export function sanitizeDeathZone(raw) {
+  const out = { ...DEFAULT_DEATH_MARGINS };
+  if (!raw || typeof raw !== 'object') return out;
+  for (const k of ['left', 'right', 'top', 'bottom']) {
+    const v = Number(raw[k]);
+    if (!Number.isFinite(v)) continue;
+    out[k] = Math.max(DEATHZONE_MIN, Math.min(DEATHZONE_MAX, Math.round(v)));
+  }
+  return out;
+}
+
+// Absolute blast rect for a W×H arena with the given margins. Clamped so the
+// box can never invert (left < right, top < bottom always hold).
+export function blastRectFor(width, height, margins) {
+  const m = sanitizeDeathZone(margins);
+  const W = Number.isFinite(width) && width > 0 ? width : 1080;
+  const H = Number.isFinite(height) && height > 0 ? height : 1080;
+  const left = Math.min(-m.left, W - 40);
+  const right = Math.max(W + m.right, 40);
+  const top = Math.min(-m.top, H - 40);
+  const bottom = Math.max(H + m.bottom, 40);
+  return {
+    left: Math.min(left, right - 20),
+    right: Math.max(right, left + 20),
+    top: Math.min(top, bottom - 20),
+    bottom: Math.max(bottom, top + 20),
+  };
+}
+
+// Apply custom margins onto a live stage in place. Safe point: match start,
+// menu edit, or any frame the match is not deciding a KO.
+export function applyDeathZoneToStage(stage, margins, width, height) {
+  if (!stage) return null;
+  try {
+    const W = Number.isFinite(width) && width > 0 ? width
+      : (Number.isFinite(stage._arenaW) && stage._arenaW > 0 ? stage._arenaW : 1080);
+    const H = Number.isFinite(height) && height > 0 ? height
+      : (Number.isFinite(stage._arenaH) && stage._arenaH > 0 ? stage._arenaH : 1080);
+    stage.blastZones = blastRectFor(W, H, margins);
+    stage._arenaW = W;
+    stage._arenaH = H;
+  } catch (_) {}
+  return stage;
+}
+
 // Only the Sandbox section below touches destructibles, but the import is hoisted
 // with the rest of the module graph. The chain is one-way and acyclic:
 // Stage.js -> physics.js -> Engine.js -> worldFx.js.
 
 
-export function createDefaultStage(canvasWidth, canvasHeight) {
+export function createDefaultStage(canvasWidth, canvasHeight, deathMargins) {
   const groundY = canvasHeight * 0.78;
   const groundWidth = canvasWidth * 0.65;
   const groundX = (canvasWidth - groundWidth) / 2;
@@ -2443,6 +2501,8 @@ export function createDefaultStage(canvasWidth, canvasHeight) {
 
   return {
     name: 'Battlefield',
+    _arenaW: canvasWidth,
+    _arenaH: canvasHeight,
     platforms: [
       // Main ground
       {
@@ -2469,12 +2529,7 @@ export function createDefaultStage(canvasWidth, canvasHeight) {
         bobPhase: 0,
       },
     ],
-    blastZones: {
-      left: -BLAST_MARGIN,
-      right: canvasWidth + BLAST_MARGIN,
-      top: -BLAST_MARGIN * 1.5,
-      bottom: canvasHeight + BLAST_MARGIN,
-    },
+    blastZones: blastRectFor(canvasWidth, canvasHeight, deathMargins),
     respawnPoint: { x: canvasWidth / 2, y: groundY - 120 },
     spawnPoints: [
       { x: canvasWidth * 0.35, y: groundY },
