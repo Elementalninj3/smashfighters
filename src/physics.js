@@ -1502,6 +1502,21 @@ export function stepFighterPhysics(fighter, dt) {
     fighter._stepFxTimer = 0;
   }
 
+  // Knight movement trail: steel afterimages while moving fast, ground or
+  // air. Timed pool emissions (Depsey Roll precedent), so a fast knight always
+  // carries a wake behind him. Visual only — gameplay never reads it back.
+  if (fighter._fighterDef && fighter._fighterDef.id === 'knight' && fighter.state !== 'dead') {
+    if (Math.abs(fighter.vx) > 120 && !fighter.dodging) {
+      fighter._knightTrailT = (fighter._knightTrailT || 0) + dt;
+      if (fighter._knightTrailT >= 0.08) {
+        fighter._knightTrailT = 0;
+        try { emitGhost(fighter, { life: 0.22 }); } catch (_) {}
+      }
+    } else if (fighter._knightTrailT) {
+      fighter._knightTrailT = 0;
+    }
+  }
+
   // Squish decay — spring back to 1,1
   if (fighter.squishTimer > 0) {
     fighter.squishTimer -= dt;
@@ -1658,6 +1673,14 @@ export function applyDI(fighter, dt, p, isHeld) {
 // has to cover), and a caller can pin a direction other than the fighter's live
 // facing. The live instance is returned so the caller can keep tuning it.
 export function spawnTempVfx(fighter, effectName, lifetime, scale = 1, rotation = 0, offsetX = 0, offsetY = 0, extra = null) {
+  // Timeline deference (the single rule behind every code-driven trail and
+  // burst): if the fighter's CURRENT animation carries its own timeline entry
+  // for the same effect, the animator's pool already paints it — with the
+  // user's timing, scale, rotation and X/Y offsets — so queuing a second
+  // instance here would double-draw. Delete the timeline entry and this code
+  // fallback returns. This is what makes every ability VFX editable in the
+  // Hand Animator: attach/tune it on the move, and the game honors it.
+  if (fighter && animOwnsEffect(fighter, effectName)) return null;
   if (!fighter._tempVfx) fighter._tempVfx = [];
   const v = {
     effect: effectName,
@@ -1674,6 +1697,17 @@ export function spawnTempVfx(fighter, effectName, lifetime, scale = 1, rotation 
   if (extra) Object.assign(v, extra);
   fighter._tempVfx.push(v);
   return v;
+}
+
+// True when the fighter's current animation owns a timeline VFX entry for
+// the effect (same shape the Hand Animator edits and persists).
+function animOwnsEffect(fighter, effectId) {
+  const list = fighter && fighter.anim && fighter.anim.anim && fighter.anim.anim.vfx;
+  if (!Array.isArray(list)) return false;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] && list[i].effect === effectId) return true;
+  }
+  return false;
 }
 
 // Start (or restart) an ability's cooldown. The plain object stays the value

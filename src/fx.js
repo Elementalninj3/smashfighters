@@ -1391,6 +1391,42 @@ export { COWBOY_AL_VFX, SHADOW_DASH_VFX, SMOKE_VFX, BOXER_VFX };
 // armor. Anchored to the weapon by the spawner (combat.js knightSwingTrail),
 // mirrored with facing, scaled up for the Spinning Sweep. One stroked arc in
 // three passes: deliberately faint so the swing reads, never the effect.
+//
+// Crescent layers + ribbon painter for the blue slash below (the demo's
+// LAYERS table and crescent(), game-sized, module scope so no per-frame
+// allocation).
+const _BLUE_SLASH_LAYERS = [
+  { R: 96, W: 30, d: 0 },
+  { R: 82, W: 15, d: 0.015 },
+  { R: 110, W: 12, d: 0.03 },
+  { R: 102, W: 5, d: 0.045 },
+  { R: 88, W: 6, d: 0.06 },
+];
+function _blueSlashCrescent(ctx, R, Wd, a0, a1, alpha) {
+  if (a1 - a0 < 0.02 || alpha <= 0) return;
+  const N = 30;
+  ctx.beginPath();
+  for (let i = 0; i <= N; i++) {
+    const u = i / N, a = a0 + (a1 - a0) * u;
+    const w = Wd * Math.pow(Math.sin(Math.PI * u), 0.7) * 0.5;
+    const px = (R + w) * Math.cos(a), py = (R + w) * Math.sin(a);
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  for (let i = N; i >= 0; i--) {
+    const u = i / N, a = a0 + (a1 - a0) * u;
+    const w = Wd * Math.pow(Math.sin(Math.PI * u), 0.7) * 0.5;
+    ctx.lineTo((R - w) * Math.cos(a), (R - w) * Math.sin(a));
+  }
+  ctx.closePath();
+  const aq = alpha > 1 ? 1 : alpha;
+  const g = ctx.createRadialGradient(0, 0, Math.max(0, R - Wd / 2), 0, 0, R + Wd / 2);
+  g.addColorStop(0, 'rgba(0,110,255,0)');
+  g.addColorStop(0.3, 'rgba(40,150,255,' + (0.85 * aq).toFixed(3) + ')');
+  g.addColorStop(0.58, 'rgba(200,235,255,' + aq.toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(0,100,255,0)');
+  ctx.fillStyle = g;
+  ctx.fill();
+}
 const KNIGHT_VFX = {
   knightSlash: {
     name: 'Knight Slash',
@@ -1430,6 +1466,181 @@ const KNIGHT_VFX = {
       ctx.stroke();
 
       ctx.lineCap = 'butt';
+      ctx.restore();
+    },
+  },
+  // Charged Sword Slash (knight fsmash, GA/vfx/blueslash.html): the demo's
+  // crescent battery + blue glow wash, minus the staging (the game draws its
+  // own fighter and weapon underneath — no character, sword, particles or
+  // shake here). Five crescent layers, each a wide faint pass plus a narrow
+  // bright pass, the head sweeping -2.5 to 0.75 rad while the tail chases,
+  // with a white-hot leading core. Deterministic: fixed layers and angles,
+  // driven purely by progress, so it draws identically every replay.
+  // Weapon-anchored by combat.js knightSwingTrail, mirrored with facing.
+  knightBlueSlash: {
+    name: 'Knight Blue Slash',
+    color: '#4aa8ff',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      ctx.globalCompositeOperation = 'lighter';
+      const pr = v.progress;
+      const prog = pr < 0 ? 0 : pr > 1 ? 1 : pr;
+
+      // Blue glow wash: strongest at release, gone by the end.
+      const ga = 0.22 * (1 - prog);
+      if (ga > 0.004) {
+        const g = ctx.createRadialGradient(0, 0, 8, 0, 0, 150);
+        g.addColorStop(0, 'rgba(60,150,255,' + ga.toFixed(3) + ')');
+        g.addColorStop(1, 'rgba(0,110,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(-150, -150, 300, 300);
+      }
+
+      // Five crescent layers (the demo's LAYERS, game-sized).
+      for (let li = 0; li < _BLUE_SLASH_LAYERS.length; li++) {
+        const L = _BLUE_SLASH_LAYERS[li];
+        const t2 = prog - L.d;
+        if (t2 <= 0) continue;
+        const hq = t2 / 0.3;
+        const hc = hq < 0 ? 0 : hq > 1 ? 1 : hq;
+        const head = -2.5 + 3.25 * (1 - (1 - hc) * (1 - hc) * (1 - hc));
+        const tq = (t2 - 0.05) / 0.4;
+        const tc = tq < 0 ? 0 : tq > 1 ? 1 : tq;
+        const tail = -2.5 + 3.25 * tc * tc * tc;
+        const aq = (t2 - 0.35) / 0.35;
+        const al = 1 - (aq < 0 ? 0 : aq > 1 ? 1 : aq);
+        if (al <= 0.004 || head - tail < 0.02) continue;
+        _blueSlashCrescent(ctx, L.R, L.W * 2.3, tail, head, al * 0.25);
+        _blueSlashCrescent(ctx, L.R, L.W, tail, head, al);
+      }
+
+      // White-hot leading core: thin, early, first to fade.
+      if (prog < 0.4) {
+        const q = prog / 0.4;
+        const e = 1 - (1 - q) * (1 - q) * (1 - q);
+        ctx.globalAlpha = (1 - q) * 0.9;
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, 100, -2.5 + 3.25 * e - 0.5, -2.5 + 3.25 * e);
+        ctx.stroke();
+      }
+      ctx.restore();
+    },
+  },
+  // Oath Lunge trail (knight dash): seven speed streaks trailing behind the
+  // body plus a soft ribbon glow, all fading over the lunge. Streak geometry
+  // is indexed (never random per frame) so the pooled instance draws
+  // identically every replay. Character-anchored by combat.js
+  // knightSwingTrail, mirrored with facing.
+  knightDashTrail: {
+    name: 'Knight Dash Trail',
+    color: '#9fd4ff',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      const pr = v.progress;
+      const prog = pr < 0 ? 0 : pr > 1 ? 1 : pr;
+      const fade = 1 - prog;
+      for (let i = 0; i < 7; i++) {
+        const y = -18 + i * 6;
+        const headX = -10 - i * 14 - prog * 130;
+        ctx.globalAlpha = fade * (0.5 - i * 0.05);
+        ctx.lineWidth = Math.max(1, 5 - i * 0.4);
+        ctx.strokeStyle = (i % 2) ? '#4aa8ff' : '#bfe6ff';
+        ctx.beginPath();
+        ctx.moveTo(headX, y);
+        ctx.lineTo(headX + 46 - i * 4, y - 4);
+        ctx.stroke();
+      }
+      // Soft ribbon glow hugging the body.
+      ctx.globalAlpha = fade * 0.25;
+      ctx.fillStyle = '#4aa8ff';
+      ctx.beginPath();
+      ctx.ellipse(-60 - prog * 60, 0, 70, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    },
+  },
+  // Circle explosion (knight dash launch): a white flash core, two expanding
+  // rings (steel-blue, then gold), and ten deterministic radial shards.
+  // Fixed angles/distances per index — no per-frame random, no allocation.
+  knightCircleBurst: {
+    name: 'Knight Circle Burst',
+    color: '#ffd23a',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      const pr = v.progress;
+      const prog = pr < 0 ? 0 : pr > 1 ? 1 : pr;
+      const e = prog * (2 - prog);
+
+      // Flash core: full white, gone in the first third.
+      if (prog < 0.35) {
+        const q = prog / 0.35;
+        ctx.globalAlpha = 1 - q;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, 26 * (1 - q) + 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Lead ring (steel-blue) + chasing ring (gold).
+      const fade = 1 - prog;
+      ctx.globalAlpha = fade * 0.9;
+      ctx.lineWidth = Math.max(1, 7 * fade);
+      ctx.strokeStyle = '#4aa8ff';
+      ctx.beginPath();
+      ctx.arc(0, 0, 10 + 90 * e, 0, Math.PI * 2);
+      ctx.stroke();
+      if (prog > 0.12) {
+        const q2 = (prog - 0.12) / 0.88;
+        const e2 = q2 * (2 - q2);
+        ctx.globalAlpha = (1 - q2) * 0.8;
+        ctx.lineWidth = Math.max(1, 5 * (1 - q2));
+        ctx.strokeStyle = '#ffd23a';
+        ctx.beginPath();
+        ctx.arc(0, 0, 6 + 70 * e2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      // Ten radial shards, alternating steel and gold.
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = '#bcd2e8';
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2 + 0.31;
+        const d = e * (46 + (i % 3) * 14);
+        const sx = Math.cos(a) * d, sy = Math.sin(a) * d;
+        const sz = 6 * fade + 1;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(a + prog * 2);
+        ctx.beginPath();
+        ctx.moveTo(0, -sz);
+        ctx.lineTo(sz * 0.35, 0);
+        ctx.lineTo(0, sz);
+        ctx.lineTo(-sz * 0.35, 0);
+        ctx.closePath();
+        ctx.fillStyle = (i % 2) ? '#ffd23a' : '#bcd2e8';
+        ctx.fill();
+        ctx.restore();
+      }
       ctx.restore();
     },
   },
@@ -1783,6 +1994,9 @@ export function updateFighterVfx(fighter, frame) {
     v.offsetY = src.offsetY || 0;
     v.loop = !!src.loop;
     v.mirrorX = fighter.facingRight ? 1 : -1;
+    // Opaque art params (e.g. the Straight Right's size unit) ride along
+    // read-only; effects never mutate them.
+    v.params = src.params || null;
     if (v.loop) {
       const m = (frame - v.startFrame) % v.duration;
       v.progress = (m < 0 ? m + v.duration : m) / v.duration;
@@ -1819,7 +2033,11 @@ export function drawFighterVfx(ctx, fighter) {
       if (!v || v.progress < 0 || v.progress > 1) continue;
       const eff = VFX_EFFECTS[v.effect] || VFX_EFFECTS.bullet;
       resolveAnchor(fighter, v, _pos);
-      _pos.x += v.offsetX || 0;
+      // Timeline offsets are authored canonically (facing right), so they
+      // mirror with the fighter — the muzzle stays in front of the gun on
+      // both facings. (Temp-pool spawners pre-mirror their own offsets, so
+      // that path below is untouched.)
+      _pos.x += (v.mirrorX && v.mirrorX < 0 ? -1 : 1) * (v.offsetX || 0);
       _pos.y += v.offsetY || 0;
       ctx.save();
       eff.draw(ctx, v, _pos);

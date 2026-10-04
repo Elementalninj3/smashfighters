@@ -2987,12 +2987,13 @@ function drawAnimatedWeapon(ctx, st) {
   ctx.scale(st.scaleX || 1, st.scaleY || 1);
   _animWeaponDef.color = st.def.color;
   _animWeaponDef.accent = st.def.accent;
-  // Sprite weapons go through drawImage; high quality keeps their edges crisp
-  // under the camera zoom. (Procedural art is vector and unaffected.)
+  // Sprite weapons blit pre-smoothed baked bitmaps; only touch the quality
+  // flag when it isn't already high — each set can flush the canvas pipeline.
+  // (Procedural art is vector and unaffected.)
   const prevQ = ctx.imageSmoothingQuality;
-  ctx.imageSmoothingQuality = 'high';
+  if (prevQ !== 'high') ctx.imageSmoothingQuality = 'high';
   drawWeapon(ctx, st.def, _animWeaponDef);
-  if (prevQ) ctx.imageSmoothingQuality = prevQ;
+  if (prevQ && prevQ !== 'high') ctx.imageSmoothingQuality = prevQ;
   ctx.restore();
 }
 

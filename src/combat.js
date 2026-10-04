@@ -1808,22 +1808,31 @@ function knightGuardImpact(target) {
 // Sword rows that paint a clean trail for the swing's duration (spawned once
 // at attack start through the shared temp-VFX pool — pooled, culled and drawn
 // by the existing fighter-VFX path, no new system). The Spinning Sweep paints
-// its own converted art (GA/vfx/spinningsweep.html) instead of the slash.
-const KNIGHT_TRAIL_KEYS = new Set(['jab', 'ftilt', 'fsmash', 'dsmash', 'aerialLight', 'aerialHeavy']);
+// its own converted art (GA/vfx/spinningsweep.html) instead of the slash, the
+// Charged Sword Strike paints the blue slash (GA/vfx/blueslash.html), and the
+// Oath Lunge paints a dash trail plus a circle-burst launch flash.
+const KNIGHT_TRAIL_KEYS = new Set(['jab', 'ftilt', 'fsmash', 'dsmash', 'aerialLight', 'aerialHeavy', 'dash']);
 function knightSwingTrail(fighter, key, def) {
   if (!isKnight(fighter) || !KNIGHT_TRAIL_KEYS.has(key)) return;
   try {
     const total = (def.startup || 0) + (def.active || 0);
     const isSweep = key === 'dsmash';
+    const isBlue = key === 'fsmash';
+    const isDash = key === 'dash';
     const life = isSweep ? Math.max(0.3, Math.min(0.45, total / 60))
       : Math.max(0.12, Math.min(0.4, total / 60));
     const dir = fighter.facingRight ? 1 : -1;
     // Sweep scale 0.5: knightSweep's blades reach ~6.8U (U=30) at scale 1, and
     // the Spinning Sweep box reaches ~94px from center (w94 ox47, both sides)
-    // — half scale lands the blades on roughly the hitbox edge.
-    const sweepScale = isSweep ? 0.5 : 1.0;
-    spawnTempVfx(fighter, isSweep ? 'knightSweep' : 'knightSlash',
-      life, sweepScale, 0, 0, 0, { anchor: 'weapon', mirrorX: dir });
+    // — half scale lands the blades on roughly the hitbox edge. Blue scale
+    // 1.15: the charged slash should read bigger than a plain swing.
+    const trailScale = isSweep ? 0.5 : isBlue ? 1.15 : 1.0;
+    spawnTempVfx(fighter,
+      isSweep ? 'knightSweep' : isBlue ? 'knightBlueSlash' : isDash ? 'knightDashTrail' : 'knightSlash',
+      life, trailScale, 0, 0, 0, { anchor: 'weapon', mirrorX: dir });
+    // Dash launch flash: short circle burst at the body, over the trail.
+    // (Both spawns defer to same-effect timeline entries inside spawnTempVfx.)
+    if (isDash) spawnTempVfx(fighter, 'knightCircleBurst', 0.35, 1.0, 0, 0, 0, { anchor: 'character', mirrorX: dir });
   } catch (_) {}
 }
 

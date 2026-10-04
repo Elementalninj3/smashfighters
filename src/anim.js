@@ -478,6 +478,44 @@ export function getWeaponSprite(spritePath) {
   return entry;
 }
 
+// Baked weapon sprites — the FPS fix for weapon rendering. A GA weapon PNG
+// decodes to a multi-megapixel bitmap, and drawWeapon used to resample the
+// whole thing down into a ~100px hand every frame, with high-quality
+// smoothing on top. Instead each weapon is downscaled ONCE (same high-quality
+// resample) into a small offscreen canvas at 2x its fitted draw size, and
+// every frame blits that: identical pixels, a fraction of the fill rate, and
+// crisp under camera zoom up to 2x. Same pattern as the baked body sprites
+// in render/Effects.js.
+const WEAPON_BAKE_SS = 2;
+const _weaponBakeCache = new Map(); // key: sprite path + fitted size -> { img, canvas }
+
+function bakedWeaponSprite(spritePath, img, dw, dh) {
+  const key = spritePath + '|' + Math.max(1, Math.round(dw)) + 'x' + Math.max(1, Math.round(dh));
+  const hit = _weaponBakeCache.get(key);
+  if (hit && hit.img === img) return hit.canvas;
+  const bw = Math.max(2, Math.ceil(dw * WEAPON_BAKE_SS));
+  const bh = Math.max(2, Math.ceil(dh * WEAPON_BAKE_SS));
+  let canvas = null;
+  try {
+    canvas = document.createElement('canvas');
+    canvas.width = bw;
+    canvas.height = bh;
+    const m = canvas.getContext('2d');
+    m.imageSmoothingEnabled = true;
+    m.imageSmoothingQuality = 'high';
+    m.clearRect(0, 0, bw, bh);
+    m.drawImage(img, 0, 0, bw, bh);
+  } catch (_) {
+    return null;
+  }
+  if (_weaponBakeCache.size >= 32) _weaponBakeCache.delete(_weaponBakeCache.keys().next().value);
+  _weaponBakeCache.set(key, { img, canvas });
+  return canvas;
+}
+
+// Diagnostic: number of baked weapon sprites (used by the node harness).
+export function weaponBakeCount() { return _weaponBakeCache.size; }
+
 function persistWeaponLib() {
   try {
     if (typeof localStorage === 'undefined') return;
@@ -571,14 +609,15 @@ export function drawWeapon(ctx, def, overrides = {}) {
   const type = def.type || 'sword';
 
   // Sprite-based weapon: draw the image centered at (0,0) in sprite space.
+  // The blit goes through the baked cache above, never the raw bitmap.
   if (def.sprite) {
     const entry = getWeaponSprite(def.sprite);
-    if (entry && entry.status === 'loaded' && entry.img) {
-      const img = entry.img;
+    const img = entry && entry.status === 'loaded' ? entry.img : null;
+    if (img && img.width > 0 && img.height > 0) {
       const scale = Math.min(w / img.width, h / img.height);
       const dw = img.width * scale;
       const dh = img.height * scale;
-      ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+      ctx.drawImage(bakedWeaponSprite(def.sprite, img, dw, dh) || img, -dw / 2, -dh / 2, dw, dh);
       return;
     }
     // Sprite still loading or errored — fall through to procedural draw
@@ -1238,6 +1277,19 @@ for (const [id, srcId, name] of BOXER_ANIM_SOURCES) {
   else _boxerAnims.push(derived);
 }
 
+// Default timeline VFX for the boxer's cast-timed art (same rule as the
+// knight's: combat.js defers to these, the timeline always wins). Straight
+// Right reach: cast frame 1, 0.16s life, forward offset + unit — the same
+// values the code spawn uses.
+for (const a of _boxerAnims) {
+  if (a.id === 'boxerFsmash') {
+    a.vfx = [{
+      effect: 'boxerStraightPunch', anchor: 'character', startFrame: 1, duration: 10,
+      scale: 1, rotation: 0, offsetX: 15.6, offsetY: -4, loop: false, params: { unit: 1.42 },
+    }];
+  }
+}
+
 // ── Knight animations ───────────────────────────────────────────────────
 // Bare-handed like the boxer: the exact same deriveUnarmed convention — each
 // move clones the shipped base pose that already reads as that kind of swing,
@@ -1271,6 +1323,32 @@ for (const [id, srcId, name] of KNIGHT_ANIM_SOURCES) {
   const derived = deriveUnarmed(_baseAnimById.get(srcId), id, name);
   if (!derived) console.warn(`[animlib] knight move "${id}" has no source animation "${srcId}"`);
   else _knightAnims.push(derived);
+}
+
+// Default timeline VFX for the knight's attack-start trails (durations in
+// frames mirror the code-spawn life: startup + active frames at 60fps). These
+// are the SAME instances combat.js would spawn (knightSwingTrail defers to
+// them — the timeline always wins), so every trail is visible and tunable in
+// the Hand Animator out of the box: effect, anchor, timing, scale, rotation
+// and X/Y offsets. Impact-timed art (Shield Bash hit, Counter answer) stays
+// code-driven — it cannot be expressed as attack-start timeline entries.
+const _KNIGHT_TRAIL_VFX = {
+  knightJab:         [{ effect: 'knightSlash', anchor: 'weapon', startFrame: 0, duration: 7, scale: 1 }],
+  knightFtilt:       [{ effect: 'knightSlash', anchor: 'weapon', startFrame: 0, duration: 10, scale: 1 }],
+  knightAerialLight: [{ effect: 'knightSlash', anchor: 'weapon', startFrame: 0, duration: 10, scale: 1 }],
+  knightAerialHeavy: [{ effect: 'knightSlash', anchor: 'weapon', startFrame: 0, duration: 18, scale: 1 }],
+  knightDsmash:      [{ effect: 'knightSweep', anchor: 'weapon', startFrame: 0, duration: 18, scale: 0.5 }],
+  knightFsmash:      [{ effect: 'knightBlueSlash', anchor: 'weapon', startFrame: 0, duration: 19, scale: 1.15 }],
+  knightDash: [
+    { effect: 'knightDashTrail', anchor: 'weapon', startFrame: 0, duration: 10, scale: 1 },
+    { effect: 'knightCircleBurst', anchor: 'character', startFrame: 0, duration: 19, scale: 1 },
+  ],
+}; // Durations fit inside each source animation's frame count so every seeded
+// entry completes before the pose freezes (jab 9, ftilt 14, nair 10, fair 28,
+// ninjaNsmash 32, fsmash 32, dash 19).
+for (const a of _knightAnims) {
+  const list = _KNIGHT_TRAIL_VFX[a.id];
+  if (list) a.vfx = list.map((e) => ({ rotation: 0, offsetX: 0, offsetY: 0, loop: false, ...e }));
 }
 
 export const DEFAULT_ANIMATIONS = [...BASE_ANIMATIONS, ..._boxerAnims, ..._knightAnims];
@@ -1360,17 +1438,27 @@ function migrateTeleportStrike() {
 }
 
 // ── Ability-only VFX migration ────────────────────────────────────────────
-// VFX now belongs to abilities alone: an animation paints only when it is bound
+// VFX belongs to abilities alone: an animation paints only when it is bound
 // to an ability (combat.type 'nonHitbox' + combat.abilityId), which is the same
 // test DEFAULT_ANIMATIONS above is written to. A browser whose animator had
-// already saved would otherwise keep replaying the general melee art (bullet,
-// spray, blast, slash, shadowPoof/shadowBlast) on top of the new rule forever,
-// so drop it from every non-ability animation, once.
+// already saved would otherwise keep replaying the RETIRED general melee art
+// (bullet, spray, blast, slash, shadowPoof/shadowBlast and the retired
+// movement/recovery dust) on top of the new rule forever, so drop exactly
+// those entries from every non-ability animation, once.
+//
+// Deliberately a denylist, not a wipe: animator-authored entries (knight
+// trails included) must survive the load, or timeline VFX editing could never
+// stick on plain attacks.
 //
 // Runs AFTER migrateTeleportStrike() on purpose: a stored ninjaDtilt that still
 // needed its ability binding re-attached would otherwise be treated as unbound
 // and have its (legitimate) Teleport Strike slash wiped instead of repaired.
 const ABILITY_ONLY_VFX_MIGRATION_KEY = 'smashfighters.animlib.abilityOnlyVfx';
+const RETIRED_GENERAL_VFX = new Set([
+  'bullet', 'spray', 'blast', 'slash', 'shadowPoof', 'shadowBlast',
+  'jumpVfx', 'landingVfx', 'hardLandingVfx', 'fastFallVfx', 'directionChangeVfx',
+  'recoveryVfx', 'recoveryTrailVfx', 'aerialLightRecoveryVfx',
+]);
 
 function migrateAbilityOnlyVfx() {
   if (typeof localStorage === 'undefined') return;
@@ -1382,11 +1470,47 @@ function migrateAbilityOnlyVfx() {
     if (!a || !Array.isArray(a.vfx) || a.vfx.length === 0) continue;
     const c = a.combat;
     if (c && c.type === 'nonHitbox' && c.abilityId) continue;   // ability: keep
-    a.vfx = [];
-    changed = true;
+    const kept = a.vfx.filter((v) => !(v && RETIRED_GENERAL_VFX.has(v.effect)));
+    if (kept.length !== a.vfx.length) { a.vfx = kept; changed = true; }
   }
   if (changed) persistAnimLib();
   try { localStorage.setItem(ABILITY_ONLY_VFX_MIGRATION_KEY, '1'); } catch (_) {}
+}
+
+// ── Knight/boxer timeline top-up ──────────────────────────────────────────
+// Stored animations replace built-ins wholesale, so a knightDsmash (or
+// boxerFsmash) saved before its trail entries were seeded keeps shadowing the
+// default with an empty vfx list — the timeline shows nothing while the code
+// fallback still paints. Top up stored entries that carry NO vfx at all with
+// the current defaults (tracks and everything else untouched). Entries the
+// user customized are left alone; and resurrecting a deleted trail entry is
+// harmless, because with no entry the code fallback paints the same art
+// anyway. Scoped to the deferral-paired moves only — elsewhere an emptied
+// list is meaningful (no fallback exists to cover it).
+const KNIGHT_VFX_TOPUP_KEY = 'smashfighters.animlib.knightVfxTopUp.v1';
+
+function migrateKnightVfxTopUp() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (localStorage.getItem(KNIGHT_VFX_TOPUP_KEY)) return;
+  } catch (_) { return; }
+  let changed = false;
+  for (const a of animLib.values()) {
+    if (!a || typeof a.id !== 'string') continue;
+    const paired = a.id.startsWith('knight') || a.id === 'boxerFsmash';
+    if (!paired) continue;
+    if (Array.isArray(a.vfx) && a.vfx.length) continue;
+    let def = null;
+    for (const d of DEFAULT_ANIMATIONS) {
+      if (d && d.id === a.id) { def = d; break; }
+    }
+    if (def && Array.isArray(def.vfx) && def.vfx.length) {
+      a.vfx = def.vfx.map((e) => ({ ...(e || {}) }));
+      changed = true;
+    }
+  }
+  if (changed) persistAnimLib();
+  try { localStorage.setItem(KNIGHT_VFX_TOPUP_KEY, '1'); } catch (_) {}
 }
 
 // ── Sprite-only catalogue migration ───────────────────────────────────────
@@ -1478,8 +1602,8 @@ try {
       migrateShadowStrikeVfx();
       migrateTeleportStrike();
       migrateAbilityOnlyVfx();
-migrateBareKnight();
-migrateSpriteOnlyWeapons();
+      migrateBareKnight();
+      migrateKnightVfxTopUp();
       migrateSpriteOnlyWeapons();
     }
   }
@@ -1490,6 +1614,8 @@ if (animLib.size === 0) loadDefaultLibrary();
 // defs must be purged from the stored weapon library even on browsers that
 // never saved an animation — a stored rig override could still reference them.
 migrateBareKnight();
+migrateKnightVfxTopUp();
+migrateSpriteOnlyWeapons();
 
 function persistAnimLib() {
   try {
