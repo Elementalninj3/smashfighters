@@ -11,8 +11,8 @@
     "test:combat": "node tests/verify-combat.mjs",
     "test:side-smash": "node tests/verify-side-smash-animstore.mjs",
     "test:ninja": "node tests/verify-ninja-dtilt-teleport.mjs && node tests/verify-ninja-shadow-dash-shuriken.mjs && node tests/verify-shadow-strike-vfx.mjs",
-    "test:ai": "node tests/node/t1-kb-formula.mjs && node tests/node/t2-attacks.mjs && node tests/node/t3-recoil.mjs && node tests/node/t4-training.mjs && node tests/node/t5-ai-behavior.mjs && node tests/node/t6-storage.mjs && node tests/node/t8-outcomes.mjs && node tests/verify-training-ui.mjs",
-    "test:all": "node tests/perf-smoke.mjs && node tests/verify-combat.mjs && node tests/verify-ninja-dtilt-teleport.mjs && node tests/verify-ninja-shadow-dash-shuriken.mjs && node tests/verify-shadow-strike-vfx.mjs && node tests/verify-aerial-light-recovery.mjs && node tests/verify-ninja-variety.mjs && node tests/verify-side-smash-animstore.mjs && npm run test:ai",
+    "test:ai": "node tests/node/t1-kb-formula.mjs && node tests/node/t2-attacks.mjs && node tests/node/t3-recoil.mjs && node tests/node/t4-training.mjs && node tests/node/t5-ai-behavior.mjs && node tests/node/t6-storage.mjs && node tests/node/t8-outcomes.mjs && node tests/node/t9-knight-audio.mjs && node tests/node/t10-slash-paint-once.mjs && node tests/verify-training-ui.mjs",
+    "test:all": "node tests/perf-smoke.mjs && node tests/verify-combat.mjs && node tests/verify-ninja-dtilt-teleport.mjs && node tests/verify-ninja-shadow-dash-shuriken.mjs && node tests/verify-shadow-strike-vfx.mjs && node tests/verify-aerial-light-recovery.mjs && node tests/verify-ninja-variety.mjs && node tests/verify-side-smash-animstore.mjs && node tests/verify-hitbox-customizer.mjs && npm run test:ai",
     "omniroute": "omniroute"
   },
   "devDependencies": {

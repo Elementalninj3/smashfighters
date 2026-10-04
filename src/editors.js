@@ -1,4 +1,4 @@
-import { TRANSFORM_PROPS, PROP_LABEL, PROP_STEP, DEFAULT_VALUES, ensureTrack, getTrack, propPath, sampleTrack, addKeyframe, exactKey, removeKeyframeAt, moveKeyframe, nearestKey, cloneAnimation, animationFrameCount, reverseAnimation, flipAnimationH, shiftAnimationTiming, allTrackPaths, getAnimation, saveAnimation, createAnimation, deleteAnimation, duplicateAnimationInLibrary, renameAnimation, listAnimations, getCharacterAnimationIds, exportAnimation, importAnimationsJSON, allWeapons, getWeapon, getWeaponRaw, addWeapon, emptyWeaponCfg, drawWeaponGuides, weaponsToJSON, importWeaponsJSON, attachAnimator, resetAnimator, sampleAnimator, updateAnimator, getAnimationRaw } from './anim.js';
+import { TRANSFORM_PROPS, PROP_LABEL, PROP_STEP, DEFAULT_VALUES, ensureTrack, getTrack, propPath, sampleTrack, addKeyframe, exactKey, removeKeyframeAt, moveKeyframe, nearestKey, cloneAnimation, cloneAnimTracks, animationFrameCount, reverseAnimation, flipAnimationH, shiftAnimationTiming, allTrackPaths, getAnimation, saveAnimation, createAnimation, deleteAnimation, duplicateAnimationInLibrary, renameAnimation, listAnimations, getCharacterAnimationIds, exportAnimation, importAnimationsJSON, allWeapons, getWeapon, getWeaponRaw, addWeapon, emptyWeaponCfg, drawWeaponGuides, weaponsToJSON, importWeaponsJSON, attachAnimator, resetAnimator, sampleAnimator, updateAnimator, getAnimationRaw } from './anim.js';
 import { attacksFor, listAbilities, ALL_FIGHTERS, resolveAnimDef, resolveAttackDef, getAttackDefForAnimId, hitboxRectFor, hitboxList, setCustomHitboxes, clearCustomHitboxes, getCustomHitboxes } from './combat.js';
 import { drawFighterVfx, listVfxEffects, listVfxAnchors } from './fx.js';
 import { drawFighter } from './render.js';
@@ -1557,6 +1557,8 @@ function drawTimeline(ctx, r) {
   btn('DEL', r.x + 380, ty, 40, 26, 'tl-deldim'); TIPS['tl-deldim'] = 'Delete selected keyframe (Del)';
   btn('COPY', r.x + 422, ty, 46, 26, 'tl-copy'); TIPS['tl-copy'] = 'Copy key (Ctrl+C)';
   btn('PASTE', r.x + 470, ty, 50, 26, 'tl-paste'); TIPS['tl-paste'] = 'Paste key at frame (Ctrl+V)';
+  btn('COPY ALL', r.x + 596, ty, 76, 26, 'tl-copyall'); TIPS['tl-copyall'] = 'Copy ALL keyframes (Ctrl+Shift+C)';
+  btn('PASTE ALL', r.x + 676, ty, 78, 26, 'tl-pasteall', { disabled: !S.animClip }); TIPS['tl-pasteall'] = 'Paste ALL keyframes, replacing this animation (Ctrl+Shift+V)';
 
   // loop toggle
   btn(S.loop ? 'LOOP ON' : 'LOOP OFF', r.x + 526, ty, 64, 26, 'loop-toggle', { hot: S.loop });
@@ -2706,6 +2708,26 @@ function pasteKey() {
   refreshMax();
 }
 
+// Whole-animation keyframe clipboard (COPY ALL / PASTE ALL buttons,
+// Ctrl+Shift+C / Ctrl+Shift+V): every keyframe on every track. Paste
+// REPLACES the target animation's tracks (undoable); id, name, weapons,
+// vfx, combat, fps and loop are left alone, so poses move between moves
+// without dragging their kit along.
+function copyAnimKeys() {
+  if (!S.anim) return;
+  S.animClip = { name: (S.anim && S.anim.name) || S.animId || 'animation', tracks: cloneAnimTracks(S.anim.tracks) };
+}
+function pasteAnimKeys() {
+  if (!S.anim || !S.animClip || !S.animClip.tracks) return;
+  S.anim.tracks = cloneAnimTracks(S.animClip.tracks);
+  S.trackSelect = null;
+  S.keySelect = null;
+  if (S.selKeys) S.selKeys.clear();
+  refreshMax();
+  resetSubjectAnim();
+  S.dirty = true;
+}
+
 function prevKeyFrame() {
   let best = null;
   for (const path of allTrackPaths(S.anim)) {
@@ -2771,6 +2793,12 @@ function onEditorKey(e) {
   if (!S.open) return;
   const k = e.code;
   const ctrl = e.ctrlKey || e.metaKey;
+
+  // Shift variants first: whole-animation clipboard (plain Ctrl+C/V below is
+  // the single-key clipboard). Safe ahead of the modal guard — no text input
+  // uses Ctrl+Shift+C/V.
+  if (ctrl && e.shiftKey && k === 'KeyC') { e.preventDefault(); copyAnimKeys(); return; }
+  if (ctrl && e.shiftKey && k === 'KeyV') { e.preventDefault(); if (S.animClip) { pushUndo(); pasteAnimKeys(); } return; }
 
   if ((ctrl) && k === 'KeyZ') {
     e.preventDefault();
@@ -3055,6 +3083,8 @@ function handleEditAction(id) {
   if (id === 'tl-deldim') { pushUndo(); delSelectedKey(); return; }
   if (id === 'tl-copy') { copyKey(); return; }
   if (id === 'tl-paste') { pushUndo(); pasteKey(); return; }
+  if (id === 'tl-copyall') { copyAnimKeys(); return; }
+  if (id === 'tl-pasteall') { if (!S.animClip) return; pushUndo(); pasteAnimKeys(); return; }
   if (id === 'tl-shift-l') { pushUndo(); S.anim = shiftAnimationTiming(S.anim, -10); refreshMax(); resetSubjectAnim(); return; }
   if (id === 'tl-shift-r') { pushUndo(); S.anim = shiftAnimationTiming(S.anim, 10); refreshMax(); resetSubjectAnim(); return; }
   if (id === 'tl-rev') { pushUndo(); S.anim = reverseAnimation(S.anim, animationFrameCount(S.anim)); refreshMax(); resetSubjectAnim(); return; }
@@ -3662,7 +3692,7 @@ function fitToWindow() {
   try { HC.canvas.dataset.editorTakeover = '1'; } catch (_) {}
 }
 
-let hcOnKey, hcOnDown, hcOnMove, hcOnUp;
+let hcOnKey, hcOnDown, hcOnMove, hcOnUp, hcOnCancel, hcOnBlur;
 
 export function openHitboxCustomizer(canvas, getFighterDef) {
   HC.canvas = canvas;
@@ -3684,11 +3714,18 @@ export function openHitboxCustomizer(canvas, getFighterDef) {
   hcOnDown = e => hcOnPointerDown(e);
   hcOnMove = e => hcOnPointerMove(e);
   hcOnUp = e => hcOnPointerUp(e);
+  // A held +/- button must also stop when the press is cancelled or the window
+  // loses focus (release outside the window, alt-tab, OS gesture). Without
+  // these the repeat chain keeps running with no button down.
+  hcOnCancel = () => { hcClearStepHold(); HC.drag = null; };
+  hcOnBlur = () => hcOnCancel();
 
   window.addEventListener('keydown', hcOnKey, true);
   canvas.addEventListener('pointerdown', hcOnDown);
   window.addEventListener('pointermove', hcOnMove);
   window.addEventListener('pointerup', hcOnUp);
+  window.addEventListener('pointercancel', hcOnCancel);
+  window.addEventListener('blur', hcOnBlur);
   window.addEventListener('resize', fitToWindow);
 }
 
@@ -3698,7 +3735,11 @@ export function closeHitboxCustomizer() {
   window.removeEventListener('keydown', hcOnKey, true);
   window.removeEventListener('pointermove', hcOnMove);
   window.removeEventListener('pointerup', hcOnUp);
+  window.removeEventListener('pointercancel', hcOnCancel);
+  window.removeEventListener('blur', hcOnBlur);
   window.removeEventListener('resize', fitToWindow);
+  // Closing mid-hold must not leave the repeat chain running behind the panel.
+  hcClearStepHold();
   hcRestoreCanvasStyle();
   // Re-sync the game canvas size (see closeEditor in editor.js).
   try { window.dispatchEvent(new Event('resize')); } catch (_) {}
@@ -3709,6 +3750,14 @@ export function closeHitboxCustomizer() {
 }
 
 export function isHitboxCustomizerOpen() { return HC.open; }
+
+// The customizer's live click regions (id + rect), for the probe. Read-only: the
+// runtime verification suite dispatches real pointer events at these rects to
+// test the panel's buttons, instead of hard-coding pixel guesses that drift
+// whenever the layout moves.
+export function hitboxCustomizerHits() {
+  return HC.hits.map(h => ({ id: h.id, x: h.x, y: h.y, w: h.w, h: h.h }));
+}
 
 export function updateHitboxCustomizer(dt) {
   if (!HC.open || !HC.subject || !HC.subject.anim) return;
@@ -4118,14 +4167,25 @@ function stepValue(key, op) {
   setWorkingBoxValue(i, key, workingBoxValue(i, key) + op * (ROW_STEP[key] || 1));
 }
 
+// Hold-to-increment for the customizer's own +/- buttons (the animator has its
+// OWN separate copy of this — `startStepHold`/`clearStepHold` above — and the
+// two must never be confused: clearing one does nothing for the other, which
+// is exactly how the repeat used to get stuck).
+//
+// One step fires on press, then after a delay it repeats until release.
+// `stepPending` is set AT PRESS TIME, not inside the first timeout, so the
+// repeat chain can never stall waiting for itself. hcClearStepHold is the ONLY
+// thing that stops the chain, so every exit calls it: pointerup (wherever it
+// lands), pointercancel, window blur, and closing the customizer.
 let stepTimer = null, stepPending = null;
 
 function kickStep(id) {
+  // A second press on another +/- button restarts the hold on that button
+  // rather than leaving the previous button's repeat running.
+  hcClearStepHold();
   hcExecuteStep(id);
-  stepTimer = setTimeout(() => {
-    stepTimer = setTimeout(tickFast, 90);
-    stepPending = id;
-  }, 380);
+  stepPending = id;
+  stepTimer = setTimeout(() => { stepTimer = setTimeout(tickFast, 90); }, 380);
 }
 
 function tickFast() {
@@ -4282,8 +4342,15 @@ function hcOnPointerMove(e) {
 }
 
 function hcOnPointerUp(e) {
+  // ANY release ends the hold, before anything else looks at HC.drag. The
+  // press may have landed outside the canvas, or the drag may have been reset
+  // by a re-load, and a repeat that outlives its button is the bug this guards:
+  // the value kept climbing on its own with no button held. This clears the
+  // CUSTOMIZER's hold — the animator's identically-named function belongs to
+  // the other editor and never had any effect here.
+  hcClearStepHold();
   const d = HC.drag;
-  if (d && d.type === 'btnHold') { clearStepHold(); HC.drag = null; return; }
+  if (d && d.type === 'btnHold') { HC.drag = null; return; }
   if (d && d.type === 'scrubFrame') { HC.scrubDrag = null; HC.drag = null; return; }
   if (d && d.clickId) {
     const key2 = d.clickId.slice('edit-'.length);

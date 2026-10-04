@@ -129,7 +129,7 @@ function playNoiseBurst(opts = {}) {
 // context, or a browser that refuses to start playback degrades to exactly the
 // sound it replaced rather than to silence. GA/ is served at /GA (vite.config.js).
 const VOICE = {
-  slash: '/GA/audio/slash.mp3',           // ninja: neutral/forward light, both aerials
+  slash: '/GA/audio/slash.mp3',           // ninja + knight: neutral/forward light, both aerials
   cowboyM1s: '/GA/audio/cowboym1s.mp3',   // cowboy: the same four light moves
   boxerM1: '/GA/audio/boxerm1.mp3',       // boxer: basic attacks
   boxerGrab: '/GA/audio/boxergrab.mp3',   // boxer: grab catch
@@ -141,6 +141,10 @@ const VOICE = {
   horse: '/GA/audio/cowboyhorse.mp3',     // cowboy Down Smash (horse summon)
   revolver: '/GA/audio/cowboyrevolver.mp3', // cowboy Down Light (Deadeye)
   shurikenThrow: '/GA/audio/shurikenthrow.mp3', // ninja Side Smash
+  koPillar: '/GA/audio/KOPillar.mp3',     // the KO pillar beam (every disappearance)
+  chargedSword: '/GA/audio/chargedsword.mp3', // knight Side Smash (Charged Sword Strike)
+  shieldBash: '/GA/audio/shieldbash.mp3', // knight Down Light (Shield Bash)
+  shieldCounter: '/GA/audio/shieldcounter.mp3', // knight Neutral Heavy (Shield Counter)
 };
 
 // Play a recorded voice, synthesizing `synthFn` only when the recording cannot
@@ -150,6 +154,14 @@ function playVoice(path, synthFn, volume) {
   if (playSfxFromPath(path, volume == null ? 0.7 : volume)) return true;
   if (typeof synthFn === 'function') synthFn();
   return false;
+}
+
+// The synthesis slash.mp3 replaced. Shared, not inlined: the knight plays the
+// SAME recording quieter (see knightSlash), and both takes must degrade to one
+// and the same sound rather than to two subtly different ones.
+function slashFallback() {
+  playNoiseBurst({ duration: 0.07, volume: 0.22, filterFreq: 2400, filterType: 'highpass' });
+  playTone(420, { duration: 0.06, type: 'sawtooth', volume: 0.12, sweepTo: 160 });
 }
 
 // ── Synthesized SFX library ─────────────────────────────────────────────
@@ -246,17 +258,24 @@ export const SFX = {
   // Same moves, different recordings: the ninja's blade work vs the cowboy's.
   // slash.mp3 is mixed well under the cowboy's set - it sits on top of an
   // already busy attack cadence and reads as harsh at parity, so it is pulled
-  // down rather than matched.
+  // down rather than matched - and the knight's take of that same recording
+  // (knightSlash) sits under it again, since the knight stacks three more
+  // recorded swings on top of these four.
   walking(volume = 0.018) {
     playVoice(VOICE.walking, () => {
       playNoiseBurst({ duration: 0.05, volume: 0.10, filterFreq: 900, filterType: 'lowpass', filterSweepTo: 300 });
     }, volume);
   },
   slash(volume = 0.2) {
-    playVoice(VOICE.slash, () => {
-      playNoiseBurst({ duration: 0.07, volume: 0.22, filterFreq: 2400, filterType: 'highpass' });
-      playTone(420, { duration: 0.06, type: 'sawtooth', volume: 0.12, sweepTo: 160 });
-    }, volume);
+    playVoice(VOICE.slash, slashFallback, volume);
+  },
+  // The knight's take on the same four light swings: slash.mp3 again, but well
+  // under the ninja's. It is the same already-busy attack cadence and the same
+  // already-harsh recording, and the knight adds three more recorded swings on
+  // top of it (the smashes, the bash, the counter), so its basics are pulled
+  // down rather than matched — 0.12 against the ninja's 0.2.
+  knightSlash(volume = 0.12) {
+    playVoice(VOICE.slash, slashFallback, volume);
   },
   cowboyM1s(volume = 0.6) {
     playVoice(VOICE.cowboyM1s, () => {
@@ -294,6 +313,30 @@ export const SFX = {
   // playVoice again.
   deadeyeShot(volume = 0.7) {
     playVoice(VOICE.revolver, () => SFX.timeDilate(), volume);
+  },
+  // ── The knight's recorded specials ─────────────────────────────────
+  // Charged Sword Strike (Side Smash): its own swing, mixed under the light
+  // attacks so the charge reads as the heaviest of the four. Falls back to the
+  // plain slash synthesis.
+  chargedSword(volume = 0.55) {
+    playVoice(VOICE.chargedSword, slashFallback, volume);
+  },
+  // Shield Bash (Down Light): the recorded shove, with the original punch thump
+  // as its fallback (same transient, so a missing file keeps the timing).
+  shieldBash(volume = 0.6) {
+    playVoice(VOICE.shieldBash, () => SFX.punch(), volume);
+  },
+  // Shield Counter (Neutral Heavy): the recorded answering slash. Played on the
+  // counter that actually CONNECTS, not on the stance cast — the cast is silent
+  // anticipation, and this is the payoff. Falls back to the original critical
+  // impact that used to play here.
+  shieldCounter(volume = 0.65) {
+    playVoice(VOICE.shieldCounter, () => SFX.hit(true), volume);
+  },
+  // The KO pillar: the recorded beam ignition, with the original explosion as
+  // its fallback. Plays on EVERY pillar, so a simultaneous double KO lands two.
+  koPillar(volume = 0.7) {
+    playVoice(VOICE.koPillar, () => SFX.explosion(), volume);
   },
 };
 

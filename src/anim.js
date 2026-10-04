@@ -225,6 +225,13 @@ export function duplicateAnimation(anim, newId) {
   return copy;
 }
 
+// Whole-animation keyframe copy/paste (Hand Animator COPY ALL / PASTE ALL).
+// Clones ONLY the pose tracks (every keyframe on every track) — id, name,
+// weapons, combat, vfx, fps and loop stay with the paste target.
+export function cloneAnimTracks(tracks) {
+  return JSON.parse(JSON.stringify(tracks || {}));
+}
+
 export function reverseAnimation(anim, frameCount) {
   const copy = cloneAnimation(anim);
   for (const path of Object.keys(copy.tracks || {})) reverseTrack(copy.tracks[path], frameCount);
@@ -1340,8 +1347,10 @@ const _KNIGHT_TRAIL_VFX = {
   knightDsmash:      [{ effect: 'knightSweep', anchor: 'weapon', startFrame: 0, duration: 18, scale: 0.5 }],
   knightFsmash:      [{ effect: 'knightBlueSlash', anchor: 'weapon', startFrame: 0, duration: 19, scale: 1.15 }],
   knightDash: [
-    { effect: 'knightDashTrail', anchor: 'weapon', startFrame: 0, duration: 10, scale: 1 },
     { effect: 'knightCircleBurst', anchor: 'character', startFrame: 0, duration: 19, scale: 1 },
+  ],
+  knightDtilt: [
+    { effect: 'knightSpeedLines', anchor: 'character', startFrame: 0, duration: 9, scale: 1 },
   ],
 }; // Durations fit inside each source animation's frame count so every seeded
 // entry completes before the pose freezes (jab 9, ftilt 14, nair 10, fair 28,
@@ -1477,6 +1486,28 @@ function migrateAbilityOnlyVfx() {
   try { localStorage.setItem(ABILITY_ONLY_VFX_MIGRATION_KEY, '1'); } catch (_) {}
 }
 
+// ── Retired dash-trail cleanup ────────────────────────────────────────────
+// The Oath Lunge trail effect was removed (replaced by Shield Bash speed
+// lines): drop its entries from every stored animation so a deleted effect id
+// can never resolve to the fallback orb. Runs once, BEFORE the top-up below
+// (a stripped-then-emptied knight entry is refilled with current defaults).
+const RETIRE_DASH_TRAIL_KEY = 'smashfighters.animlib.retireDashTrail.v1';
+
+function migrateRetireDashTrail() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (localStorage.getItem(RETIRE_DASH_TRAIL_KEY)) return;
+  } catch (_) { return; }
+  let changed = false;
+  for (const a of animLib.values()) {
+    if (!a || !Array.isArray(a.vfx) || !a.vfx.length) continue;
+    const kept = a.vfx.filter((v) => !(v && v.effect === 'knightDashTrail'));
+    if (kept.length !== a.vfx.length) { a.vfx = kept; changed = true; }
+  }
+  if (changed) persistAnimLib();
+  try { localStorage.setItem(RETIRE_DASH_TRAIL_KEY, '1'); } catch (_) {}
+}
+
 // ── Knight/boxer timeline top-up ──────────────────────────────────────────
 // Stored animations replace built-ins wholesale, so a knightDsmash (or
 // boxerFsmash) saved before its trail entries were seeded keeps shadowing the
@@ -1603,6 +1634,7 @@ try {
       migrateTeleportStrike();
       migrateAbilityOnlyVfx();
       migrateBareKnight();
+      migrateRetireDashTrail();
       migrateKnightVfxTopUp();
       migrateSpriteOnlyWeapons();
     }
@@ -1614,6 +1646,7 @@ if (animLib.size === 0) loadDefaultLibrary();
 // defs must be purged from the stored weapon library even on browsers that
 // never saved an animation — a stored rig override could still reference them.
 migrateBareKnight();
+migrateRetireDashTrail();
 migrateKnightVfxTopUp();
 migrateSpriteOnlyWeapons();
 
@@ -2097,10 +2130,9 @@ export function updateAnimator(fighter, dt) {
           A.frame = A.frame % (A.maxFrame + 1);
         } else if (A.frame >= A.maxFrame) {
           A.frame = A.maxFrame;
-          // Freeze at the last frame — the attack is still in recovery and the
-          // hands should hold their final keyframed pose. When the attack
-          // enters recovery / ends, syncFighterAnim calls stopAnimation to
-          // blend back to the legacy movement pose system.
+          // Freeze at the last frame — the hands hold their final keyframed
+          // pose until the attack ends, when syncFighterAnim calls
+          // stopAnimation to blend back to the legacy movement pose system.
           A.playing = false;
           A.paused = false;
         }

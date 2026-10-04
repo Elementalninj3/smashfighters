@@ -2,7 +2,7 @@ import { AIController, AI_DIFFICULTIES, configForDifficulty, createTrainer, eval
 import { allWeapons, getWeapon, setAnimationLoader, updateAnimator, attachAnimator, getAnimation, setAnimLibChangeListener } from './anim.js';
 import { SFX } from './assets.js';
 import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resolveFighterSkin, drawCombatDebug, resetCombat, removeAttackerHitboxes, clearHitLocks, clearDeadeye, clearBoxerState, __debugHitboxes, startAttackForKey, resolveAttackDef, setCombatStage, ALL_FIGHTERS, setCustomHitboxes, clearCustomHitboxes } from './combat.js';
-import { openEditor, closeEditor, updateEditor, renderEditor, setEditorCloseHandler, openHitboxCustomizer, closeHitboxCustomizer, updateHitboxCustomizer, renderHitboxCustomizer, setHitboxCustomizerCloseHandler, setCustomizerMove, setWorkingBoxValue, saveCustomizer, resetCustomizerMove, getWorkingBoxes } from './editors.js';
+import { openEditor, closeEditor, updateEditor, renderEditor, setEditorCloseHandler, openHitboxCustomizer, closeHitboxCustomizer, updateHitboxCustomizer, renderHitboxCustomizer, setHitboxCustomizerCloseHandler, setCustomizerMove, setWorkingBoxValue, saveCustomizer, resetCustomizerMove, getWorkingBoxes, isHitboxCustomizerOpen, hitboxCustomizerHits } from './editors.js';
 import { drawFighterVfx, setVfxViewBounds, warmEffectSprites, stepTimeDilation, timeDilationState, peekTimeDilation, resetTimeDilation, drawTimeDilationPost, updateDamageIndicators, drawDamageIndicators, resetDamageIndicators, updateWorldFx, drawWorldFx, resetWorldFx, setWorldFxViewBounds, setFxQuality, setParticleDetail, setPostDetail, setWorldFxBatch, setDamageTextCache, worldFxState } from './fx.js';
 import { initInput, flushInput, isJustPressed, createFighter, createDefaultStage, drawStage, updatePlatforms, isInBlastZone, onLoopQualityChange, setDestructibleViewBounds, clearDestructibleViewBounds, sanitizeDeathZone, applyDeathZoneToStage, blastRectFor, DEFAULT_DEATH_MARGINS, DEATHZONE_MIN, DEATHZONE_MAX, DEATHZONE_STEP } from './physics.js';
 import { updateCamera, applyCameraTransform, resetCamera, snapCameraToFit, updateCameraZoom, updateMatchZoom, getCameraState, getCameraStateInto, worldToScreen, VIEW_W, VIEW_H, syncCanvasBacking, backingScaleFor, setRenderScale, getSkinImage, drawFighter, drawAbilityFx, drawHorse, drawBoxerRollUnder, drawHeldLayer, holdCoversSide, handConfig, resolveHandColor, setViewBounds, setEffectBatch, warmFighterSprites, saveRig, clearRig, resolveHeld, resolveHoldSlot, orbitHandPose, orbitFrontSide, orbitTarget, resolveOrbitRig, resolveSkinMeta, updateCinematic, drawCinematicWorld, cinematicTint, resetCinematic, notifyCinematicKO, ACCESSORIES, accessoryName, loadAccessoryFor, saveAccessoryFor, cloneAccessory, drawAccessory, tickSkinImageRetries, handGearName, loadHandGearFor, saveHandGearSetFor, defaultHandGear, defaultGearIdFor, drawHandGear } from './render.js';
@@ -1005,6 +1005,8 @@ export function initGame(canvasEl) {
 // state snapshot and a place() helper for deterministic runtime tests. None of
 // this runs when the URL flag is absent.
 function getProbeApi() {
+  // Game state to restore when the probe closes the Hitbox Customizer.
+  let _hcPrevState = null;
   // Snapshot of the animator's resolved world-space output â€” the exact data the
   // renderer draws (hand/weapon px/py/rot/scale/â€¦). Carries the animation frame
   // and facing so tests can compare two poses sampled at the same frame.
@@ -1528,6 +1530,39 @@ function getProbeApi() {
       if (opts && opts.reset) resetCustomizerMove(moveKey);
       closeHitboxCustomizer();
       return saved && box ? box : null;
+    },
+    // The customizer's LIVE click regions (id + rect), and its open state. Lets
+    // the suite drive the real canvas buttons by coordinate instead of guessing
+    // pixels: open the panel, look up the +/- button's rect, and dispatch real
+    // pointer events at it to prove a held increment stops on release.
+    customizerUi() {
+      return {
+        open: isHitboxCustomizerOpen(),
+        hits: hitboxCustomizerHits(),
+      };
+    },
+    customizerMove(k) {
+      setCustomizerMove(k);
+      return true;
+    },
+    customizerBoxes() {
+      return getWorkingBoxes();
+    },
+    customizerOpen(open) {
+      // Mirror openHitboxCustomizerEditor / closeHitboxCustomizerEditor: the
+      // panel only renders (and so only registers its click regions) while the
+      // game state is 'hitboxes', so opening the editor alone would leave a
+      // live but unpainted panel.
+      if (open) {
+        _hcPrevState = currentGameState;
+        if (selectOverlay) selectOverlay.style.display = 'none';
+        openHitboxCustomizer(canvas, () => ({ ...ALL_FIGHTERS[0] }));
+        currentGameState = 'hitboxes';
+      } else {
+        closeHitboxCustomizer();
+        currentGameState = _hcPrevState || 'menu';
+      }
+      return isHitboxCustomizerOpen();
     },
   };
 }

@@ -1673,14 +1673,20 @@ export function applyDI(fighter, dt, p, isHeld) {
 // has to cover), and a caller can pin a direction other than the fighter's live
 // facing. The live instance is returned so the caller can keep tuning it.
 export function spawnTempVfx(fighter, effectName, lifetime, scale = 1, rotation = 0, offsetX = 0, offsetY = 0, extra = null) {
-  // Timeline deference (the single rule behind every code-driven trail and
-  // burst): if the fighter's CURRENT animation carries its own timeline entry
-  // for the same effect, the animator's pool already paints it — with the
-  // user's timing, scale, rotation and X/Y offsets — so queuing a second
-  // instance here would double-draw. Delete the timeline entry and this code
-  // fallback returns. This is what makes every ability VFX editable in the
-  // Hand Animator: attach/tune it on the move, and the game honors it.
-  if (fighter && animOwnsEffect(fighter, effectName)) return null;
+  // Timeline deference (the rule behind every code-driven trail and burst):
+  // if the fighter's CURRENT animation carries its own timeline entry for
+  // the same effect, the animator's pool already paints it — with the user's
+  // timing, scale, rotation and X/Y offsets — so queuing a second instance
+  // here would double-draw. Delete the timeline entry and this code fallback
+  // returns. This is what makes every ability VFX editable in the Hand
+  // Animator: attach/tune it on the move, and the game honors it.
+  //
+  // Exception: attack-start spawns (knightSwingTrail) fire synchronously on
+  // the activation frame, BEFORE syncFighterAnim attaches the new animation —
+  // the current animation is still the PREVIOUS one, so this check would judge
+  // the wrong timeline. Those callers judge the incoming animation themselves
+  // and pass force:true to skip this check (already decided correctly).
+  if (fighter && !(extra && extra.force) && animOwnsEffect(fighter, effectName)) return null;
   if (!fighter._tempVfx) fighter._tempVfx = [];
   const v = {
     effect: effectName,

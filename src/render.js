@@ -2202,6 +2202,11 @@ const PILLAR_LIFE = 0.9;
 export function spawnKoPillar(x, y) {
   if (_pillars.length >= 2) _pillars.shift();
   _pillars.push({ x, y, age: 0, life: PILLAR_LIFE, seed: Math.random() * 10 });
+  // The beam's recorded ignition (KOPillar.mp3), on EVERY pillar so the pillar
+  // and its sting are one event - a simultaneous double KO lands both. Fired
+  // here rather than at the call site because spawnKoPillar IS the pillar: any
+  // future caller gets the sound with the art automatically.
+  try { SFX.koPillar(); } catch (_) {}
   // Ground ring at the KO point (Finalhit-style shockwave, warm red).
   _spawnRing(x, y, 36, 330, 0.5, '255,120,70');
   // Ember burst (pillar ignition).
@@ -2802,16 +2807,22 @@ function _shadowSprite(radius) {
   return c;
 }
 
-function directionalShadow(ctx, x, y, radius) {
+// Soft drop shadow every player stamps on the map, grounded or not. The blob
+// pins to the last floor the fighter touched and fades + shrinks as they rise
+// above it — grounded looks exactly like the old shadow (same baked sprite,
+// full strength), airborne players keep a subtle grounding cue instead of
+// floating shadowless. One cached blit, no per-frame allocation.
+function mapDropShadow(ctx, x, floorY, radius, height) {
   const spr = _shadowSprite(radius);
-  if (spr) {
-    ctx.drawImage(spr, Math.round(x - spr.width / 2), Math.round(y + radius + 2 - spr.height / 2));
-    return;
-  }
-  ctx.fillStyle = 'rgba(0,0,0,0.2)';
-  ctx.beginPath();
-  ctx.ellipse(x, y + radius + 2, radius * 0.8, radius * 0.3, 0, 0, Math.PI * 2);
-  ctx.fill();
+  if (!spr) return;
+  const t = height <= 0 ? 0 : Math.min(1, height / 320);
+  const strength = 1 - t * 0.85;
+  const size = 1 - t * 0.3;
+  const w = spr.width * size, h = spr.height * size;
+  ctx.save();
+  ctx.globalAlpha = strength;
+  ctx.drawImage(spr, Math.round(x - w / 2), Math.round(floorY + 2 - h / 2), w, h);
+  ctx.restore();
 }
 
 // Shared "no skin" record. lookUpSkin runs for every fighter every frame, and
@@ -3409,8 +3420,12 @@ export function drawFighter(ctx, fighter, time) {
     ctx.translate(-x, -y);
   }
 
-  // Draw shadow on ground
-  if (fighter.grounded) directionalShadow(ctx, x, y, vradius);
+  // Soft drop shadow on the map for every player: pinned to the last floor
+  // touched, fading and shrinking with height while airborne.
+  if (fighter.grounded) fighter._floorY = y + vradius;
+  const _fy = fighter._floorY;
+  const floorY = (typeof _fy === 'number' && Number.isFinite(_fy)) ? _fy : y + vradius;
+  mapDropShadow(ctx, x, floorY, vradius, Math.max(0, floorY - y - vradius));
 
   // Behind-the-player accessories (hides behind the body).
   if (fighter.accessory && fighter.accessory.type && fighter.accessory.layer === 'behind') {

@@ -1426,6 +1426,15 @@ function _blueSlashCrescent(ctx, R, Wd, a0, a1, alpha) {
   g.addColorStop(1, 'rgba(0,100,255,0)');
   ctx.fillStyle = g;
   ctx.fill();
+  // Crisp rim light around the ribbon (additive, so it reads on any
+  // background): retraces the closed ribbon path at the pass's own alpha.
+  if (aq > 0.01) {
+    ctx.globalAlpha = aq;
+    ctx.strokeStyle = '#e6f5ff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
 }
 const KNIGHT_VFX = {
   knightSlash: {
@@ -1519,58 +1528,29 @@ const KNIGHT_VFX = {
         _blueSlashCrescent(ctx, L.R, L.W, tail, head, al);
       }
 
-      // White-hot leading core: thin, early, first to fade.
+      // White-hot leading core: thin, early, first to fade. A dark outline
+      // rides under it (source-over, so it reads on bright backgrounds) with
+      // the white core redrawn additively on top.
       if (prog < 0.4) {
         const q = prog / 0.4;
         const e = 1 - (1 - q) * (1 - q) * (1 - q);
+        const a0 = -2.5 + 3.25 * e - 0.5, a1 = -2.5 + 3.25 * e;
+        ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = (1 - q) * 0.9;
         ctx.lineCap = 'round';
+        ctx.lineWidth = 7;
+        ctx.strokeStyle = '#0a1c33';
+        ctx.beginPath();
+        ctx.arc(0, 0, 100, a0, a1);
+        ctx.stroke();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = (1 - q) * 0.9;
         ctx.lineWidth = 4;
         ctx.strokeStyle = '#ffffff';
         ctx.beginPath();
-        ctx.arc(0, 0, 100, -2.5 + 3.25 * e - 0.5, -2.5 + 3.25 * e);
+        ctx.arc(0, 0, 100, a0, a1);
         ctx.stroke();
       }
-      ctx.restore();
-    },
-  },
-  // Oath Lunge trail (knight dash): seven speed streaks trailing behind the
-  // body plus a soft ribbon glow, all fading over the lunge. Streak geometry
-  // is indexed (never random per frame) so the pooled instance draws
-  // identically every replay. Character-anchored by combat.js
-  // knightSwingTrail, mirrored with facing.
-  knightDashTrail: {
-    name: 'Knight Dash Trail',
-    color: '#9fd4ff',
-    draw(ctx, v, p) {
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      const s = v.scale || 1;
-      const mx = v.mirrorX == null ? 1 : v.mirrorX;
-      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
-      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.lineCap = 'round';
-      const pr = v.progress;
-      const prog = pr < 0 ? 0 : pr > 1 ? 1 : pr;
-      const fade = 1 - prog;
-      for (let i = 0; i < 7; i++) {
-        const y = -18 + i * 6;
-        const headX = -10 - i * 14 - prog * 130;
-        ctx.globalAlpha = fade * (0.5 - i * 0.05);
-        ctx.lineWidth = Math.max(1, 5 - i * 0.4);
-        ctx.strokeStyle = (i % 2) ? '#4aa8ff' : '#bfe6ff';
-        ctx.beginPath();
-        ctx.moveTo(headX, y);
-        ctx.lineTo(headX + 46 - i * 4, y - 4);
-        ctx.stroke();
-      }
-      // Soft ribbon glow hugging the body.
-      ctx.globalAlpha = fade * 0.25;
-      ctx.fillStyle = '#4aa8ff';
-      ctx.beginPath();
-      ctx.ellipse(-60 - prog * 60, 0, 70, 12, 0, 0, Math.PI * 2);
-      ctx.fill();
       ctx.restore();
     },
   },
@@ -1640,6 +1620,39 @@ const KNIGHT_VFX = {
         ctx.fillStyle = (i % 2) ? '#ffd23a' : '#bcd2e8';
         ctx.fill();
         ctx.restore();
+      }
+      ctx.restore();
+    },
+  },
+  // Shield Bash push (knight dtilt): eight speed lines trailing behind the
+  // user while the shield shoves forward. Streak geometry is indexed (never
+  // random per frame) so the pooled instance draws identically every replay.
+  // Character-anchored by the Shield Bash ability, mirrored with facing.
+  knightSpeedLines: {
+    name: 'Knight Speed Lines',
+    color: '#bfe6ff',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      const pr = v.progress;
+      const prog = pr < 0 ? 0 : pr > 1 ? 1 : pr;
+      const fade = 1 - prog;
+      for (let i = 0; i < 8; i++) {
+        const y = -21 + i * 6;
+        const tailX = -8 - i * 10 - prog * 90;
+        ctx.globalAlpha = fade * (0.55 - i * 0.05);
+        ctx.lineWidth = Math.max(1, 4 - i * 0.3);
+        ctx.strokeStyle = (i % 2) ? '#4aa8ff' : '#bfe6ff';
+        ctx.beginPath();
+        ctx.moveTo(tailX, y);
+        ctx.lineTo(tailX + 60 - i * 5, y - 3);
+        ctx.stroke();
       }
       ctx.restore();
     },

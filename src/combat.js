@@ -1327,9 +1327,13 @@ export const ABILITIES = {
       const y = fighter.y - 4;
       // Shield Bash impact art (GA/vfx/shieldbash.html): blue arc burst off
       // the shield face, pooled and weapon-anchored through the shared temp
-      // VFX path — the dash streak and dust below stay as the push read.
+      // VFX path — plus speed lines trailing behind the user for the push.
+      // The dash streak and dust below stay as the push read.
       spawnTempVfx(fighter, 'knightBash', 0.45, 1, 0, 0, 0, {
         anchor: 'character', offsetX: dir * r * 1.1, offsetY: -4, mirrorX: dir,
+      });
+      spawnTempVfx(fighter, 'knightSpeedLines', 0.15, 1, 0, 0, 0, {
+        anchor: 'character', mirrorX: dir,
       });
       emitFlash(x, y, { style, radius: r * 0.45, life: 0.08, alpha: 0.7, color: '#dfe9f2' });
       emitStreak(x, y, dir, 0, { style, length: r * 1.4, width: 3, life: 0.1, alpha: 0.5 });
@@ -1337,7 +1341,7 @@ export const ABILITIES = {
         style, dir: dir >= 0 ? Math.PI : 0, spread: 0.9, speed: 110,
         size: r * 0.12, life: 0.22, gravity: 60, alpha: 0.3,
       });
-      SFX.punch();
+      SFX.shieldBash();
     },
   },
 };
@@ -1784,7 +1788,9 @@ function tryKnightCounter(target, attacker) {
         spawnFloatingText(target.x, target.y - (target.radius || 22) - 40,
           'COUNTER!', '#ffd76a', { life: 0.9, size: 26 });
       } catch (_) {}
-      try { SFX.hit(true); } catch (_) {}
+      // The answer is the recording's moment (shieldcounter.mp3), so the generic
+      // critical impact it replaces would only double it up.
+      try { SFX.shieldCounter(); } catch (_) {}
     }
   } finally {
     target._counterResolving = false;
@@ -1810,8 +1816,27 @@ function knightGuardImpact(target) {
 // by the existing fighter-VFX path, no new system). The Spinning Sweep paints
 // its own converted art (GA/vfx/spinningsweep.html) instead of the slash, the
 // Charged Sword Strike paints the blue slash (GA/vfx/blueslash.html), and the
-// Oath Lunge paints a dash trail plus a circle-burst launch flash.
+// Oath Lunge paints a circle-burst launch flash.
 const KNIGHT_TRAIL_KEYS = new Set(['jab', 'ftilt', 'fsmash', 'dsmash', 'aerialLight', 'aerialHeavy', 'dash']);
+// Incoming-animation twin of the spawnTempVfx timeline rule. This spawner
+// fires synchronously on the attack-start frame, BEFORE syncFighterAnim
+// attaches the new animation — judging the CURRENT animation here would read
+// the PREVIOUS move's timeline: a freshly edited entry would paint twice
+// (timeline + code fallback), and a deleted entry would paint never. Judge
+// the animation this attack is ABOUT to play instead (force:true bypasses
+// the shared guard, already decided correctly here).
+function incomingOwnsEffect(def, effectId) {
+  if (!def || !def.anim) return false;
+  try {
+    const anim = getAnimationRaw(def.anim);
+    const list = anim && anim.vfx;
+    if (!Array.isArray(list)) return false;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i] && list[i].effect === effectId) return true;
+    }
+  } catch (_) {}
+  return false;
+}
 function knightSwingTrail(fighter, key, def) {
   if (!isKnight(fighter) || !KNIGHT_TRAIL_KEYS.has(key)) return;
   try {
@@ -1827,12 +1852,14 @@ function knightSwingTrail(fighter, key, def) {
     // — half scale lands the blades on roughly the hitbox edge. Blue scale
     // 1.15: the charged slash should read bigger than a plain swing.
     const trailScale = isSweep ? 0.5 : isBlue ? 1.15 : 1.0;
-    spawnTempVfx(fighter,
-      isSweep ? 'knightSweep' : isBlue ? 'knightBlueSlash' : isDash ? 'knightDashTrail' : 'knightSlash',
-      life, trailScale, 0, 0, 0, { anchor: 'weapon', mirrorX: dir });
-    // Dash launch flash: short circle burst at the body, over the trail.
-    // (Both spawns defer to same-effect timeline entries inside spawnTempVfx.)
-    if (isDash) spawnTempVfx(fighter, 'knightCircleBurst', 0.35, 1.0, 0, 0, 0, { anchor: 'character', mirrorX: dir });
+    const trailId = isSweep ? 'knightSweep' : isBlue ? 'knightBlueSlash' : 'knightSlash';
+    if (!isDash && !incomingOwnsEffect(def, trailId)) {
+      spawnTempVfx(fighter, trailId, life, trailScale, 0, 0, 0, { anchor: 'weapon', mirrorX: dir, force: true });
+    }
+    // Dash launch flash: short circle burst at the body.
+    if (isDash && !incomingOwnsEffect(def, 'knightCircleBurst')) {
+      spawnTempVfx(fighter, 'knightCircleBurst', 0.35, 1.0, 0, 0, 0, { anchor: 'character', mirrorX: dir, force: true });
+    }
   } catch (_) {}
 }
 
@@ -2414,10 +2441,18 @@ const LIGHT_ATTACK_KEYS = new Set(['jab', 'ftilt', 'aerialLight', 'aerialHeavy']
 // same four basic moves, chosen from the fighter's own character def — no
 // second source of truth for "who is this fighter".
 function playLightAttackVoice(fighter, key) {
-  if (!LIGHT_ATTACK_KEYS.has(key)) return;
   const def = fighter && fighter._fighterDef;
+  // The knight's Charged Sword Strike (fsmash) is not one of the four light
+  // moves, but it owns a recording like they do — a heavy, charged one. Checked
+  // before the light-move gate so the other roster's Side Smashes (which speak
+  // through their own abilities on the cast frame) are not claimed here.
+  if (key === 'fsmash') {
+    if (def && def.id === 'knight') SFX.chargedSword();
+    return;
+  }
+  if (!LIGHT_ATTACK_KEYS.has(key)) return;
   if (def && def.id === 'ninja') SFX.slash();
-  else if (def && def.id === 'knight') SFX.slash();
+  else if (def && def.id === 'knight') SFX.knightSlash();
   else if (def && def.id === 'boxer') {
     // Depsey mode swaps the basics to the usus voice while the roll runs.
     if (fighter._boxerRoll && fighter._boxerRoll.timeLeft > 0) SFX.usus();
@@ -4506,11 +4541,12 @@ function combatAnim(f, victory) {
   // knight fights bare-handed like the boxer.
   if (f.shielding) return 'shield';
   if (f.attack) {
-    // The attack animation plays while the hitbox can still hit (startup +
-    // active). The instant recovery starts the hitbox is gone — return null so
-    // the animator releases the hands back to the default pose instead of
-    // finishing the swing on top of a no-longer-damaging attack.
-    return f.attack.phase === 'recovery' ? null : (f.attack.def.anim || null);
+    // The attack animation plays for the WHOLE attack — startup, active AND
+    // recovery — so gameplay poses match the Hand Animator frame for frame.
+    // Hitboxes still arm and expire on phase (recovery hits nothing); only
+    // the hands follow the authored motion to its end instead of snapping
+    // back to idle the instant the hitbox is gone.
+    return f.attack.def.anim || null;
   }
   return null;
 }
@@ -4548,6 +4584,7 @@ export function softResetFighter(f, stage) {
     || (stage.spawnPoints[(f.playerNum || 1) - 1]) || stage.respawnPoint;
   f.x = spawn.x;
   f.y = spawn.y - 30;
+  f._floorY = null; // re-pinned to the new floor on first ground touch
   f.vx = 0;
   f.vy = 0;
   f.grounded = false;
