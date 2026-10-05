@@ -413,6 +413,25 @@ const DEFAULT_WEAPONS = [
       center: ANCHOR(0, 0), custom: [],
     },
   },
+  // Pirate saber (GA sprite): portrait 551x682 authored DIAGONALLY, exactly
+  // like the ninja blade — grip/handle at the lower-left, curved tip at the
+  // upper-right. Anchor values are in the SCALED draw space (the fitted w/h
+  // box), so they are derived from the sprite's authored offsets: the raw
+  // pixel offsets from image centre are (-150, +270) at the grip and
+  // (+220, -329) at the tip, and the fitted scale is min(58/551, 72/682) =
+  // 0.1053. The hand-attachment math is identical to every other weapon (grip
+  // glued to the hand) — only the art + anchors are new, no second weapon
+  // system.
+  {
+    id: 'saber', name: 'Pirate Saber', type: 'sword', w: 58, h: 72,
+    color: '#d9e2ea', accent: '#c8a24a', mirror: true,
+    sprite: '/GA/weapons/saber.png',
+    pivot: { x: -13, y: 28 },
+    anchors: {
+      grip: ANCHOR(-13, 28), tip: ANCHOR(23, -35),
+      center: ANCHOR(5, -3), custom: [],
+    },
+  },
 ];
 
 let weaponLib = new Map();
@@ -1332,6 +1351,56 @@ for (const [id, srcId, name] of KNIGHT_ANIM_SOURCES) {
   else _knightAnims.push(derived);
 }
 
+// ── Pirate animations ──────────────────────────────────────────────────
+// Armed, so this is the same DERIVE convention as the boxer/knight above but
+// with the saber on the leading hand instead of a bare fist: each move clones
+// the shipped base pose that already reads as that kind of swing, then the
+// right slot is re-armed with the registered `saber` weapon def (so grip,
+// rotation, facing mirroring and rendering all run through the shared weapon
+// attachment path — no Pirate-specific weapon drawing).
+//
+// `vfx`/`combat` are stripped like the other derived sets: every pirate move's
+// art belongs to its ability, which binds on the ATTACK TABLE row (the
+// authoritative designation — see resolveAnimDef), so a stored animation can
+// never strip a signature move back to a plain swing.
+//
+// The ids here are exactly the `anim` fields in PIRATE_ATTACKS, plus
+// 'pirateVictory' (Game.js victoryAnimFor — the shared cowboyVictory carries a
+// revolver, which would make the winner's saber vanish).
+const PIRATE_ANIM_SOURCES = [
+  // id,                 source,          display name
+  ['pirateJab',         'jab',            'Cutlass Jab'],
+  ['pirateFtilt',       'ftilt',          'Cutlass Lunge'],
+  ['pirateFsmash',      'fsmash',         'Cannon Blast'],
+  ['pirateNsmash',      'nsmash',         'Broadside Burst'],
+  ['pirateUtilt',       'ninjaUtilt',     'Saber Rise'],
+  ['pirateUsmash',      'ninjaUsmash',    'Oath Cleave'],
+  ['pirateDtilt',       'ninjaDtilt',     'Rope Swing'],
+  ['pirateDsmash',      'ninjaDsmash',    'Anchor Drop'],
+  ['pirateAerialLight', 'nair',           'Air Slash'],
+  ['pirateAerialHeavy', 'fair',           'Air Cleave'],
+  ['pirateDash',        'dash',           'Saber Dash'],
+  ['pirateVictory',     'cowboyVictory',  'Victory Dance'],
+];
+
+// Same clone shape as deriveUnarmed, then the saber goes on the leading hand.
+// `gripOffsetX` is the saber's small hand-space nudge (the sword family uses
+// the same convention); everything else — pivot, anchors, mirroring — comes
+// from the registered weapon def.
+function deriveArmed(source, id, name, weaponId) {
+  const base = deriveUnarmed(source, id, name);
+  if (!base) return null;
+  base.weapons.right = { ...emptyWeaponCfg(), id: weaponId, mountX: 0, mountY: -2, gripOffsetX: -6, gripOffsetY: 0, gripRot: 0 };
+  return base;
+}
+
+const _pirateAnims = [];
+for (const [id, srcId, name] of PIRATE_ANIM_SOURCES) {
+  const derived = deriveArmed(_baseAnimById.get(srcId), id, name, 'saber');
+  if (!derived) console.warn(`[animlib] pirate move "${id}" has no source animation "${srcId}"`);
+  else _pirateAnims.push(derived);
+}
+
 // Default timeline VFX for the knight's attack-start trails (durations in
 // frames mirror the code-spawn life: startup + active frames at 60fps). These
 // are the SAME instances combat.js would spawn (knightSwingTrail defers to
@@ -1360,7 +1429,7 @@ for (const a of _knightAnims) {
   if (list) a.vfx = list.map((e) => ({ rotation: 0, offsetX: 0, offsetY: 0, loop: false, ...e }));
 }
 
-export const DEFAULT_ANIMATIONS = [...BASE_ANIMATIONS, ..._boxerAnims, ..._knightAnims];
+export const DEFAULT_ANIMATIONS = [...BASE_ANIMATIONS, ..._boxerAnims, ..._knightAnims, ..._pirateAnims];
 
 let animLib = new Map();
 

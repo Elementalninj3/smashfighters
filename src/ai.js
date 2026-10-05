@@ -1,5 +1,5 @@
 import { SFX } from './assets.js';
-import { attacksFor, resolveAttackDef, combatInput, updateAttacks, updateProjectiles, resetCombat } from './combat.js';
+import { attacksFor, resolveAttackDef, combatInput, updateAttacks, updateProjectiles, resetCombat, plunderOf } from './combat.js';
 import { resetTimeDilation, stepTimeDilation, resetDamageIndicators } from './fx.js';
 import { GRAVITY, createFighter, handleFighterInput, stepFighterPhysics, applySoftPlayerSeparation, updateFighterState, resetAbilityCooldowns, createDefaultStage, resolvePlatformCollision, isInBlastZone, updatePlatforms } from './physics.js';
 import { loadAccessoryFor, loadHandGearFor } from './render.js';
@@ -1738,6 +1738,34 @@ function attackReach(key, def, f) {
     R.kind = 'projectile'; R.fwd = 550; R.back = 0; R.halfH = 60; R.oy = -4; R.t = 0.06;
     return R;
   }
+  // Pirate cannons. Both are real projectiles, so both are scored as one, but
+  // with VERY different reach — that difference is the whole point of the
+  // character, so the two ids get their own lines rather than sharing the
+  // generic 'projectile' number the shuriken uses:
+  //   Cannon Blast — the long gun (~520px of travel before its lifetime ends).
+  //   Broadside    — the close cone (~110px), so it only scores in the pocket
+  //                  and can never be mistaken for the zoning option.
+  if (d.abilityType === 'nonHitbox' && d.abilityId === 'pirateCannonBlast') {
+    R.kind = 'projectile'; R.fwd = 560; R.back = 0; R.halfH = 70; R.oy = -6; R.t = 0.06;
+    return R;
+  }
+  if (d.abilityType === 'nonHitbox' && d.abilityId === 'pirateBroadside') {
+    R.kind = 'projectile'; R.fwd = 150; R.back = 0; R.halfH = 80; R.oy = -6; R.t = 0.04;
+    return R;
+  }
+  // Rope Swing (pirate Down Light): a fixed-length forward burst that ends in a
+  // strike, so it reaches like the ninja's dash-strike — the box plus the
+  // dashDistance it travels, not just the box.
+  if (d.abilityType === 'nonHitbox' && d.abilityId === 'pirateRopeSwing') {
+    const w = d.w || 76, ox = Math.abs(d.ox || 0);
+    R.kind = 'dash'; R.fwd = ox + w / 2 + (d.dashDistance || 150); R.back = 0;
+    R.halfH = 20; R.oy = oy0; R.t = startup / 60 + 0.06;
+    return R;
+  }
+  // Anchor Drop (pirate Down Heavy) and the Cutlass Lunge are short forward
+  // strike boxes: scored as plain melee at their own table geometry, which the
+  // generic melee branch below already does — no special case needed, and none
+  // added so they can never drift from their real hitbox numbers.
   // Shuriken + any authored projectile: travels, needs rough height alignment.
   if (d.isProjectile) {
     R.kind = 'projectile'; R.fwd = 450; R.back = 0; R.halfH = 80; R.oy = oy0; R.t = 0.08;
@@ -2468,6 +2496,19 @@ class AIState {
       if (R.kind === 'dash' || R.kind === 'horse') s *= 0.45 + 0.55 * connect;
       else if (R.kind === 'projectile' || R.kind === 'deadeye') s *= 0.35 + 0.65 * connect;
       else s *= 0.2 + 0.8 * connect;
+      // Plunder (pirate passive): an armed cannon is worth spending the meter
+      // on, so a pirate with the resource ready scores his cannon moves up
+      // rather than mashing them. This is a MODEST, bounded nudge on top of
+      // the real connect gate above — it never manufactures a shot the
+      // geometry cannot support (a cannon with no plausible connect still dies
+      // at the accuracy gate in chooseAndFire), so the AI spends Plunder when
+      // it can land it instead of whenever it feels like it.
+      if (def.abilityType === 'nonHitbox'
+          && (def.abilityId === 'pirateCannonBlast' || def.abilityId === 'pirateBroadside')) {
+        const banked = plunderOf(f);
+        if (banked >= 3) s *= 1.0 + Math.min(0.30, (banked - 3) * 0.15);
+        else s *= 0.85;
+      }
       // Recency variety: repeating the same swing scores worse, so the AI
       // rotates through Light / Heavy / Down / Smash / aerial / special
       // instead of camping one move. Reachability (the connect gate in
@@ -3798,7 +3839,7 @@ function makeHeadlessFighter(playerNum, def) {
   // the EXACT same code as live play. Zero effect on simulation.
   f.skin = def.skin ? { path: def.skin } : null;
   f.skinScale = def.skinScale || 0.85;
-  try { f.accessory = loadAccessoryFor(def.id); } catch (_) { f.accessory = null; }
+  try { f.accessory = loadAccessoryFor(def.id, def.accessory); } catch (_) { f.accessory = null; }
   try { f.handGear = loadHandGearFor(def.id, def.handGear); } catch (_) { f.handGear = null; }
   return f;
 }
@@ -3819,6 +3860,11 @@ function placeAtSpawns(f1, f2, stage) {
     f.stocks = TRAIN_STOCKS; f.eliminated = false; f.state = 'idle';
     if (f._projectiles) f._projectiles.length = 0;
     f._horse = null;
+    // Plunder (pirate): a fresh training match starts with an empty meter, the
+    // same reset a real respawn does (softResetFighter) — so the trainer never
+    // inherits banked cannon charge between evaluated matches.
+    f._plunder = 0;
+    f._plunderTimer = 0;
   }
 }
 

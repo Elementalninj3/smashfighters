@@ -119,6 +119,17 @@ export const CHARACTER_STATS = {
     launchResist: 1.0, recoveryStrength: 0.85, recoveryRange: 0.85,
     damageDealtMul: 1.0, knockbackDealtMul: 1.0,
   },
+  // Pirate: midweight spacing fighter. Slightly below the knight's weight, so
+  // he is launched a touch softer, with mobility between the ninja and the
+  // cowboy — the rope is his approach tool, not a dash-spam character, so the
+  // run speed stays well under the ninja's.
+  pirate: {
+    id: 'pirate', weight: 105, runSpeed: 69, airSpeed: 56,
+    accel: 2100, friction: 860, airAccel: 800, airFriction: 300,
+    jumpForce: 706, gravityMul: 1.0, fallMaxMul: 1.0, airControl: 1.0,
+    launchResist: 1.0, recoveryStrength: 1.0, recoveryRange: 1.05,
+    damageDealtMul: 1.0, knockbackDealtMul: 1.0,
+  },
 };
 
 // ── Attack schema defaults ──
@@ -1344,6 +1355,289 @@ export const ABILITIES = {
       SFX.shieldBash();
     },
   },
+
+  // ── Pirate ───────────────────────────────────────────────────────────
+  // Four abilities behind the character's five signature moves. Each one owns
+  // only WHERE and WHEN the move acts; the blow itself always resolves through
+  // the shared machinery — a `strikeHitbox` row for the melee movers, a
+  // `fighter._projectiles` entry (updateProjectiles) for the two cannons.
+  // Nothing here touches damage or knockback formulas.
+
+  // Rope Swing (pirate Down Light, PIRATE_ATTACKS.dtilt): throw the grapple
+  // forward, then swing through a short arc. A FIXED-LENGTH burst in the
+  // captured facing direction — never a teleport (it covers `dashDistance`
+  // pixels from wherever the cast happened, no matter where the opponent is)
+  // and never homing (nothing here reads a target position). The same travel
+  // budget mechanism the ninja's Shadow Dash uses (`dashing` for the friction
+  // suppression, `_shadowDashRemain` for the exact distance) is reused rather
+  // than reinvented, so the pirate cannot pass through an opponent or clip
+  // through stage geometry either: Fighter.js integrates and separates him
+  // exactly as it does every other move.
+  pirateRopeSwing: {
+    name: 'Rope Swing',
+    // startup 8 + active 6 + recovery 16 from PIRATE_ATTACKS.dtilt. A
+    // nonHitbox move's length is the ability's `frames`.
+    frames: 30,
+    castFrame: 8,
+    strikeHitbox: true,
+    run(fighter, atk, cfg) {
+      const dir = atk.facing || (fighter.facingRight ? 1 : -1);
+      const dist = (cfg && cfg.dashDistance) || (atk && atk.def && atk.def.dashDistance) || 150;
+      // Same speed/friction exemption contract as the Shadow Dash: the burst
+      // covers exactly `dist` and stops, instead of coasting a
+      // friction-dependent extra distance that would make "fixed distance" a lie.
+      const speed = 620;
+      const dur = dist / speed;
+      fighter.vx = dir * speed;
+      fighter.vy = 0;
+      fighter.dashing = true;
+      fighter.dashTimer = dur;
+      fighter._shadowDashDir = dir;
+      fighter._shadowDashSpeed = speed;
+      fighter._shadowDashRemain = dist;
+      const r = fighter.radius || 22;
+      // The grapple itself: a rope + hook drawn forward from the hand, plus the
+      // shared throw pop at the hand. Purely cosmetic — the dash above already
+      // did the movement, and the box below does the hitting.
+      try {
+        spawnTempVfx(fighter, 'pirateRope', dur + 0.06, 1, 0, 0, 0, {
+          anchor: 'frontHand', offsetX: dir * 14, offsetY: 0, mirrorX: dir,
+          params: { length: 82 },
+        });
+      } catch (_) {}
+      atk.fxX = fighter.x + dir * r * 1.2;
+      atk.fxY = fighter.y - 4;
+      emitAbilityFx(fighter, atk, 'rope');
+      try { SFX.slash(0.16); } catch (_) {}
+    },
+  },
+
+  // Cutlass Lunge (pirate Forward Light, PIRATE_ATTACKS.ftilt): a modest,
+  // short step-in under the slash. Deliberately NOT a dash — the row is a
+  // normal melee box and the only reason this ability exists is to give the
+  // lunge its step and its sound. Ground friction eats the burst within a few
+  // frames, so it closes the last few pixels without carrying.
+  pirateCutlassLunge: {
+    name: 'Cutlass Lunge',
+    // startup 6 + active 4 + recovery 13 from PIRATE_ATTACKS.ftilt.
+    frames: 23,
+    castFrame: 6,
+    strikeHitbox: true,
+    run(fighter, atk, cfg) {
+      const dir = atk.facing || (fighter.facingRight ? 1 : -1);
+      // The arc is PINNED at the spot the lunge starts from, before the step
+      // is applied: the demo's crescent is world-anchored and the body passes
+      // through it, which is what makes the slash read as the path being cut
+      // rather than a decal riding the attacker. `reach` is the move's own hit
+      // box reach (ox + w), so the art and the box it stands for cannot drift.
+      const reach = (atk.def && atk.def.ox || 56) + (atk.def && atk.def.w || 82);
+      try {
+        spawnTempVfx(fighter, 'pirateCutlassSlash', 0.34, 1, 0, 0, 0, {
+          anchor: 'character',
+          pinnedX: fighter.x,
+          pinnedY: fighter.y,
+          mirrorX: dir,
+          params: { reach, unit: (fighter.radius || 22) / 22 },
+        });
+      } catch (_) {}
+      fighter.vx = dir * 300;
+      if (fighter.grounded) fighter.vy = 0;
+      const r = fighter.radius || 22;
+      const style = fxStyleFor(fighter);
+      const x = fighter.x + dir * r * 0.9;
+      const y = fighter.y - 4;
+      atk.fxX = x;
+      atk.fxY = y;
+      emitAbilityFx(fighter, atk, 'cutlass');
+      try { SFX.slash(0.16); } catch (_) {}
+    },
+  },
+
+  // Anchor Drop (pirate Down Heavy, PIRATE_ATTACKS.dsmash): a wind-up already
+  // spent in the animation's startup, then a heavy downward slam. `strikeHitbox`
+  // hands the table row to the shared registry on the cast frame, so the damage,
+  // launch angle and hitstun are the game's normal ones. The ability adds the
+  // ground impact art at the floor line in front of the pirate — a spawned VFX
+  // instance with a 0.4s life, NOT a persistent environmental object, and no
+  // oversized area-of-effect: the hitbox stays the short row it already is.
+  pirateAnchorDrop: {
+    name: 'Anchor Drop',
+    // startup 15 + active 5 + recovery 25 from PIRATE_ATTACKS.dsmash.
+    frames: 45,
+    castFrame: 15,
+    strikeHitbox: true,
+    run(fighter, atk, cfg) {
+      const dir = atk.facing || (fighter.facingRight ? 1 : -1);
+      const r = fighter.radius || 22;
+      // Impact point: just in front of the fighter, on the floor line. Offsets
+      // are relative to the fighter (the shared character anchor), matching how
+      // every other ability positions its impact art.
+      const ox = dir * r * 1.1;
+      const oy = r * 0.95;
+      try {
+        // PINNED to the landing spot: the eruption is in the FLOOR, and the
+        // pirate is already in recovery drifting off it. `unit` scales the
+        // whole thing off his own size, the same way boxerPunchImpact does,
+        // so a big pirate slams bigger ground than a small one without a
+        // second set of numbers.
+        spawnTempVfx(fighter, 'pirateAnchorSlam', 0.5, 1, 0, 0, 0, {
+          anchor: 'character',
+          pinnedX: fighter.x + ox,
+          pinnedY: fighter.y + oy,
+          mirrorX: dir,
+          params: { unit: r / 22 },
+        });
+      } catch (_) {}
+      atk.fxX = fighter.x + ox;
+      atk.fxY = fighter.y + oy;
+      emitAbilityFx(fighter, atk, 'anchor');
+      try { SFX.punch(); } catch (_) {}
+    },
+  },
+
+  // Cannon Blast (pirate Forward Heavy, PIRATE_ATTACKS.fsmash): the long-range
+  // option. A travelling cannonball on the shared projectile pipeline — so it
+  // dies on a valid hit, on stage/destructible collision and on its own
+  // lifetime, is fully dodgeable/blockable exactly like every other bullet, and
+  // can only ever fire once per attack (the cast frame is a single frame on the
+  // attack instance, and starting the move at all requires a fresh press through
+  // the one combatInput path — holding the button cannot re-fire it).
+  //
+  // PLUNDER is applied HERE, at the cast, by reading the meter's tier: the
+  // projectile's def is built from the tier's multipliers and stamped
+  // `plunderEnhanced`, which is also what stops the enhanced round from paying
+  // Plunder for itself when it connects (notePlunderHit checks that flag).
+  pirateCannonBlast: {
+    name: 'Cannon Blast',
+    // startup 19 + recovery 29 from PIRATE_ATTACKS.fsmash (no melee window —
+    // the round IS the active phase, so `active` is 0 in the table).
+    frames: 48,
+    castFrame: 19,
+    run(fighter, atk, cfg) {
+      const dir = atk.facing || (fighter.facingRight ? 1 : -1);
+      const tier = plunderTier(fighter);
+      const base = CANNON_BASE;
+      const sizeMul = tier === 2 ? PLUNDER_TIER5_SIZE_MUL
+        : tier === 1 ? PLUNDER_TIER3_SIZE_MUL : 1;
+      const dmgMul = tier === 2 ? PLUNDER_TIER5_DMG_MUL : 1;
+      const kbMul = tier > 0 ? PLUNDER_KB_MUL : 1;
+      const r = (cfg && cfg.r) || base.r;
+      const rr = r * sizeMul;
+      const list = fighter._projectiles || (fighter._projectiles = []);
+      const pos = projectileSpawn(fighter, dir);
+      list.push({
+        owner: fighter,
+        x: pos.x,
+        y: pos.y,
+        vx: dir * ((cfg && cfg.speed) || base.speed),
+        vy: 0,
+        r: rr,
+        facing: dir,
+        life: (cfg && cfg.life) || base.life,
+        dead: false,
+        spin: 0,
+        trail: 'pirateTrail',
+        def: {
+          name: base.name,
+          dmg: base.dmg * dmgMul,
+          kbBase: base.kbBase * kbMul,
+          kbGrowth: base.kbGrowth,
+          angle: base.angle,
+          launchAngle: base.launchAngle,
+          kbDir: dir,
+          w: rr * 2, h: rr * 2, ox: 0, oy: 0,
+          // Read back by notePlunderHit: an enhanced round never re-credits
+          // the meter that paid for it.
+          plunderEnhanced: tier > 0,
+          // Read back by updateProjectiles' kill path: spawn the detonation
+          // wherever this round actually resolved.
+          impactFx: 'pirateCannonImpact',
+        },
+        muzzleDone: false,
+      });
+      // Muzzle flash sized off the actual ball, so a bigger enhanced round gets
+      // a proportionally bigger pop.
+      atk.fxX = pos.x;
+      atk.fxY = pos.y;
+      atk.fxProjR = rr;
+      emitAbilityFx(fighter, atk, 'cannon');
+      if (tier > 0) {
+        spendPlunder(fighter);
+        try { spawnFloatingText(fighter.x, fighter.y - (fighter.radius || 22) - 40,
+          tier === 2 ? 'CHARGED BROADSIDE!' : 'PLUNDERED!', '#ffd76a', { life: 0.9, size: 24 }); } catch (_) {}
+      }
+      try { SFX.rifleShot(); } catch (_) {}
+    },
+  },
+
+  // Broadside Burst (pirate Neutral Heavy, PIRATE_ATTACKS.nsmash): the
+  // close-range answer. A slow, SHORT-lived, wide shot — roughly a fifth of the
+  // Cannon Blast's travel — so it is a cone in front of the pirate, not a second
+  // long-range gun and never a full-screen projectile. It is spawned with the
+  // SAME captured facing as every other projectile (`kbDir` + `vx`), so it can
+  // only ever travel away from the pirate and can never hit behind him. The
+  // wide burst art is a spawned VFX instance that lives exactly as long as the
+  // round's active window.
+  pirateBroadside: {
+    name: 'Broadside Burst',
+    // startup 12 + active 5 + recovery 22 from PIRATE_ATTACKS.nsmash.
+    frames: 39,
+    castFrame: 12,
+    run(fighter, atk, cfg) {
+      const dir = atk.facing || (fighter.facingRight ? 1 : -1);
+      const tier = plunderTier(fighter);
+      const base = BROADSIDE_BASE;
+      const sizeMul = tier === 2 ? PLUNDER_TIER5_SIZE_MUL
+        : tier === 1 ? PLUNDER_TIER3_SIZE_MUL : 1;
+      const dmgMul = tier === 2 ? PLUNDER_TIER5_DMG_MUL : 1;
+      const kbMul = tier > 0 ? PLUNDER_KB_MUL : 1;
+      const rr = base.r * sizeMul;
+      const list = fighter._projectiles || (fighter._projectiles = []);
+      // Spawned clear of the body so the very first step of its travel cannot
+      // start already inside the pirate.
+      const pos = {
+        x: fighter.x + dir * ((cfg && cfg.offset) || 54),
+        y: fighter.y - 6,
+      };
+      list.push({
+        owner: fighter,
+        x: pos.x,
+        y: pos.y,
+        vx: dir * ((cfg && cfg.speed) || base.speed),
+        vy: 0,
+        r: rr,
+        facing: dir,
+        life: (cfg && cfg.life) || base.life,
+        dead: false,
+        spin: 0,
+        // The broad round carries the wide-cone art instead of the ball art.
+        trail: 'pirateWide',
+        def: {
+          name: base.name,
+          dmg: base.dmg * dmgMul,
+          kbBase: base.kbBase * kbMul,
+          kbGrowth: base.kbGrowth,
+          angle: base.angle,
+          launchAngle: base.launchAngle,
+          kbDir: dir,
+          w: rr * 2.4, h: rr * 2, ox: 0, oy: 0,
+          plunderEnhanced: tier > 0,
+          impactFx: 'pirateCannonImpact',
+        },
+        muzzleDone: false,
+      });
+      atk.fxX = pos.x;
+      atk.fxY = pos.y;
+      atk.fxProjR = rr;
+      emitAbilityFx(fighter, atk, 'cannon');
+      if (tier > 0) {
+        spendPlunder(fighter);
+        try { spawnFloatingText(fighter.x, fighter.y - (fighter.radius || 22) - 40,
+          tier === 2 ? 'CHARGED BROADSIDE!' : 'PLUNDERED!', '#ffd76a', { life: 0.9, size: 24 }); } catch (_) {}
+      }
+      try { SFX.rifleShot(); } catch (_) {}
+    },
+  },
 };
 
 // The one opponent the Grab considers: a live opponent, in play, in reach.
@@ -1676,6 +1970,171 @@ const KNIGHT_ATTACKS = {
   dash:   { name: 'Oath Lunge', anim: 'knightDash', category: 'dash', direction: 'forward', state: 'ground', startup: 4, active: 6, recovery: 12, dmg: 7.0, kbBase: 88, kbGrowth: 0.8, angle: 22, launchAngle: 22, w: 96, h: 46, ox: 48, oy: 0 },
 };
 
+// Pirate attacks — rope mobility, cutlass reach and cannon pressure. Midweight
+// numbers: honest damage and honest launch, with the character identity living
+// OUTSIDE the table — the Plunder passive (below) and the four ability moves
+// (ABILITIES.pirateRopeSwing / pirateAnchorDrop / pirateCannonBlast /
+// pirateBroadside) — so every blow resolves through the same deliverHit as the
+// rest of the roster.
+//
+// Five of the rows are the character's signature moves and are declared as
+// nonHitbox abilities, the same designation pattern the cowboy/ninja/knight
+// tables use (repeated HERE rather than only on the animation, so a saved
+// animation store can never strip a signature move back to a plain swing —
+// see resolveAnimDef):
+//   dtilt  = the Rope Swing (dash-in strike behind a thrown grapple)
+//   dsmash = the Anchor Drop (heavy downward slam + ground impact)
+//   fsmash = the Cannon Blast (travelling cannonball projectile)
+//   nsmash = the Broadside Burst (wide, short close-range blast)
+const PIRATE_ATTACKS = {
+  jab:    { name: 'Cutlass Jab', anim: 'pirateJab', category: 'jab', direction: 'neutral', state: 'ground', startup: 3, active: 4, recovery: 8, dmg: 4.5, kbBase: 70, kbGrowth: 0.55, angle: 18, launchAngle: 18, w: 64, h: 30, ox: 44, oy: -2 },
+  // Forward Light is the Cutlass Lunge: a short step-in (owned by the ability)
+  // plus this row's real melee box, resolved by the shared registry.
+  ftilt:  { name: 'Cutlass Lunge', anim: 'pirateFtilt', category: 'tilt', direction: 'forward', state: 'ground', startup: 6, active: 4, recovery: 13, dmg: 8.0, kbBase: 110, kbGrowth: 0.60, angle: 25, launchAngle: 25, w: 82, h: 34, ox: 56, oy: -2, abilityType: 'nonHitbox', abilityId: 'pirateCutlassLunge', abilityCfg: {}, hitFx: 'pirateHitBurst' },
+  // Forward Heavy is the Cannon Blast. Its real damage lives on the ability's
+  // projectile def (a nonHitbox move's row is only the move's shell), so the
+  // numbers here mirror that def exactly — 15 / 210 / 1.05 / 30 — and the
+  // Plunder enhancements are applied to the projectile def at the cast.
+  fsmash: { name: 'Cannon Blast', anim: 'pirateFsmash', category: 'special', direction: 'forward', state: 'ground', startup: 19, active: 0, recovery: 29, dmg: 15.0, kbBase: 210, kbGrowth: 1.05, angle: 30, launchAngle: 30, w: 40, h: 40, ox: 52, oy: -6, abilityType: 'nonHitbox', abilityId: 'pirateCannonBlast', abilityCfg: {} },
+  // Neutral Heavy is the Broadside Burst: a wide, SHORT-range blast — the
+  // ability's projectile is slow and short-lived so it reads as a point-blank
+  // cone in front of the pirate, never a second long-range gun.
+  nsmash: { name: 'Broadside Burst', anim: 'pirateNsmash', category: 'special', direction: 'neutral', state: 'ground', startup: 12, active: 5, recovery: 22, dmg: 12.0, kbBase: 185, kbGrowth: 0.90, angle: 50, launchAngle: 50, w: 76, h: 46, ox: 40, oy: -8, abilityType: 'nonHitbox', abilityId: 'pirateBroadside', abilityCfg: {} },
+  utilt:  { name: 'Saber Rise', anim: 'pirateUtilt', category: 'tilt', direction: 'up', state: 'ground', startup: 5, active: 5, recovery: 12, dmg: 6.5, kbBase: 78, kbGrowth: 0.70, angle: 80, launchAngle: 80, w: 50, h: 58, ox: 8, oy: -44 },
+  usmash: { name: 'Oath Cleave', anim: 'pirateUsmash', category: 'smash', direction: 'up', state: 'ground', startup: 13, active: 6, recovery: 28, dmg: 15.0, kbBase: 165, kbGrowth: 1.70, angle: 85, launchAngle: 85, w: 70, h: 80, ox: 4, oy: -66, chargeable: true },
+  // Down Light is the Rope Swing: a fixed-length forward burst (so it is a
+  // dash, never a teleport or a homing grab) that ends in this row's melee box,
+  // glued to the moving fighter for the move's whole active window.
+  dtilt:  { name: 'Rope Swing', anim: 'pirateDtilt', category: 'special', direction: 'down', state: 'ground', startup: 8, active: 6, recovery: 16, dmg: 7.0, kbBase: 95, kbGrowth: 0.55, angle: 35, launchAngle: 35, w: 76, h: 40, ox: 46, oy: 2, dashDistance: 150, abilityType: 'nonHitbox', abilityId: 'pirateRopeSwing', abilityCfg: {}, hitFx: 'pirateHitBurst' },
+  // Down Heavy is the Anchor Drop: a deliberate 15-frame wind-up into a short,
+  // low slam. `active` covers the whole 5-frame impact window so the box stays
+  // glued to the fighter for the duration (the ability owns the ground impact
+  // art, not a persistent environmental object).
+  dsmash: { name: 'Anchor Drop', anim: 'pirateDsmash', category: 'special', direction: 'down', state: 'ground', startup: 15, active: 5, recovery: 25, dmg: 13.0, kbBase: 175, kbGrowth: 0.90, angle: 78, launchAngle: 78, w: 66, h: 44, ox: 38, oy: 6, abilityType: 'nonHitbox', abilityId: 'pirateAnchorDrop', abilityCfg: {}, hitFx: 'pirateHitBurst' },
+  aerialLight:  { name: 'Air Slash', anim: 'pirateAerialLight', category: 'aerial', direction: 'neutral', state: 'air', startup: 5, active: 7, recovery: 13, dmg: 6.5, kbBase: 76, kbGrowth: 0.70, angle: 70, launchAngle: 70, w: 60, h: 62, ox: 6, oy: -44, air: true, usableInAir: true },
+  aerialHeavy:  { name: 'Air Cleave', anim: 'pirateAerialHeavy', category: 'aerial', direction: 'forward', state: 'air', startup: 10, active: 8, recovery: 20, dmg: 13.0, kbBase: 145, kbGrowth: 1.45, angle: -55, launchAngle: -55, spike: true, w: 66, h: 58, ox: 48, oy: -6, air: true, usableInAir: true, recoveryX: -5, recoveryY: -8, recoveryDuration: 5 },
+  dash:   { name: 'Saber Dash', anim: 'pirateDash', category: 'dash', direction: 'forward', state: 'ground', startup: 4, active: 6, recovery: 12, dmg: 7.0, kbBase: 84, kbGrowth: 0.75, angle: 22, launchAngle: 22, w: 96, h: 46, ox: 48, oy: 0 },
+};
+
+// ── Pirate: Plunder ─────────────────────────────────────────────────────
+// A resource the character builds by CONNECTING, spent on his cannon. All of
+// the state lives on the fighter record (`_plunder` / `_plunderTimer`) and every
+// rule below is enforced in this one file — combat, the HUD and the AI all read
+// these same helpers, so the meter, the enhancement and the AI's knowledge of
+// it can never disagree.
+//
+//   1 point  per attack that LANDS on an opponent, max PLUNDER_MAX (5).
+//             Once per attack per opponent, never on a miss / shield / breakable.
+//   decay   1 point per PLUNDER_DECAY seconds without landing a hit.
+//   3+      the next cannon attack gets a bigger blast and +10% knockback.
+//   5       the next cannon attack is a CHARGED BROADSIDE: +20% damage,
+//           +10% base knockback, +15% projectile size, and all 5 are spent.
+//   spend   a Plunder-enhanced cannon resets the meter to 0 (both tiers).
+//   no self An enhanced attack's own hit never grants Plunder.
+//   no stack 3 and 5 never stack — 5 wins outright.
+export const PLUNDER_MAX = 5;
+const PLUNDER_DECAY = 8;        // seconds per lost point
+export const PLUNDER_TIER_KNOCKBACK = 3;   // "slightly larger blast, +10% knockback"
+const PLUNDER_KB_MUL = 1.10;        // +10% base knockback, both tiers
+const PLUNDER_TIER3_SIZE_MUL = 1.12; // "slightly larger blast"
+const PLUNDER_TIER5_DMG_MUL = 1.20;  // Charged Broadside damage
+const PLUNDER_TIER5_SIZE_MUL = 1.15; // Charged Broadside projectile size
+
+// The two cannon rounds' BASE numbers, in the same units as PIRATE_ATTACKS.
+// They live here (with the passive) rather than inline in the ability so the
+// balance targets are readable in one place and a Plunder multiplier can be
+// applied to them without touching a formula.
+//
+//   Cannon Blast   — the long gun: 15 / 210 / 1.05 / 30°, ~520px of travel.
+//   Broadside      — the close gun: 12 / 185 / 0.90 / 50°, ~110px only, so it
+//                    is a cone in front of the pirate and never a second
+//                    long-range option.
+const CANNON_BASE = {
+  name: 'Cannon Blast', r: 10, speed: 620, life: 0.85,
+  dmg: 15.0, kbBase: 210, kbGrowth: 1.05, angle: 30, launchAngle: 30,
+};
+const BROADSIDE_BASE = {
+  name: 'Broadside Burst', r: 13, speed: 330, life: 0.28,
+  dmg: 12.0, kbBase: 185, kbGrowth: 0.90, angle: 50, launchAngle: 50,
+};
+
+function isPirate(f) { return !!f && !!f._fighterDef && f._fighterDef.id === 'pirate'; }
+
+// Current Plunder (0..PLUNDER_MAX). Read by the ability (to size an enhanced
+// shot), the HUD and the AI.
+export function plunderOf(f) { return isPirate(f) ? (f._plunder || 0) : 0; }
+
+// The enhancement tier an attack should be cast at, from the meter alone:
+// 2 = Charged Broadside (5 points), 1 = empowered (3+), 0 = normal. Returning
+// a single tier (never a pair of booleans) is what makes "must not stack"
+// structural rather than a rule someone has to remember.
+function plunderTier(f) {
+  const p = plunderOf(f);
+  if (p >= PLUNDER_MAX) return 2;
+  if (p >= PLUNDER_TIER_KNOCKBACK) return 1;
+  return 0;
+}
+
+// Bank one Plunder for a landed hit and reset the decay clock. Only called
+// from the single choke point that means "this attack actually connected on an
+// opponent" (deliverHit), so a miss, a shielded hit and a breakable can never
+// reach it. `alreadyEnhanced` suppresses the grant for a Plunder-enhanced
+// attack's OWN hit (rule: no self-reward), which is why the enhanced cast
+// stamps its projectile def rather than relying on the caller to remember.
+function grantPlunder(f, alreadyEnhanced) {
+  if (!isPirate(f) || alreadyEnhanced) return;
+  const cur = f._plunder || 0;
+  if (cur >= PLUNDER_MAX) return;
+  f._plunder = cur + 1;
+  f._plunderTimer = 0;
+}
+
+// Spend the meter after a Plunder-enhanced cannon attack. Both tiers reset to
+// zero — that is what stops enhanced shots chaining off each other.
+function spendPlunder(f) {
+  if (!isPirate(f)) return;
+  f._plunder = 0;
+  f._plunderTimer = 0;
+}
+
+// Record "this attack already paid for that opponent" and, if it is a first
+// hit, bank the point. The dedupe record lives on whatever identifies the
+// attack: the live `fighter.attack` for a melee row, or the projectile's own
+// def for a cannon round (a round resolves on exactly one target and is then
+// destroyed, so it needs no extra bookkeeping). Both are per-attack objects,
+// never the shared attack table, so nothing leaks between moves or fighters.
+function notePlunderHit(attacker, target, def) {
+  if (!isPirate(attacker) || !target || target === attacker) return;
+  if (def && def.plunderEnhanced) return;         // an enhanced shot never feeds itself
+  const token = (attacker.attack && attacker.attack.key) ? attacker.attack : def;
+  if (!token) return;
+  let seen = token._plunderHits;
+  if (!seen) seen = token._plunderHits = new Set();
+  if (seen.has(target.id)) return;
+  seen.add(target.id);
+  grantPlunder(attacker, false);
+}
+
+// Per-frame decay. Called from the shared roster step, so a pirate decays
+// identically in the match and in the sandbox/AI-training headless runs —
+// there is no second update path.
+export function updatePlunder(fighters, dt) {
+  for (let i = 0; i < fighters.length; i++) {
+    const f = fighters[i];
+    if (!f || !isPirate(f)) continue;
+    const p = f._plunder || 0;
+    if (p <= 0) { f._plunderTimer = 0; continue; }
+    f._plunderTimer = (f._plunderTimer || 0) + dt;
+    if (f._plunderTimer >= PLUNDER_DECAY) {
+      // while, not if: a single very long dt (a stalled tab) must not silently
+      // bank decay time instead of applying it.
+      f._plunderTimer -= PLUNDER_DECAY;
+      f._plunder = p - 1;
+      if (f._plunder < 0) f._plunder = 0;
+    }
+  }
+}
+
 // ── Knight Shield Parry ──────────────────────────────────────────────────
 // The knight's signature: a precisely timed shield parry on the shield-press
 // edge (see combatInput). A successful parry negates the hit outright and arms
@@ -1868,6 +2327,7 @@ export function attacksFor(fighter) {
   if (def && def.id === 'ninja') return NINJA_ATTACKS;
   if (def && def.id === 'boxer') return BOXER_ATTACKS;
   if (def && def.id === 'knight') return KNIGHT_ATTACKS;
+  if (def && def.id === 'pirate') return PIRATE_ATTACKS;
   return (def && def.attacks) || DEFAULT_ATTACKS;
 }
 
@@ -2378,6 +2838,11 @@ function startAttack(fighter, sel) {
   attr.deferStrike = false;
   attr.teleportDelayFrames = 0;
   attr.teleportDone = false;
+  // Plunder's "once per attack per opponent" ledger. Cleared HERE because the
+  // attack record comes off a pool: a recycled object must never inherit the
+  // previous swing's dedupe set (which would silently deny this attack its
+  // Plunder point on the same opponent).
+  attr._plunderHits = null;
   attr.totalFrames = rdef.abilityType === 'nonHitbox'
     ? Math.max(1, rdef.abilityFrames || (rdef.startup + rdef.active + rdef.recovery))
     : rdef.startup + rdef.active + rdef.recovery;
@@ -3767,6 +4232,49 @@ function deliverHit(attacker, target, def, facing, key) {
 
   const hitDir = resolveHitDir(attacker, target, effDef, facing);
 
+  // Plunder (pirate passive): ONE point for an attack that actually connected
+  // on an OPPONENT. This is the right choke point for it — deliverHit is the
+  // single path every landed hit in the game takes (melee hitboxes and ability
+  // projectiles alike), so by construction a whiff, a shielded hit (the
+  // `shielded` guard) and a breakable (which never comes through here at all)
+  // cannot grant anything. `plunderEnhanced` on the def is the self-reward
+  // suppression: the enhanced cannon stamps it on its own projectile def, so
+  // the enhanced shot cannot pay for the next one.
+  //
+  // Once per attack per opponent: the dedupe record hangs off the ATTACK
+  // instance (melee) or the PROJECTILE def (a cannon round, which can only ever
+  // resolve on one target), and `deliverHit` is never entered twice for the
+  // same one of those by the shared registry.
+  if (!shielded) {
+    try { notePlunderHit(attacker, target, def); } catch (_) {}
+  }
+
+  // Connect burst. OPT-IN on the attack def (`hitFx`), so this costs one
+  // property read for every other character in the game and nothing else:
+  // only the pirate's melee rows name an effect, and the effect itself is a
+  // single shared instance (pirateHitBurst) rather than one per move. It is
+  // spawned here, at the point of contact, and PINNED there — the target is
+  // already flying away from the spot, so an effect riding the attacker would
+  // slide out of the hit it is standing in. `shielded` reaches the art so a
+  // blocked blow paints the game's cyan block read instead of a clean hit.
+  // A whiff never reaches deliverHit at all, so a miss paints nothing.
+  //
+  // Deliberately NOT the same field a projectile round uses for its
+  // detonation (`impactFx`, read by updateProjectiles' kill path): a round that
+  // connects comes through here too, and one field read in two places would
+  // paint the same effect twice per hit. Two names, two call sites, no overlap.
+  if (def && def.hitFx) {
+    try {
+      spawnTempVfx(attacker, def.hitFx, 0.34, 1, 0, 0, 0, {
+        anchor: 'character',
+        pinnedX: target.x,
+        pinnedY: target.y,
+        mirrorX: hitDir >= 0 ? 1 : -1,
+        params: { unit: (target.radius || 22) / 22, shielded },
+      });
+    } catch (_) {}
+  }
+
   // Hit-confirm lock: damage lands now, the launch is deferred through a brief
   // freeze of both fighters (see updateHitConfirm).
   if (!shielded && effDef.hitConfirm > 0) {
@@ -4021,6 +4529,11 @@ export function updateProjectiles(fighters, dt) {
     for (let _pi = list.length - 1; _pi >= 0; _pi--) {
       const p = list[_pi];
       let _kill = false;
+      // Did this round RESOLVE on something (a fighter, a breakable), as
+      // opposed to simply running out of life or leaving the arena? Only a
+      // resolution detonates the round (see the burst below); a fireball that
+      // timed out over open stage must not paint an explosion over nothing.
+      let _detonate = false;
       p.life -= dt;
       if (p.stuck) {
         p.spin = (p.spin || 0) + dt * 26;
@@ -4046,6 +4559,7 @@ export function updateProjectiles(fighters, dt) {
             if (pxPlusR < d.x || pxMinusR > d.x + d.width ||
                 pyPlusR < d.y || pyMinusR > d.y + d.height) continue;
             hitDestructible(d, p.def);
+            _detonate = true;
             _kill = true;
             break;
           }
@@ -4067,7 +4581,11 @@ export function updateProjectiles(fighters, dt) {
             if (pxPlusR < hb.x || pxMinusR > hb.x + hb.w ||
                 pyPlusR < hb.y || pyMinusR > hb.y + hb.h) continue;
             // Projectiles carry their own full damage/knockback def (set at spawn).
-            applyAbilityHit(p.owner, t, p.def, p.facing);
+            // The return value is the one the releaseBoxerGrab punch already
+            // relies on: a target that slipped the round (a dodge, a parry)
+            // resolves as no hit, so the round must not paint an impact it
+            // never caused — same rule the melee path follows.
+            if (applyAbilityHit(p.owner, t, p.def, p.facing)) _detonate = true;
             if (p.def && p.def.hitLockDuration > 0) {
               p.stuck = true;
               p.x = t.x;
@@ -4083,6 +4601,24 @@ export function updateProjectiles(fighters, dt) {
         }
       }
       if (_kill) {
+        // Detonation, OPT-IN on the projectile's own def (`impactFx`), so a
+        // round without one costs one property read and nothing else — the
+        // cowboy's and ninja's bullets are unaffected. Spawned at the round's
+        // own position and PINNED there, because by this frame the owner has
+        // usually moved on and the effect must stay in the hit it marks.
+        // `unit` scales the whole burst off the round's real radius, so a
+        // Plunder-enhanced ball detonates visibly bigger than a plain one.
+        if (_detonate && p.def && p.def.impactFx) {
+          try {
+            spawnTempVfx(p.owner, p.def.impactFx, 0.5, 1, 0, 0, 0, {
+              anchor: 'character',
+              pinnedX: p.x,
+              pinnedY: p.y,
+              mirrorX: p.facing >= 0 ? 1 : -1,
+              params: { unit: (p.r || 10) / 10 },
+            });
+          } catch (_) {}
+        }
         list[_pi] = list[list.length - 1];
         list.pop();
       }
@@ -4335,6 +4871,43 @@ export const ALL_FIGHTERS = [
     recoveryRange: 1.0,
     recoveryCooldown: 0,
   },
+  // Pirate — the fifth fighter, appended last so the existing roster indices
+  // (and everything that walks the list in order) are unchanged.
+  //
+  // Midweight spacing/zoner: honest mid values on every axis, with mobility
+  // between the ninja and the cowboy and a recovery reach a touch past the
+  // knight's. All of his identity lives in PIRATE_ATTACKS (combat.js) and the
+  // Plunder passive, not in his stats.
+  //
+  // No `attacks` entry: it uses the PIRATE_ATTACKS table, picked by id in
+  // attacksFor, the same way the ninja, boxer and knight are.
+  //
+  // `accessory` is the pirate's BUILT-IN hat (used by loadAccessoryFor only
+  // when nothing is stored, so the ACCESSORIES editor can still override it),
+  // exactly like `handGear` on the other characters. The saber is not declared
+  // here: it rides Pirate's own animations through the shared weapon
+  // attachment system, so it is gripped, rotated and mirrored like every other
+  // armed fighter's blade.
+  {
+    id: 'pirate',
+    name: 'Pirate',
+    color: '#c8a24a',
+    skin: '/GA/skins/pirate.png',
+    skinScale: 0.85,
+    accessory: 'piratehat',
+    weight: 105,     // Midweight — launched a touch softer than the knight
+    radius: 31.2,
+    runSpeed: 69,    // Between the ninja's 83 and the cowboy's 71
+    jumpForce: 706,
+    gravityMul: 1.0,
+    fallMaxMul: 1.0,
+    airAccelMul: 1.0,
+    recoveryMul: 1.0,
+    launchResist: 1.0,
+    recoveryStrength: 1.0,
+    recoveryRange: 1.05,
+    recoveryCooldown: 0,
+  },
 ];
 
 // Statis stage list for the sandbox (single arena layout).
@@ -4477,6 +5050,10 @@ export function stepRosterCombat(fighters, inputOverrides, dt) {
   // Ability projectiles: move, expire and resolve collisions the same way an
   // active hitbox would (same damage rules).
   updateProjectiles(fighters, dt);
+  // The pirate's Plunder decay. Lives here, in the shared roster step, so the
+  // match, the sandbox and the AI-training headless matches all meter Plunder
+  // through the exact same clock — there is no second update path for it.
+  updatePlunder(fighters, dt);
 }
 
 // ── State + animation + landing squish ───────────────────────────────────
@@ -4643,4 +5220,8 @@ export function softResetFighter(f, stage) {
   // ...and no live counter stance either.
   f._knightCounter = 0;
   f._counterResolving = false;
+  // ...and the pirate's Plunder: a respawn starts the meter empty, never with
+  // banked points (or a half-run decay clock) carried in from the last stock.
+  f._plunder = 0;
+  f._plunderTimer = 0;
 }

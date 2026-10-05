@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Blue Pirate Slash FX</title>
+<style>
+  :root { box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); }
+  html,body { height:100%; margin:0; background:#23262d; overflow:hidden; }
+  canvas { display:block; width:100%; height:100%; }
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Blue pirate ball charges, dashes with a crescent slash, and hits with a burst of sparks"></canvas>
+<script>
+(() => {
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  let W, H, DPR, S;
+  function resize() { DPR = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; S = Math.min(W / 460, H / 250); }
+  addEventListener('resize', resize); resize();
+
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+  const eo = t => 1 - Math.pow(1 - clamp(t), 3), eio = t => { t = clamp(t); return t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; };
+  const lerp = (a, b, t) => a + (b - a) * t, crossed = (p, T, thr) => p < thr && T >= thr;
+  const parts = [];
+  const add = o => parts.push(Object.assign({ vx: 0, vy: 0, drag: 0, type: 'dot', tw: false, ang: 0 }, o, { max: o.life }));
+
+  // timeline (seconds)
+  const CHG = 0.7, DASH = 0.2, HIT = CHG + DASH, BACK = 1.95, L = 2.6;
+
+  function swoosh(f, t0, t1, width, rgb, alpha, blur) {
+    const N = 30, A = [], B = [];
+    for (let i = 0; i <= N; i++) {
+      const u = i / N, [x, y, nx, ny] = f(t0 + (t1 - t0) * u), w = width * Math.pow(Math.sin(Math.PI * (0.03 + 0.94 * u)), 0.8) * (0.4 + 0.6 * u);
+      A.push([x + nx * w / 2, y + ny * w / 2]); B.push([x - nx * w / 2, y - ny * w / 2]);
+    }
+    ctx.beginPath(); ctx.moveTo(...A[0]); A.forEach(p => ctx.lineTo(...p)); for (let i = N; i >= 0; i--) ctx.lineTo(...B[i]); ctx.closePath();
+    ctx.fillStyle = `rgba(${rgb},${alpha})`; ctx.shadowColor = `rgba(${rgb},${alpha})`; ctx.shadowBlur = blur || 0; ctx.fill(); ctx.shadowBlur = 0;
+  }
+  function layered(f, t0, t1, w, a) {
+    ctx.globalCompositeOperation = 'lighter';
+    swoosh(f, t0, t1, w * 1.8, '50,130,255', 0.26 * a, 14 * S);
+    swoosh(f, t0, t1, w, '150,215,255', 0.75 * a);
+    swoosh(f, t0, t1, w * 0.36, '255,255,255', a);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  function glow(x, y, r, rgb, a) {
+    if (a <= 0) return; ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, `rgba(${rgb},${a})`); g.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+  }
+  function ball(x, y, sx, sy, a = 1) {
+    ctx.save(); ctx.globalAlpha = a; ctx.translate(x, y + 34 * S * (1 - sy)); ctx.scale(S * sx, S * sy); ctx.lineJoin = 'round'; ctx.lineWidth = 3.5; ctx.strokeStyle = '#0f1a3e';
+    const g = ctx.createRadialGradient(-10, -12, 4, 0, 0, 36); g.addColorStop(0, '#5a9bf5'); g.addColorStop(.6, '#2f6fd8'); g.addColorStop(1, '#2150b4');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 34, 0, 6.283); ctx.fill(); ctx.stroke();
+    ctx.save(); ctx.rotate(-0.04); ctx.fillStyle = '#1f2c55'; ctx.beginPath(); ctx.moveTo(-36, -22);
+    ctx.bezierCurveTo(-34, -38, -18, -50, -2, -50); ctx.bezierCurveTo(14, -50, 31, -40, 36, -24); ctx.quadraticCurveTo(0, -12, -36, -22); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#d9a441'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath();
+    ctx.moveTo(-32, -30); ctx.quadraticCurveTo(-24, -52, -10, -50); ctx.quadraticCurveTo(-2, -60, 8, -50); ctx.quadraticCurveTo(24, -54, 32, -32); ctx.stroke(); ctx.restore(); ctx.restore();
+  }
+
+  let prev = 99, acc = 0;
+  function scene(t, dt) {
+    const T = t % L, cx = W / 2, by = H * 0.5, gy = by + 40 * S;
+    const x0 = cx - 150 * S, x1 = cx - 10 * S, hit = T - HIT;
+    // ball motion
+    let bx = x0, sx = 1, sy = 1, bob = 0;
+    if (T < CHG - 0.14) { bob = Math.sin(T * 5) * 2 * S; }
+    else if (T < CHG) { const k = eio((T - CHG + 0.14) / 0.14); bx = x0 - 8 * S * k; sx = 1 + .1 * k; sy = 1 - .12 * k; }
+    else if (T < HIT) { const p = (T - CHG) / DASH, e = p * p * (3 - 2 * p); bx = lerp(x0 - 8 * S, x1, Math.pow(e, .7)); sx = 1 + .2 * Math.sin(p * Math.PI * .9); sy = 1 - .13 * Math.sin(p * Math.PI * .9); }
+    else if (T < BACK) { const r = Math.exp(-hit * 10); bx = x1 - 10 * S * r; sx = 1 - .08 * r; sy = 1 + .07 * r; }
+    else { const r = eio((T - BACK) / (L - BACK)); bx = lerp(x1, x0, r); }
+
+    // events
+    if (crossed(prev, T, HIT)) {
+      for (let i = 0; i < 8; i++) { const a = rnd(-0.9, 0.9) + (i % 2 ? .15 : -.15), v = rnd(110, 260) * S, warm = i < 6;
+        add({ type: 'spike', x: x1 + 74 * S, y: by + rnd(-30, 30) * S, vx: Math.cos(a) * v, vy: Math.sin(a) * v, ang: a, life: rnd(.35, .6), size: rnd(7, 13) * S, col: warm ? '255,175,90' : '190,235,255', drag: 3 }); }
+      for (let i = 0; i < 4; i++) add({ x: x1 + 70 * S, y: by + rnd(-26, 26) * S, vx: rnd(20, 90) * S, vy: rnd(-40, 40) * S, life: rnd(.4, .7), size: rnd(1.5, 2.6) * S, col: '120,200,255', drag: 2 });
+    }
+    if (crossed(prev, T, CHG) ) for (let i = 0; i < 9; i++) add({ type: 'dash', x: x0 + rnd(-40, 20) * S, y: by + rnd(-22, 20) * S, vx: -rnd(10, 40) * S, life: rnd(.5, .9), size: rnd(1.6, 2.4) * S, len: rnd(4, 9) * S, col: '110,190,255', tw: true });
+    prev = T;
+
+    // ground shadow
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(bx, gy, 36 * S, 6 * S, 0, 0, 6.283); ctx.fill();
+
+    // charge aura + ambient dots
+    if (T < CHG) {
+      const k = T / CHG; glow(bx, by, 80 * S, '60,140,255', 0.14 + 0.2 * k * k);
+      acc += dt * (5 + 6 * k);
+      while (acc >= 1) { acc--; const a = rnd(0, 6.283), r = rnd(46, 68) * S;
+        add({ x: bx + Math.cos(a) * r, y: by + Math.sin(a) * r * .85, vx: -Math.cos(a) * 14 * S * (.4 + k), vy: -Math.sin(a) * 10 * S - 4 * S, life: rnd(.8, 1.3), size: rnd(1.3, 2.8) * S, col: Math.random() < .25 ? '200,235,255' : '80,160,255', tw: true }); }
+    } else if (T < HIT + 0.2) glow(bx, by, 70 * S, '70,150,255', 0.2 * (1 - clamp((T - CHG) / 0.4)));
+
+    // dash crescent (world-anchored, sweeps in as the ball launches)
+    const sw = clamp((T - CHG) / 0.2), fade = 1 - clamp((T - HIT - 0.05) / 0.4);
+    if (sw > 0 && fade > 0) {
+      const P0 = [x0 - 40 * S, by + 30 * S], C = [lerp(x0, x1, .55), by + 42 * S], P1 = [x1 + 80 * S, by - 8 * S];
+      const f = u => { const v = 1 - u, x = v * v * P0[0] + 2 * v * u * C[0] + u * u * P1[0], y = v * v * P0[1] + 2 * v * u * C[1] + u * u * P1[1];
+        const dx = 2 * v * (C[0] - P0[0]) + 2 * u * (P1[0] - C[0]), dy = 2 * v * (C[1] - P0[1]) + 2 * u * (P1[1] - C[1]), l = Math.hypot(dx, dy); return [x, y, -dy / l, dx / l]; };
+      const h = eo(sw), tl = clamp(h - 0.8 - (1 - fade) * 0.4, 0, 1);
+      layered(f, tl, h, 24 * S, fade);
+    }
+    // ghost afterimages while dashing
+    if (T >= CHG && T < HIT) for (let g = 2; g >= 1; g--) { const p = clamp((T - CHG) / DASH - g * 0.12), e = p * p * (3 - 2 * p); ball(lerp(x0 - 8 * S, x1, Math.pow(e, .7)), by, 1, 1, 0.14 * (3 - g)); }
+    ball(bx, by + bob, sx, sy);
+
+    // impact crescent
+    if (hit >= 0 && hit < 0.6) {
+      const p = eo(hit / 0.14), a = 1 - clamp((hit - 0.18) / 0.4), R = 78 * S * (0.6 + 0.4 * p);
+      const tipX = x1 + 52 * S + 10 * S * p, cxA = tipX - 0.45 * R, cy = by - 2 * S;
+      const mk = (RR, ox) => u => { const ang = -1.1 + 2.2 * u, co = Math.cos(ang), si = Math.sin(ang); return [cxA + ox + RR * co, cy + RR * 1.25 * si, co, si]; };
+      layered(mk(R, 0), 0, 1, 24 * S * (1 - .3 * (1 - a)), a);
+      layered(mk(R * .86, -14 * S), 0.1, 0.9, 12 * S, a * .7);
+      glow(cxA + R, cy, 50 * S, '200,235,255', 0.5 * (1 - clamp(hit / 0.3)));
+    }
+  }
+
+  function stepParts(dt) {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i]; p.life -= dt; if (p.life <= 0) { parts.splice(i, 1); continue; }
+      const d = Math.exp(-p.drag * dt); p.vx *= d; p.vy *= d; p.x += p.vx * dt; p.y += p.vy * dt;
+    }
+  }
+  function drawParts() {
+    ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+    for (const p of parts) {
+      const age = 1 - p.life / p.max, a = p.tw ? Math.sin(Math.PI * age) : 1 - age * age;
+      if (p.type === 'spike') {
+        const l = p.size * (1 - age * .6), w = 1.8 * S * (1 - age * .5), c = Math.cos(p.ang), s = Math.sin(p.ang);
+        ctx.fillStyle = `rgba(${p.col},${a})`; ctx.beginPath(); ctx.moveTo(p.x + c * l, p.y + s * l); ctx.lineTo(p.x - s * w, p.y + c * w); ctx.lineTo(p.x - c * l, p.y - s * l); ctx.lineTo(p.x + s * w, p.y - c * w); ctx.closePath(); ctx.fill();
+      } else if (p.type === 'dash') {
+        ctx.strokeStyle = `rgba(${p.col},${a})`; ctx.lineWidth = p.size; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + p.len, p.y); ctx.stroke();
+      } else {
+        const r = p.size * (0.6 + 0.4 * a), g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 2.4);
+        g.addColorStop(0, `rgba(${p.col},${a})`); g.addColorStop(.4, `rgba(${p.col},${a * .5})`); g.addColorStop(1, `rgba(${p.col},0)`);
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, r * 2.4, 0, 6.283); ctx.fill();
+      }
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.fillStyle = '#23262d'; ctx.fillRect(0, 0, W, H);
+    stepParts(dt); scene(now / 1000, dt); drawParts();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

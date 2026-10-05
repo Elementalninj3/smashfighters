@@ -1436,6 +1436,712 @@ function _blueSlashCrescent(ctx, R, Wd, a0, a1, alpha) {
     ctx.globalAlpha = 1;
   }
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// PIRATE EFFECTS  (GA/vfx/ rope swing · cutlass lunge · anchor drop · cannon blast)
+// ═══════════════════════════════════════════════════════════════════════════
+// Converted from the four pirate demos in GA/vfx, the same way every other
+// character set in this file was: the demo's standalone character, camera and
+// background are gone, and what remains is the effect itself, re-timed onto the
+// move's own frame clock and scaled to the game's world units. All procedural
+// and all draw-only — none of these owns a hitbox, damage or collision.
+//
+//   pirateRope          — Rope Swing (GA/vfx/Rope swing.html). The thrown
+//                        grapple: a taut rope to a hook head at its far end,
+//                        with the demo's three-layer warm comet wake streaming
+//                        off the swinging body. Anchored to the front hand, so
+//                        it rides the dash exactly as the demo's trail rode
+//                        the ball.
+//   pirateCutlassSlash  — Cutlass Lunge (GA/vfx/Cutlasslunge.html). The
+//                        world-anchored crescent that sweeps in along the
+//                        lunge's path — pinned at the spot the lunge started,
+//                        so it stays in the world while the body moves through
+//                        it, which is what the demo's "world-anchored, sweeps
+//                        in as the ball launches" comment describes.
+//   pirateAnchorSlam    — Anchor Drop (GA/vfx/Anchor drop.html). The ground
+//                        eruption: gold light pillars, radial cracks, an
+//                        expanding shock ring, tumbling rock and rising embers.
+//   pirateCannonTrail   — Cannon Blast (GA/vfx/cannon blast.html). The round
+//                        itself: a dark iron ball with the demo's rim sheen
+//                        inside its three-layer flame wake. Rides the bullet.
+//   pirateCannonImpact  — the same demo's detonation: core flash, dome
+//                        shockwave, ground ring and debris spikes, spawned
+//                        wherever the round actually resolved.
+//   pirateBroadside     — the wide close-range cone on the Broadside Burst.
+//   pirateHitBurst      — the shared connect burst every pirate melee move
+//                        lands through (one effect, not one per move), so a
+//                        rope, a cutlass and an anchor all burst the same way.
+
+// ── Pirate helpers ───────────────────────────────────────────────────────
+// Deterministic per-index pseudo-random, memoized on the same (i, salt)
+// pattern the boxer set uses. Nothing in a pirate effect may roll a fresh
+// number between frames or the animator's scrub would repaint a different
+// picture every pass; hashing the index reproduces a fixed "roll" instead.
+function pirateHash01(i, salt) {
+  const x = Math.sin(i * 91.7 + (salt || 0) * 47.3) * 43758.5453;
+  return x - Math.floor(x);
+}
+const _pirateHashCache = new Map();
+function pirateHash01c(i, salt) {
+  const n = i * 32 + (salt || 0);
+  let h = _pirateHashCache.get(n);
+  if (h === undefined) {
+    h = pirateHash01(i, salt);
+    if (_pirateHashCache.size < 1024) _pirateHashCache.set(n, h);
+  }
+  return h;
+}
+const PIRATE_TAU = Math.PI * 2;
+const PIRATE_NO_PARAMS = {};
+
+// Alpha quantized to 17 steps over [0, 1]: the fill loops below run per
+// fragment per frame, and a template-literal rgba() there would allocate a
+// string and force a CSS colour re-parse every single one. Both endpoints
+// (fully opaque, fully faded) are exactly representable on the ramp.
+const _PR_A_STEPS = 16;
+function pirateRamp(rgb) {
+  const r = new Array(_PR_A_STEPS + 1);
+  for (let i = 0; i <= _PR_A_STEPS; i++) {
+    r[i] = 'rgba(' + rgb + ',' + (i / _PR_A_STEPS).toFixed(3) + ')';
+  }
+  return r;
+}
+const _prFlameOut = pirateRamp('255,90,10');
+const _prFlameMid = pirateRamp('255,200,80');
+const _prFlameCore = pirateRamp('255,255,230');
+const _prGold = pirateRamp('255,190,80');
+const _prGoldHot = pirateRamp('255,235,170');
+const _prSteel = pirateRamp('160,220,255');
+const _prCyan = pirateRamp('110,200,255');
+const _prShield = pirateRamp('150,215,255');
+const _prRock = pirateRamp('90,71,51');
+// Alpha -> ramp index, clamped at both ends.
+function prA(a) {
+  if (a <= 0) return 0;
+  if (a >= 1) return _PR_A_STEPS;
+  return (a * _PR_A_STEPS) | 0;
+}
+
+// Cached unit-radius glow gradients, one per context (the boxer aura's
+// precedent). Drawn through a scale(R, R) transform, which is pixel-identical
+// to a fresh gradient built at radius R: a concentric radial gradient's colour
+// is a function of RELATIVE distance. Building one per frame per effect would
+// cost three addColorStop parses plus an allocation on every live frame.
+let _prGoldCtx = null;
+let _prGoldGrad = null;
+function pirateGoldGlow(ctx) {
+  if (_prGoldGrad && _prGoldCtx === ctx) return _prGoldGrad;
+  _prGoldCtx = ctx;
+  _prGoldGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+  _prGoldGrad.addColorStop(0, 'rgba(255,205,120,0.55)');
+  _prGoldGrad.addColorStop(1, 'rgba(255,170,40,0)');
+  return _prGoldGrad;
+}
+let _prFlameCtx = null;
+let _prFlameGrad = null;
+function pirateFlameGlow(ctx) {
+  if (_prFlameGrad && _prFlameCtx === ctx) return _prFlameGrad;
+  _prFlameCtx = ctx;
+  _prFlameGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+  _prFlameGrad.addColorStop(0, 'rgba(255,170,60,0.42)');
+  _prFlameGrad.addColorStop(1, 'rgba(255,90,10,0)');
+  return _prFlameGrad;
+}
+
+// A tapered ribbon along a quadratic bezier from parameter u0 to u1 — the
+// shape the demo's `swoosh` (cutlass) is built from. The half-width swells and
+// pinches at the ends so the stroke has a drawn start and a drawn tip instead
+// of two flat cuts.
+function pirateRibbon(ctx, x0, y0, cx, cy, x1, y1, u0, u1, w, style) {
+  if (u1 - u0 <= 0.001) return;
+  const N = 10;
+  ctx.beginPath();
+  for (let i = 0; i <= N; i++) {
+    const u = u0 + (u1 - u0) * (i / N);
+    const iv = 1 - u;
+    const h = w * Math.sin(Math.PI * (0.08 + 0.84 * u));
+    const x = iv * iv * x0 + 2 * iv * u * cx + u * u * x1;
+    const y = iv * iv * y0 + 2 * iv * u * cy + u * u * y1;
+    if (i) ctx.lineTo(x, y - h); else ctx.moveTo(x, y - h);
+  }
+  for (let i = N; i >= 0; i--) {
+    const u = u0 + (u1 - u0) * (i / N);
+    const iv = 1 - u;
+    const h = w * Math.sin(Math.PI * (0.08 + 0.84 * u));
+    ctx.lineTo(iv * iv * x0 + 2 * iv * u * cx + u * u * x1,
+      iv * iv * y0 + 2 * iv * u * cy + u * u * y1 + h);
+  }
+  ctx.closePath();
+  ctx.fillStyle = style;
+  ctx.fill();
+}
+
+// The demo's three-layer comet wake, streaming BACKWARD along local -x (the
+// effect's own transform already points +x down the direction of travel or
+// down the captured facing, so -x is always "behind"). The wobble is driven by
+// the caller's clock rather than a fresh random, so a scrubbed frame paints
+// identically every pass.
+const _PI_WAKE = [
+  { k: 1.00, w: 1.00 },
+  { k: 0.66, w: 0.56 },
+  { k: 0.34, w: 0.24 },
+];
+function pirateWake(ctx, len, wid, clock, ramp) {
+  const N = 9;
+  for (let li = 0; li < _PI_WAKE.length; li++) {
+    const L = _PI_WAKE[li];
+    ctx.beginPath();
+    ctx.moveTo(0, -wid * L.w);
+    for (let i = 1; i <= N; i++) {
+      const u = i / N;
+      const wob = Math.sin(u * 6.5 + clock * 9 + li * 2.1) * wid * L.w * 0.3 * u;
+      ctx.lineTo(-len * L.k * u, -wid * L.w * (1 - u * 0.7) + wob);
+    }
+    for (let i = N; i >= 1; i--) {
+      const u = i / N;
+      const wob = Math.sin(u * 6.5 + clock * 9 + li * 2.1 + 1.6) * wid * L.w * 0.3 * u;
+      ctx.lineTo(-len * L.k * u, wid * L.w * (1 - u * 0.7) + wob);
+    }
+    ctx.closePath();
+    ctx.fillStyle = ramp[li];
+    ctx.fill();
+  }
+}
+
+// The three slash layers, widest/softest first. `lag` is how far behind the
+// head each layer's tail trails, in arc parameter — the gap between them is
+// what gives the stroke its white leading edge over a blue body.
+const _PI_SLASH_LAYERS = [
+  { w: 0.19, lag: 0.86, a: 0.26, ramp: _prSteel },
+  { w: 0.105, lag: 0.66, a: 0.72, ramp: _prSteel },
+  { w: 0.038, lag: 0.46, a: 1.0, ramp: _prShield },
+];
+// Static index tables for the loops below. Only `.length` and `i` are ever
+// read, so a plain filled array is the whole requirement — building these as
+// literals at each use site was the old cost.
+function pirateCount(n) {
+  const a = new Array(n);
+  for (let i = 0; i < n; i++) a[i] = i;
+  return a;
+}
+const _PI_PILLARS = pirateCount(9);
+const _PI_ROCKS = pirateCount(9);
+const _PI_EMBERS = pirateCount(14);
+const _PI_SPIKES = pirateCount(20);
+const _PI_BURST_RAYS = pirateCount(11);
+const _PI_CRACKS = pirateCount(9);
+const _PI_CRACK_NODES = 7;
+const _PI_BURST_CRESCENTS = [
+  { ox: 8, r: 30, w: 5, a: 0.7 },
+  { ox: 4, r: 21, w: 3, a: 0.85 },
+  { ox: 0, r: 13, w: 1.8, a: 1 },
+];
+
+const PIRATE_VFX = {
+  // ── Rope Swing ──────────────────────────────────────────────────────────
+  // The thrown grapple. Anchored to the front hand, so the rope, the hook and
+  // the wake all travel with the swing — the demo's rope, hook and trail all
+  // moved with its ball, and this is the same relationship to a different
+  // body. Drawn forward (+x) so it points down the captured facing under the
+  // caller's mirrorX.
+  pirateRope: {
+    name: 'Pirate Rope',
+    color: '#c9b489',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      const prog = v.progress;
+      const P = v.params || PIRATE_NO_PARAMS;
+      const len = (P.length || 78) * (0.35 + 0.65 * Math.min(1, prog * 2.2));
+      // Wake first and underneath: the rope and the hook are the hard read,
+      // the comet stream is the motion behind them.
+      ctx.globalCompositeOperation = 'lighter';
+      pirateWake(ctx, len * 1.5, 9 + 12 * Math.min(1, prog * 2), prog * 6, _prFlameMid);
+      ctx.globalCompositeOperation = 'source-over';
+      // Rope: dark under-stroke, fibre highlight, then the hook head.
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#4a3f2c';
+      ctx.lineWidth = 3.4;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(len * 0.5, 7 * (1 - prog), len, 0);
+      ctx.stroke();
+      ctx.strokeStyle = '#c9b489';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      ctx.strokeStyle = '#2f2a22';
+      ctx.lineWidth = 3.2;
+      ctx.beginPath();
+      ctx.arc(len, 0, 5.6, -1.9, 1.5);
+      ctx.stroke();
+      ctx.strokeStyle = '#d8dde6';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+    },
+  },
+
+  // ── Cutlass Lunge ───────────────────────────────────────────────────────
+  // The lunge's crescent. PINNED at the world point the lunge started from
+  // (spawnTempVfx's pinnedX/pinnedY), so as the body moves along the path the
+  // blade arc stays behind in the world and the fighter visibly passes through
+  // it. The head runs ahead of the tail by a fixed arc length, which is what
+  // makes it read as a blade travelling rather than a shape being scaled up.
+  pirateCutlassSlash: {
+    name: 'Cutlass Slash',
+    color: '#9fd8ff',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      const prog = v.progress;
+      if (prog >= 1) return;
+      const P = v.params || PIRATE_NO_PARAMS;
+      const unit = P.unit == null ? 1 : P.unit;
+      const reach = (P.reach || 96) * unit;
+      // Head races out over the first third, then the whole arc holds its
+      // shape while it fades.
+      const head = artEaseOutExpo(Math.min(1, prog / 0.34));
+      const alpha = prog < 0.34 ? 1 : Math.max(0, 1 - (prog - 0.34) / 0.66);
+      if (alpha <= 0.004) return;
+      // The demo's blade path: up out of the ground behind, through a low
+      // control point, up and forward past the tip.
+      const x0 = -reach * 0.16, y0 = reach * 0.30;
+      const cx = reach * 0.42, cy = reach * 0.34;
+      const x1 = reach * 0.82, y1 = -reach * 0.14;
+      ctx.globalCompositeOperation = 'lighter';
+      for (let li = 0; li < _PI_SLASH_LAYERS.length; li++) {
+        const L = _PI_SLASH_LAYERS[li];
+        // Each layer's tail lags its head, so the three read as one stroke
+        // with a hot leading edge and a soft trailing one.
+        const tail = Math.max(0, head - L.lag);
+        pirateRibbon(ctx, x0, y0, cx, cy, x1, y1, tail, head,
+          reach * L.w, L.ramp[prA(alpha * L.a)]);
+      }
+      // Bloom at the leading tip, while the head is still travelling.
+      if (prog < 0.5) {
+        const g = (1 - prog * 2) * 0.5;
+        if (g > 0.01) {
+          const iv = 1 - head;
+          const hx = iv * iv * x0 + 2 * iv * head * cx + head * head * x1;
+          const hy = iv * iv * y0 + 2 * iv * head * cy + head * head * y1;
+          const R = reach * 0.3 * g;
+          ctx.save();
+          ctx.globalAlpha = g;
+          ctx.translate(hx, hy);
+          ctx.scale(R, R);
+          ctx.fillStyle = _prCyan[_PR_A_STEPS];
+          ctx.beginPath();
+          ctx.arc(0, 0, 1, 0, PIRATE_TAU);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+      ctx.restore();
+    },
+  },
+
+  // ── Anchor Drop ─────────────────────────────────────────────────────────
+  // The ground eruption. Gold light pillars and radial cracks are the demo's
+  // signature, so they lead; the shock ring, tumbling rock and rising embers
+  // fill in behind them.
+  pirateAnchorSlam: {
+    name: 'Pirate Anchor Slam',
+    color: '#ffbe50',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      const prog = v.progress;
+      if (prog >= 1) return;
+      const P = v.params || PIRATE_NO_PARAMS;
+      const U = P.unit == null ? 1 : P.unit;
+      // Crack reach runs out first, the ring just behind it, everything else
+      // rides the whole life.
+      const reachE = artEaseOutExpo(Math.min(1, prog / 0.22));
+      const ringE = artEaseOutExpo(Math.min(1, prog / 0.4));
+      const fade = Math.max(0, 1 - prog);
+
+      // Gold light pillars, rising off the floor.
+      ctx.globalCompositeOperation = 'lighter';
+      const pf = Math.max(0, 1 - Math.max(0, prog - 0.1) / 0.9);
+      if (pf > 0.01) {
+        for (let i = 0; i < _PI_PILLARS.length; i++) {
+          const h1 = pirateHash01c(i, 3);
+          const h2 = pirateHash01c(i, 4);
+          const x = (i - 4) * 9 * U + (h1 - 0.5) * 5 * U;
+          const w = (5 + h2 * 6) * U;
+          const h = (60 + h1 * 70) * U * artEaseOutExpo(Math.min(1, prog / 0.16));
+          ctx.globalAlpha = pf * (0.32 + h2 * 0.26);
+          ctx.fillStyle = _prGold[prA(0.55 + h1 * 0.4)];
+          ctx.fillRect(x - w * 0.5, -h, w, h);
+        }
+        ctx.globalAlpha = 1;
+      }
+      // Ground bloom.
+      if (prog < 0.5) {
+        const R = (26 + 40 * ringE) * U;
+        ctx.save();
+        ctx.scale(R * 1.5, R * 0.42);
+        ctx.fillStyle = pirateGoldGlow(ctx);
+        ctx.beginPath();
+        ctx.arc(0, 0, 1, 0, PIRATE_TAU);
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+
+      // Radial cracks, thrown out along the floor.
+      ctx.lineCap = 'round';
+      for (let i = 0; i < _PI_CRACKS.length; i++) {
+        const a0 = pirateHash01c(i, 5) * PIRATE_TAU;
+        let r = 0;
+        ctx.strokeStyle = _prGold[prA(fade * 0.85)];
+        ctx.lineWidth = (1.6 + pirateHash01c(i, 6) * 1.4) * U;
+        ctx.beginPath();
+        for (let j = 0; j < _PI_CRACK_NODES; j++) {
+          r += (14 + pirateHash01c(i * 8 + j, 7) * 14) * U;
+          const a = a0 + (pirateHash01c(i * 8 + j, 8) - 0.5) * 0.18;
+          const x = Math.cos(a) * r * reachE * 1.15;
+          const y = Math.sin(a) * r * reachE * 0.28;
+          if (j) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+      }
+
+      // Shock ring.
+      if (ringE < 1) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = _prGoldHot[prA((1 - ringE) * 0.8)];
+        ctx.lineWidth = 4 * U * (1 - ringE * 0.6) + 0.5;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, (18 + 96 * ringE) * U, (6 + 26 * ringE) * U, 0, 0, PIRATE_TAU);
+        ctx.stroke();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // Tumbling rock, on gravity arcs.
+      for (let i = 0; i < _PI_ROCKS.length; i++) {
+        const h1 = pirateHash01c(i, 9);
+        const h2 = pirateHash01c(i, 10);
+        const a = -0.15 - h1 * 2.5;
+        const sp = 0.5 + h2 * 1.4;
+        const d = (30 + h1 * 70) * U * sp * artEaseOutExpo(Math.min(1, prog * 2.4));
+        const y = Math.sin(a) * d + 340 * U * prog * prog;
+        if (y > 0) continue;
+        ctx.save();
+        ctx.translate(Math.cos(a) * d, y);
+        ctx.rotate(prog * (4 + h2 * 8) * (h1 > 0.5 ? 1 : -1));
+        ctx.globalAlpha = fade;
+        ctx.fillStyle = _prRock[_PR_A_STEPS];
+        const sz = (2.6 + h1 * 3) * U;
+        ctx.beginPath();
+        ctx.moveTo(-sz, -sz * 0.5);
+        ctx.lineTo(0, -sz);
+        ctx.lineTo(sz, 0);
+        ctx.lineTo(sz * 0.3, sz);
+        ctx.lineTo(-sz, sz * 0.4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#17110c';
+        ctx.lineWidth = 1.4 * U;
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+
+      // Embers drifting up.
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < _PI_EMBERS.length; i++) {
+        const h1 = pirateHash01c(i, 11);
+        const h2 = pirateHash01c(i, 12);
+        const x = (h1 - 0.5) * 90 * U;
+        const y = -((14 + h2 * 26) * U + prog * (50 + h1 * 70) * U);
+        const a = fade * Math.sin(Math.PI * Math.min(1, prog * 1.4));
+        ctx.fillStyle = _prGoldHot[prA(a * 0.9)];
+        ctx.beginPath();
+        ctx.arc(x, y, (1.2 + h1 * 1.6) * U, 0, PIRATE_TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    },
+  },
+
+  // ── Cannon Blast (in flight) ────────────────────────────────────────────
+  // The round itself. The demo drew a dark iron ball with a bright rim sheen
+  // inside a three-layer flame wake; that is what rides the projectile here.
+  // Local +x points down the travel direction (the renderer sets `rotation`
+  // from the velocity and `mirrorX` from the facing), so the wake streams off
+  // behind in -x. `p.spin` is the projectile's own advancing clock, used only
+  // to make the flame writhe — the ball's motion already carries the wake
+  // down the screen.
+  pirateCannonTrail: {
+    name: 'Pirate Cannon Trail',
+    color: '#ffbe50',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      const r = p.r || 10;
+      const clock = (p.spin || 0) * 0.35;
+      ctx.globalCompositeOperation = 'lighter';
+      pirateWake(ctx, r * 5.4, r * 1.25, clock, _prFlameOut);
+      pirateWake(ctx, r * 4.4, r * 0.95, clock * 1.3, _prFlameMid);
+      pirateWake(ctx, r * 2.6, r * 0.55, clock * 1.7, _prFlameCore);
+      const R = r * 2.6;
+      ctx.save();
+      ctx.scale(R, R);
+      ctx.fillStyle = pirateFlameGlow(ctx);
+      ctx.beginPath();
+      ctx.arc(0, 0, 1, 0, PIRATE_TAU);
+      ctx.fill();
+      ctx.restore();
+      // The ball.
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = '#2b2f38';
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, PIRATE_TAU);
+      ctx.fill();
+      ctx.strokeStyle = '#0b0c10';
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(190,200,220,0.7)';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(0, 0, Math.max(1, r - 1.6), 3.6, 4.7);
+      ctx.stroke();
+      ctx.restore();
+    },
+  },
+
+  // ── Cannon Blast (detonation) ───────────────────────────────────────────
+  // Spawned by combat.js wherever a round actually RESOLVES — a landed hit, a
+  // shielded block, a destructible it blew through. Never on a round that
+  // simply ran out of life or left the arena, so an air fireball never paints
+  // an explosion over empty stage. `params.unit` scales the whole burst off
+  // the round's own radius, so a Plunder-enhanced ball bursts bigger.
+  pirateCannonImpact: {
+    name: 'Pirate Cannon Impact',
+    color: '#ffbe50',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      const prog = v.progress;
+      if (prog >= 1) return;
+      const P = v.params || PIRATE_NO_PARAMS;
+      const U = P.unit == null ? 1 : P.unit;
+      const fade = Math.max(0, 1 - prog);
+      const flash = Math.max(0, 1 - prog / 0.22);
+      const dome = artEaseOutExpo(Math.min(1, prog / 0.5));
+
+      ctx.globalCompositeOperation = 'lighter';
+      // Core flash.
+      if (flash > 0.01) {
+        const R = 90 * U * (0.6 + 0.4 * flash);
+        ctx.save();
+        ctx.scale(R, R);
+        ctx.globalAlpha = flash;
+        ctx.fillStyle = _prFlameCore[_PR_A_STEPS];
+        ctx.beginPath();
+        ctx.arc(0, 0, 1, 0, PIRATE_TAU);
+        ctx.fill();
+        ctx.restore();
+      }
+      // Dome shockwave.
+      if (prog < 0.55) {
+        const dr = 130 * U * dome;
+        const da = (1 - prog / 0.55) * 0.7;
+        ctx.strokeStyle = _prFlameMid[prA(da)];
+        ctx.lineWidth = 4 * U * (1 - dome) + 1;
+        ctx.beginPath();
+        ctx.arc(0, 0, dr, 0, PIRATE_TAU);
+        ctx.stroke();
+        ctx.strokeStyle = _prFlameCore[prA(da * 0.8)];
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, dr * 0.88, 3.6, 4.6);
+        ctx.stroke();
+      }
+      // Ground ring, flattened like the demo's.
+      if (dome < 1) {
+        ctx.strokeStyle = _prFlameOut[prA((1 - dome) * 0.8)];
+        ctx.lineWidth = 7 * U * (1 - dome * 0.7) + 0.5;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 210 * U * dome, 210 * U * dome * 0.14, 0, 0, PIRATE_TAU);
+        ctx.stroke();
+      }
+      // Debris spikes thrown out radially.
+      ctx.lineCap = 'round';
+      for (let i = 0; i < _PI_SPIKES.length; i++) {
+        const h1 = pirateHash01c(i, 13);
+        const h2 = pirateHash01c(i, 14);
+        const a = h1 * PIRATE_TAU;
+        const len = 90 * U * (0.6 + h2 * 1.5) * artEaseOutExpo(Math.min(1, prog * 2.6));
+        if (len < 3) continue;
+        ctx.strokeStyle = (i % 2 ? _prFlameMid : _prFlameCore)[prA(fade * (0.5 + h1 * 0.5))];
+        ctx.lineWidth = (1.6 + h2 * 2.4) * U;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * 10 * U, Math.sin(a) * 10 * U);
+        ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      // Scorch left behind.
+      if (prog > 0.06) {
+        ctx.globalAlpha = Math.max(0, 0.5 * (1 - Math.max(0, prog - 0.1) / 0.9));
+        ctx.fillStyle = '#120c08';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 70 * U, 12 * U, 0, 0, PIRATE_TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    },
+  },
+
+  // The broadside's wide, short cone of shot. Params: { scale } rides on `s`;
+  // the burst always widens along +x (canonical space), and the caller mirrors
+  // it with mirrorX, so it reads forward in both facings without a second art.
+  pirateBroadside: {
+    name: 'Pirate Broadside',
+    color: '#ffd98a',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      const prog = v.progress;
+      const ease = 1 - (1 - prog) * (1 - prog);
+      ctx.globalCompositeOperation = 'lighter';
+      const len = 46 * ease;
+      const halfH = 30 * ease;
+      // Wide cone: a triangle swept forward, plus a hot inner core and a rim.
+      ctx.beginPath();
+      ctx.moveTo(0, -halfH * 0.42);
+      ctx.lineTo(len, -halfH);
+      ctx.lineTo(len, halfH);
+      ctx.lineTo(0, halfH * 0.42);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255, 200, 110, 0.5)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0, -halfH * 0.24);
+      ctx.lineTo(len * 0.72, -halfH * 0.52);
+      ctx.lineTo(len * 0.72, halfH * 0.52);
+      ctx.lineTo(0, halfH * 0.24);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255, 245, 210, 0.55)';
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      // Shot pellets fanning out of the muzzle.
+      ctx.globalAlpha = 1 - prog;
+      ctx.fillStyle = '#2b2721';
+      for (let i = 0; i < 5; i++) {
+        const t = i / 4;
+        const d = len * (0.35 + t * 0.6);
+        const y = (t - 0.5) * halfH * 1.5;
+        ctx.beginPath();
+        ctx.arc(d, y, Math.max(0.6, 2.6 * (1 - prog)), 0, PIRATE_TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    },
+  },
+
+  // ── Shared melee connect burst ──────────────────────────────────────────
+  // ONE effect for every pirate melee move (rope, cutlass, anchor) rather than
+  // three near-identical ones: the moves differ in what they throw, not in what
+  // a landed blow looks like. Spawned by combat.js at the point of contact and
+  // PINNED there, because the target is already flying away from the spot and
+  // an effect that rode the attacker would slide out of the hit it is standing
+  // in. `params.shielded` swaps the palette to the game's cyan block read, so a
+  // blocked blow reads as blocked instead of landing clean.
+  pirateHitBurst: {
+    name: 'Pirate Hit Burst',
+    color: '#ffbe50',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      const prog = v.progress;
+      if (prog >= 1) return;
+      const P = v.params || PIRATE_NO_PARAMS;
+      const U = P.unit == null ? 1 : P.unit;
+      const shielded = !!P.shielded;
+      const fade = Math.max(0, 1 - prog);
+      const hot = shielded ? _prShield : _prGold;
+      const mid = shielded ? _prCyan : _prFlameMid;
+      const core = shielded ? _prShield : _prFlameCore;
+      const e = artEaseOutExpo(Math.min(1, prog / 0.4));
+
+      ctx.globalCompositeOperation = 'lighter';
+      // Shock ring.
+      const rr = (7 + 46 * e) * U;
+      ctx.strokeStyle = hot[prA(fade * 0.85)];
+      ctx.lineWidth = 6 * U * (1 - prog) + 0.8;
+      ctx.beginPath();
+      ctx.arc(0, 0, rr, 0, PIRATE_TAU);
+      ctx.stroke();
+      ctx.strokeStyle = core[prA(fade * 0.6)];
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(0, 0, rr * 0.64, 0, PIRATE_TAU);
+      ctx.stroke();
+      // Crescents thrown down the attack direction (+x, already mirrored).
+      for (let i = 0; i < _PI_BURST_CRESCENTS.length; i++) {
+        const C = _PI_BURST_CRESCENTS[i];
+        ctx.strokeStyle = (i === 1 ? mid : core)[prA(fade * C.a)];
+        ctx.lineWidth = C.w * U * (1 - prog * 0.5);
+        ctx.beginPath();
+        ctx.arc(C.ox * U, 0, C.r * U * (0.5 + 0.6 * e), -1.1, 1.1);
+        ctx.stroke();
+      }
+      // Radial streaks.
+      ctx.lineCap = 'round';
+      for (let i = 0; i < _PI_BURST_RAYS.length; i++) {
+        const h1 = pirateHash01c(i, 15);
+        const h2 = pirateHash01c(i, 16);
+        const a = (i / _PI_BURST_RAYS.length) * PIRATE_TAU + h1 * 0.3;
+        const len = (14 + h1 * 28) * U * (0.3 + e * 1.2);
+        ctx.strokeStyle = (i % 3 === 0 ? core : hot)[prA(fade * (0.35 + h2 * 0.45))];
+        ctx.lineWidth = (1.6 + h2 * 2.2) * U;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * 5 * U, Math.sin(a) * 5 * U);
+        ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+        ctx.stroke();
+      }
+      // Hot core, gone by a third of the way in.
+      const cf = Math.max(0, 1 - prog * 3);
+      if (cf > 0) {
+        ctx.globalAlpha = cf;
+        ctx.fillStyle = core[_PR_A_STEPS];
+        ctx.beginPath();
+        ctx.arc(0, 0, (11 * cf + 3) * U, 0, PIRATE_TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    },
+  },
+};
+
 const KNIGHT_VFX = {
   knightSlash: {
     name: 'Knight Slash',
@@ -1878,6 +2584,7 @@ export const VFX_EFFECTS = {
   ...SMOKE_VFX,
   ...BOXER_VFX,
   ...KNIGHT_VFX,
+  ...PIRATE_VFX,
 };
 
 
@@ -2308,6 +3015,27 @@ const FX_STYLES = {
     dustAlpha: 0.5,
     ring: '#d9a92e',
     slashScale: 1.0,
+  },
+
+  // Pirate: salt-bleached rope, dark oak and brass. Warm gunpowder embers over
+  // grey rope-fibre dust — the same gun brass the cowboy uses for its muzzle
+  // pops, pushed toward a cooler grey dust so the rope reads as fibre, not
+  // more gunpowder.
+  pirate: {
+    id: 'pirate',
+    spark: '#ffd98a',
+    spark2: '#c8862a',
+    dust: '#cbc2b2',
+    dust2: '#7a6d5c',
+    debris: '#4d4437',
+    slash: '#f2ead9',
+    slash2: '#c8a24a',
+    trail: '#b9a887',
+    ghost: '#a2947c',
+    ghostAlpha: 0.3,
+    dustAlpha: 0.48,
+    ring: '#e0b256',
+    slashScale: 1.05,
   },
 };
 
@@ -2781,6 +3509,47 @@ export function emitAbilityFx(fighter, atk, kind) {
     // A volley cast: the muzzle pops; the bullets keep their own art.
     case 'volley': {
       emitFlash(x, y, { style, radius: r * 0.5, life: 0.08, alpha: 0.85, color: '#ffe9a8' });
+      break;
+    }
+    // Pirate cannon (Cannon Blast): the shared firearm muzzle pop off the
+    // barrel, sized off the projectile's own radius so a Plunder-Enhanced
+    // (bigger) ball gets a proportionally bigger flash.
+    case 'cannon': {
+      const pr = (atk && atk.fxProjR) || r * 0.45;
+      emitFlash(x, y, { style, radius: pr * 1.5, life: 0.08, alpha: 0.9, color: '#fff3c4' });
+      emitSparks(x, y, 6, {
+        style, dir: away, spread: 0.55, speed: 420, life: 0.13, size: 2, gravity: 120,
+      });
+      emitDustPuff(x + dir * pr, y, 4, {
+        style, dir: away, spread: 0.7, speed: 120, size: r * 0.16,
+        life: 0.34, gravity: -50, alpha: 0.4,
+      });
+      break;
+    }
+    // Pirate anchor (Anchor Drop): a heavy downward kick off the floor at the
+    // impact point. The ground ring/chip art is the ability's own VFX instance
+    // (pirateAnchorSlam); this is the dust kick that reads under it.
+    case 'anchor': {
+      emitDustPuff(x, y + r * 0.6, 7, {
+        style, spread: Math.PI, speed: 170, size: r * 0.2,
+        life: 0.36, gravity: 150, jitter: r * 0.7, alpha: 0.5,
+      });
+      emitFlash(x, y, { style, radius: r * 0.55, life: 0.09, alpha: 0.5, color: '#e8dcc4' });
+      break;
+    }
+    // Pirate cutlass (Cutlass Lunge): the point of the blade goes bright at
+    // the cast. The swept crescent the lunge leaves in the world is the
+    // ability's own pirateCutlassSlash instance (pinned, so the body passes
+    // through it) — this is only the spark at the hand that throws it.
+    case 'cutlass': {
+      emitFlash(x, y, { style, radius: r * 0.32, life: 0.06, alpha: 0.6, color: '#dcefff' });
+      emitStreak(x, y, dir, 0, { style, length: r * 1.5, width: 2.6, life: 0.12, alpha: 0.45 });
+      break;
+    }
+    // Pirate rope (Rope Swing): the hook throw pops at the hand.
+    case 'rope': {
+      emitFlash(x, y, { style, radius: r * 0.3, life: 0.06, alpha: 0.6, color: '#ffeec2' });
+      emitStreak(x, y, dir, 0, { style, length: r * 1.8, width: 2.2, life: 0.12, alpha: 0.4 });
       break;
     }
     default: break;

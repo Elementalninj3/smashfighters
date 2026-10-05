@@ -1,7 +1,7 @@
 import { AIController, AI_DIFFICULTIES, configForDifficulty, createTrainer, evaluateModels, loadTrainedModel, listTrainedModels, listModels, getModel, getActiveModel, activateModel, renameModel, duplicateModel, deleteModel, exportModel, importModel, attachEval, listRunHistory, getRun, clearRunHistory, loadCheckpoint, computeFitnessBreakdown } from './ai.js';
 import { allWeapons, getWeapon, setAnimationLoader, updateAnimator, attachAnimator, getAnimation, setAnimLibChangeListener } from './anim.js';
 import { SFX } from './assets.js';
-import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resolveFighterSkin, drawCombatDebug, resetCombat, removeAttackerHitboxes, clearHitLocks, clearDeadeye, clearBoxerState, __debugHitboxes, startAttackForKey, resolveAttackDef, setCombatStage, ALL_FIGHTERS, setCustomHitboxes, clearCustomHitboxes } from './combat.js';
+import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resolveFighterSkin, drawCombatDebug, resetCombat, removeAttackerHitboxes, clearHitLocks, clearDeadeye, clearBoxerState, __debugHitboxes, startAttackForKey, resolveAttackDef, setCombatStage, ALL_FIGHTERS, setCustomHitboxes, clearCustomHitboxes, plunderOf, PLUNDER_MAX, PLUNDER_TIER_KNOCKBACK } from './combat.js';
 import { openEditor, closeEditor, updateEditor, renderEditor, setEditorCloseHandler, openHitboxCustomizer, closeHitboxCustomizer, updateHitboxCustomizer, renderHitboxCustomizer, setHitboxCustomizerCloseHandler, setCustomizerMove, setWorkingBoxValue, saveCustomizer, resetCustomizerMove, getWorkingBoxes, isHitboxCustomizerOpen, hitboxCustomizerHits } from './editors.js';
 import { drawFighterVfx, setVfxViewBounds, warmEffectSprites, stepTimeDilation, timeDilationState, peekTimeDilation, resetTimeDilation, drawTimeDilationPost, updateDamageIndicators, drawDamageIndicators, resetDamageIndicators, updateWorldFx, drawWorldFx, resetWorldFx, setWorldFxViewBounds, setFxQuality, setParticleDetail, setPostDetail, setWorldFxBatch, setDamageTextCache, worldFxState } from './fx.js';
 import { initInput, flushInput, isJustPressed, createFighter, createDefaultStage, drawStage, updatePlatforms, isInBlastZone, onLoopQualityChange, setDestructibleViewBounds, clearDestructibleViewBounds, sanitizeDeathZone, applyDeathZoneToStage, blastRectFor, DEFAULT_DEATH_MARGINS, DEATHZONE_MIN, DEATHZONE_MAX, DEATHZONE_STEP } from './physics.js';
@@ -109,6 +109,10 @@ let mapSettings = (() => {
       // Top-of-screen stock pill (default ON). Display-only like the stopwatch:
       // hiding it changes nothing about stock tracking, knockouts or the result.
       showStocks: saved.showStocks !== false,
+      // Stage matchup banner ("X vs Y" background art, default ON).
+      // Display-only like the stopwatch: hiding it changes nothing about
+      // fighters, matchups or gameplay, the text is simply not drawn.
+      showMatchup: saved.showMatchup !== false,
       // Render quality scaler for low-end hardware (HIGH default = full
       // visuals, identical to before). BALANCED trims particle spawn counts,
       // PERFORMANCE trims harder. Gameplay, damage and timing are untouched —
@@ -126,7 +130,7 @@ let mapSettings = (() => {
       deathZone: sanitizeDeathZone(saved.deathZone),
     };
   } catch (_) {
-    return { backgroundColor: DEFAULT_BACKGROUND_COLOR, platformColor: null, stopwatch: true, showStocks: true, quality: 'high', resolution: '1080p', deathZone: { ...DEFAULT_DEATH_MARGINS } };
+    return { backgroundColor: DEFAULT_BACKGROUND_COLOR, platformColor: null, stopwatch: true, showStocks: true, showMatchup: true, quality: 'high', resolution: '1080p', deathZone: { ...DEFAULT_DEATH_MARGINS } };
   }
 })();
 function persistMapSettings() {
@@ -691,6 +695,7 @@ const MAP_SETTINGS_ROWS = [
   { id: 'mapPlatColor', label: 'PLATFORM COLOR', type: 'color', value: () => mapSettings.platformColor || 'DEFAULT' },
   { id: 'stopwatch', label: 'STOPWATCH', type: 'toggle', value: () => (mapSettings.stopwatch !== false ? 'ON' : 'OFF') },
   { id: 'showStocks', label: 'STOCK COUNTER', type: 'toggle', value: () => (mapSettings.showStocks !== false ? 'ON' : 'OFF') },
+  { id: 'showMatchup', label: 'VERSUS TEXT', type: 'toggle', value: () => (mapSettings.showMatchup !== false ? 'ON' : 'OFF') },
   { id: 'quality', label: 'QUALITY', type: 'quality', value: () => (mapSettings.quality || 'high').toUpperCase() },
   { id: 'resolution', label: 'RESOLUTION', type: 'resolution', value: () => (mapSettings.resolution || '1080p').toUpperCase() },
   // Death zone: px beyond each arena edge. 0 = KO exactly at the edge
@@ -791,23 +796,27 @@ let selectOverlay = null;
 let termLinesEl = null;
 
 // Precomputed health-bar color LUT: 48 buckets over 0–150% (white → yellow →
-// orange → red). Same math the per-frame branch used, evaluated once.
+// orange → red → maroon, in that damage order). Same math the per-frame
+// branch used, evaluated once.
 const _healthLut = (() => {
+  // Five damage stops: white (fresh) → yellow → orange → red → maroon (max).
+  const STOPS = [
+    [255, 255, 255], // white
+    [255, 255, 0],   // yellow
+    [255, 165, 0],   // orange
+    [255, 0, 0],     // red
+    [128, 0, 0],     // maroon
+  ];
   const lut = new Array(48);
   for (let i = 0; i < 48; i++) {
     const pct = i / 47;
-    let r, g, b;
-    if (pct <= 0.33) {
-      const t = pct / 0.33;
-      r = 255; g = 255; b = Math.round(255 * (1 - t));
-    } else if (pct <= 0.66) {
-      const t = (pct - 0.33) / 0.33;
-      r = 255; g = Math.round(255 * (1 - t * 0.5)); b = 0;
-    } else {
-      const t = (pct - 0.66) / 0.34;
-      r = 255; g = Math.round(255 * (1 - t * 0.5)); b = 0;
-    }
-    lut[i] = `rgb(${r},${g},${b})`;
+    const seg = Math.min(STOPS.length - 2, Math.floor(pct * (STOPS.length - 1)));
+    const t = pct * (STOPS.length - 1) - seg;
+    const a = STOPS[seg], b = STOPS[seg + 1];
+    const r = Math.round(a[0] + (b[0] - a[0]) * t);
+    const g = Math.round(a[1] + (b[1] - a[1]) * t);
+    const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+    lut[i] = `rgb(${r},${g},${bl})`;
   }
   return lut;
 })();
@@ -835,7 +844,7 @@ function drawHealthBar(ctx, fighter, time) {
   ctx.shadowOffsetY = 0;
 
   // Health color via precomputed LUT (48 buckets white → yellow → orange →
-  // red). Identical colors within ~3%; replaces the per-frame rgb() template.
+  // red → maroon). Identical colors within ~3%; replaces the per-frame rgb() template.
   const _hbIdx = Math.min(47, (pct * 47) | 0);
 
   // Foreground bar (health/damage) — always full width, color changes with damage
@@ -870,6 +879,113 @@ function drawHealthBar(ctx, fighter, time) {
     ctx.fillText(label, fighter.x, fighter.y - fighter.radius - 25);
     ctx.restore();
   }
+
+  drawPlunderMeter(ctx, fighter);
+}
+
+// Pirate's Plunder meter — a small five-pip bar stacked ABOVE the damage
+// readout, so it floats over the pirate's head instead of colliding with the
+// damage bar. Same world space (under the camera transform) and the same flat
+// black + one-fill language as the damage bar.
+//
+// Vertical stack, every offset measured UP from the top of the fighter's ball
+// (`fighter.y - fighter.radius`):
+//   -57 .. -44   READY / CHARGED label  (only while an enhancement is armed)
+//   -42 .. -37   the five Plunder pips
+//   -35 .. -15   the damage percent label (existing, unchanged)
+//   -20 .. -12   the damage bar         (existing, unchanged)
+// The label and the pips are kept as named constants below so the stack stays
+// readable and cannot drift back into the damage bar.
+//
+// It repaints every frame, exactly like the damage bar above it: the arena
+// canvas is cleared and refilled each frame, so a skipped draw would make the
+// meter disappear rather than save work. What "only when necessary" buys here
+// is the two cheap guards below plus the cached label sprite — the whole meter
+// is 6 tiny fills and one stroke, an order of magnitude below the damage bar's
+// per-frame cost, so it is not worth a correctness risk to try to skip it.
+//   - non-pirates return on the `plunderOf` check (a single id compare),
+//   - a pirate at zero returns without touching the canvas at all (an empty
+//     meter is information-free).
+const PLUNDER_PIPS = 5;
+// Stack geometry, as offsets up from the top of the fighter's ball. PLUNDER_PIP_Y
+// clears the damage percent label's sprite (top edge at -35) and sits above the
+// damage bar entirely.
+const PLUNDER_PIP_Y = -42;
+const PLUNDER_PIP_H = 5;
+const PLUNDER_LABEL_GAP = 2;
+function drawPlunderMeter(ctx, fighter) {
+  const p = plunderOf(fighter);
+  if (p <= 0) return;
+
+  // Ready states: at 3 the next cannon is empowered, at 5 it is a Charged
+  // Broadside. Both are drawn in the same gold so "an enhancement is armed"
+  // is one glance, and the pips read bright instead of dim.
+  const charged = p >= PLUNDER_MAX_UI;
+  const armed = p >= PLUNDER_READY_UI;
+  const w = 44, h = PLUNDER_PIP_H;
+  const gap = 2.2;
+  const pipW = (w - gap * (PLUNDER_PIPS - 1)) / PLUNDER_PIPS;
+  const bx = fighter.x - w / 2;
+  const by = fighter.y - fighter.radius + PLUNDER_PIP_Y;
+  const pipFill = charged ? '#ffe27a' : armed ? '#f0c65a' : '#cbb98f';
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(bx, by, w, h);
+  ctx.fillStyle = pipFill;
+  for (let i = 0; i < p && i < PLUNDER_PIPS; i++) {
+    ctx.fillRect(bx + i * (pipW + gap), by, pipW, h);
+  }
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeRect(bx + 0.6, by + 0.6, w - 1.2, h - 1.2);
+  // Armed/charged label: one cached sprite per state, not a per-frame fillText.
+  const mark = charged ? 'CHARGED' : armed ? 'READY' : '';
+  if (mark) {
+    const s = _plunderMarkSprite(mark, charged);
+    if (s) ctx.drawImage(s.c, fighter.x - s.w / 2, by - PLUNDER_LABEL_GAP - s.h, s.w, s.h);
+  }
+  ctx.restore();
+}
+
+// The meter's display thresholds, taken from the passive's own constants
+// (PLUNDER_MAX / PLUNDER_TIER_KNOCKBACK in combat.js) rather than re-typed
+// here, so the HUD can never show a "READY" at a point the cannon will not
+// actually honour.
+const PLUNDER_MAX_UI = PLUNDER_MAX;
+const PLUNDER_READY_UI = PLUNDER_TIER_KNOCKBACK;
+
+// Cached "READY" / "CHARGED" labels under the meter, same bake rules as
+// _pctSprite (world space, WORLD_TEXT_SS supersample, FIFO eviction).
+const _plunderMarks = new Map();
+function _plunderMarkSprite(text, charged) {
+  const key = text;
+  let rec = _plunderMarks.get(key);
+  if (rec) return rec;
+  try {
+    const m = document.createElement('canvas').getContext('2d');
+    m.font = '11px Consolas, "Courier New", monospace';
+    const w = Math.ceil(m.measureText(text).width) + 6;
+    const h = 13;
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil(w * WORLD_TEXT_SS));
+    c.height = Math.max(1, Math.ceil(h * WORLD_TEXT_SS));
+    const g = c.getContext('2d');
+    g.scale(WORLD_TEXT_SS, WORLD_TEXT_SS);
+    g.font = '11px Consolas, "Courier New", monospace';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    g.lineWidth = 3;
+    g.strokeStyle = 'rgba(0,0,0,0.85)';
+    g.strokeText(text, w / 2, h / 2);
+    g.fillStyle = charged ? '#ffe27a' : '#f0c65a';
+    g.fillText(text, w / 2, h / 2);
+    rec = { c, w, h };
+  } catch (_) { return null; }
+  if (_plunderMarks.size >= 8) _plunderMarks.delete(_plunderMarks.keys().next().value);
+  _plunderMarks.set(key, rec);
+  return rec;
 }
 
 // Bounded percent-label sprite cache (FIFO eviction at 96 entries). The set of
@@ -1867,6 +1983,11 @@ function cycleMapSetting(row, dir) {
     // Top-of-screen stock pill on/off. Display-only — stocks are still tracked
     // and a match still ends at zero, the pill is simply not drawn.
     mapSettings.showStocks = !(mapSettings.showStocks !== false);
+    persistMapSettings();
+  } else if (row.id === 'showMatchup') {
+    // Stage versus banner ("X vs Y") on/off. Display-only — the matchup is
+    // unchanged, the background text is simply not drawn.
+    mapSettings.showMatchup = !(mapSettings.showMatchup !== false);
     persistMapSettings();
   } else if (row.id === 'quality') {
     // Render quality scaler (HIGH default = full visuals). Gameplay-agnostic:
@@ -3339,7 +3460,7 @@ function drawMainPreview() {
   pctx.fillRect(0, 0, W, H);
 
   const f = ALL_FIGHTERS[previewFighterIdx];
-  const conf = loadAccessoryFor(f.id);
+  const conf = loadAccessoryFor(f.id, f.accessory);
   const R = 26;
   const S = 3.4;
   pctx.save();
@@ -3753,7 +3874,7 @@ function moveAccyCursor(dir) {
 
 function adjustAccyRow(row, dir, coarse) {
   const f = ALL_FIGHTERS[previewFighterIdx];
-  const conf = loadAccessoryFor(f.id);
+  const conf = loadAccessoryFor(f.id, f.accessory);
   if (row.type === 'fighter') {
     previewFighterIdx = (previewFighterIdx + dir + ALL_FIGHTERS.length) % ALL_FIGHTERS.length;
   } else if (row.type === 'accy') {
@@ -3933,7 +4054,7 @@ function drawAccyPreview() {
   pctx.fillRect(0, 0, W, H);
 
   const f = ALL_FIGHTERS[previewFighterIdx];
-  const conf = loadAccessoryFor(f.id);
+  const conf = loadAccessoryFor(f.id, f.accessory);
   const R = ACCY_PREVIEW_RADIUS;
   const S = ACCY_PREVIEW_ZOOM;
   const px = W / 2;
@@ -3964,7 +4085,7 @@ let accyDragState = null;
 function onAccyPreviewPointerDown(e) {
   if (termMode !== 'accys' || !previewCanvas) return;
   e.preventDefault();
-  const conf = loadAccessoryFor(ALL_FIGHTERS[previewFighterIdx].id);
+  const conf = loadAccessoryFor(ALL_FIGHTERS[previewFighterIdx].id, ALL_FIGHTERS[previewFighterIdx].accessory);
   accyDragState = {
     pointerId: e.pointerId,
     startX: e.clientX,
@@ -3979,7 +4100,7 @@ function onAccyPreviewPointerMove(e) {
   if (!accyDragState) return;
   e.preventDefault();
   const f = ALL_FIGHTERS[previewFighterIdx];
-  const conf = loadAccessoryFor(f.id);
+  const conf = loadAccessoryFor(f.id, f.accessory);
   const ppu = ACCY_PREVIEW_RADIUS * ACCY_PREVIEW_ZOOM; // pixels per radius unit
   conf.shiftX = Math.min(2.0, Math.max(-1.2, accyDragState.shiftX + (e.clientX - accyDragState.startX) / ppu));
   conf.shiftY = Math.min(2.0, Math.max(-1.5, accyDragState.shiftY + (e.clientY - accyDragState.startY) / ppu));
@@ -4000,7 +4121,7 @@ function onAccyPreviewPointerUp(e) {
 function onAccyPreviewDoubleClick() {
   if (termMode !== 'accys') return;
   const f = ALL_FIGHTERS[previewFighterIdx];
-  const conf = loadAccessoryFor(f.id);
+  const conf = loadAccessoryFor(f.id, f.accessory);
   conf.shiftX = 0;
   conf.shiftY = 0;
   saveAccessoryFor(f.id, conf);
@@ -4011,7 +4132,7 @@ function onAccyPreviewDoubleClick() {
 
 function accyRowValue(row) {
   const f = ALL_FIGHTERS[previewFighterIdx];
-  const conf = loadAccessoryFor(f.id);
+  const conf = loadAccessoryFor(f.id, f.accessory);
   switch (row.type) {
     case 'fighter': return f.name;
     case 'accy': return accessoryName(conf.type);
@@ -4061,7 +4182,7 @@ function renderAccyEditor() {
       line.appendChild(val);
     } else if (row.type === 'size' || row.type === 'angle' || row.type === 'shiftx' || row.type === 'shifty') {
       const f = ALL_FIGHTERS[previewFighterIdx];
-      const conf = loadAccessoryFor(f.id);
+      const conf = loadAccessoryFor(f.id, f.accessory);
       const rowKey = row.type;
       const CONF_KEY = { size: 'scale', angle: 'angle', shiftx: 'shiftX', shifty: 'shiftY' };
       const confKey = CONF_KEY[rowKey] || rowKey;
@@ -4078,7 +4199,7 @@ function renderAccyEditor() {
       range.step = bounds.step;
       range.value = conf[confKey];
       range.addEventListener('input', () => {
-        const cur = loadAccessoryFor(f.id);
+        const cur = loadAccessoryFor(f.id, f.accessory);
         cur[confKey] = parseFloat(range.value);
         saveAccessoryFor(f.id, cur);
         num.value = cur[confKey].toFixed(2);
@@ -4092,7 +4213,7 @@ function renderAccyEditor() {
       num.className = 'num';
       num.value = conf[confKey].toFixed(2);
       num.addEventListener('change', () => {
-        const cur = loadAccessoryFor(f.id);
+        const cur = loadAccessoryFor(f.id, f.accessory);
         const v = Math.min(bounds.max, Math.max(bounds.min, parseFloat(num.value) || 1));
         cur[confKey] = Math.round(v * 100) / 100;
         saveAccessoryFor(f.id, cur);
@@ -4341,7 +4462,7 @@ function drawGearPreview() {
   pctx.fillRect(0, 0, W, H);
 
   const f = ALL_FIGHTERS[previewFighterIdx];
-  const conf = loadAccessoryFor(f.id);
+  const conf = loadAccessoryFor(f.id, f.accessory);
   const gear = loadHandGearFor(f.id, f.handGear);
   const R = ACCY_PREVIEW_RADIUS;
   const S = ACCY_PREVIEW_ZOOM;
@@ -4696,7 +4817,7 @@ function startNewMatch() {
     color: '#4a9eff',
     radius: f1Def.radius || 26,
     skinScale: skinScaleFor(f1Def),
-    accessory: loadAccessoryFor(f1Def.id),
+    accessory: loadAccessoryFor(f1Def.id, f1Def.accessory),
     handGear: loadHandGearFor(f1Def.id, f1Def.handGear),
     runSpeed: f1Def.runSpeed || 91,
     airSpeed: (f1Def.runSpeed || 91) * 0.85,
@@ -4721,7 +4842,7 @@ function startNewMatch() {
     color: '#ff4a4a',
     radius: f2Def.radius || 26,
     skinScale: skinScaleFor(f2Def),
-    accessory: loadAccessoryFor(f2Def.id),
+    accessory: loadAccessoryFor(f2Def.id, f2Def.accessory),
     handGear: loadHandGearFor(f2Def.id, f2Def.handGear),
     runSpeed: f2Def.runSpeed || 91,
     airSpeed: (f2Def.runSpeed || 91) * 0.85,
@@ -4919,6 +5040,7 @@ function victoryAnimFor(f) {
   if (def && def.id === 'ninja') return 'ninjaVictory';
   if (def && def.id === 'boxer') return 'boxerVictory';
   if (def && def.id === 'knight') return 'knightVictory';
+  if (def && def.id === 'pirate') return 'pirateVictory';
   return 'cowboyVictory';
 }
 
@@ -5191,6 +5313,8 @@ function buildMatchupSprite(text) {
 }
 
 function drawMatchupText(ctx) {
+  // VERSUS TEXT setting (default ON): hides the stage "X vs Y" banner art.
+  if (mapSettings.showMatchup === false) return;
   ensureMatchupFont();
   const plat = mainGroundPlatform(stage);
   if (!plat) return;

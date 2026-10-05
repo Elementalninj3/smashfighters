@@ -459,6 +459,7 @@ export const SKIN_META = {
   ninja: {},
   boxer: {},
   knight: {},
+  pirate: {},
 };
 const _SKIN_META_KEYS = [
   'bodyRadiusMul', 'handRadius', 'handDist', 'handY', 'depthScale',
@@ -867,6 +868,7 @@ export const ACCESSORIES = [
   { id: 'cowboyhat', name: 'COWBOY HAT', img: '/GA/accesories/cowboyhat.png', draw: drawCowboyHat },
   { id: 'ninjaheadband', name: 'NINJA HEADBAND', img: '/GA/accesories/ninjaheadband.png', draw: drawNinjaHeadband },
   { id: 'knighthelmet', name: 'KNIGHT HELMET', img: '/GA/accesories/knighthelmet.png' },
+  { id: 'piratehat', name: 'PIRATE HAT', img: '/GA/accesories/pirate hat.png' },
   { id: 'tophat', name: 'TOP HAT', draw: drawTopHat },
   { id: 'baseballcap', name: 'BASEBALL CAP', draw: drawBaseballCap },
   { id: 'crown', name: 'CROWN', draw: drawCrown },
@@ -877,25 +879,31 @@ export const ACCESSORIES = [
 const _accessoryMap = new Map();
 for (const a of ACCESSORIES) _accessoryMap.set(a.id, a);
 
-export function defaultAccessory() {
-  return { type: 'none', scale: 1, angle: 0, shiftX: 0, shiftY: 0, flip: false, layer: 'front' };
+export function defaultAccessory(type) {
+  return { type: type || 'none', scale: 1, angle: 0, shiftX: 0, shiftY: 0, flip: false, layer: 'front' };
 }
 
 export function cloneAccessory(conf) {
-  return { ...defaultAccessory(), ...(conf || {}) };
+  return { ...defaultAccessory(null), ...(conf || {}) };
 }
 
-export function loadAccessoryFor(fighterId) {
-  if (!fighterId) return cloneAccessory(null);
+// `defaultType` is the character's BUILT-IN hat (the pirate's tricorn), passed
+// from its fighter def exactly like loadHandGearFor's `defaultType`. It is
+// used ONLY when nothing is stored for that fighter, so the ACCESSORIES editor
+// can always override a character's shipped look. An unknown id falls back to
+// 'none' so a typo can never wedge a hat into a missing entry.
+export function loadAccessoryFor(fighterId, defaultType) {
+  const base = defaultAccessory(_accessoryMap.has(defaultType) ? defaultType : null);
+  if (!fighterId) return base;
   try {
     const all = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
     const raw = all[fighterId];
-    if (!raw) return cloneAccessory(null);
+    if (!raw) return base;
     const c = cloneAccessory(raw);
-    if (!_accessoryMap.has(c.type)) return cloneAccessory(null);
+    if (!_accessoryMap.has(c.type)) return base;
     return c;
   } catch (_) {
-    return cloneAccessory(null);
+    return base;
   }
 }
 
@@ -2584,7 +2592,12 @@ export function clampHandValue(value) {
 const CHAR_COLOR_KEY = 'smashfighters.charHandColors';
 // Built-in defaults: ninja wears near-black gloves, boxer wears red gloves,
 // knight wears steel gauntlets.
-const DEFAULT_CHAR_HAND_COLORS = { ninja: '#0B0A0B', boxer: '#e53935', knight: '#9aa6b0' };
+// Built-in hand fill per character, seeded into charHandColors below and
+// read by resolveHandColor ahead of the global HAND COLOR / body colour. The
+// pirate's gloved hands are a warm gold that picks up his hat trim.
+const DEFAULT_CHAR_HAND_COLORS = {
+  ninja: '#0B0A0B', boxer: '#e53935', knight: '#9aa6b0', pirate: '#E09E34',
+};
 let charHandColors = { ...DEFAULT_CHAR_HAND_COLORS };
 if (typeof localStorage !== 'undefined') {
   try {
@@ -3663,9 +3676,9 @@ function darkenColor(hex, amount) {
 }
 
 // Ability-world effects: projectile orbs (with the projectile's cowboyTrail /
-// ninjaTrail VFX riding the bullet when it is marked) and the cowboy Down Light
-// Deadeye volley (homing slugs + their muzzle starbursts). World-space — call
-// inside the camera transform, after the fighters.
+// ninjaTrail / pirateTrail VFX riding the bullet when it is marked) and the
+// cowboy Down Light Deadeye volley (homing slugs + their muzzle starbursts).
+// World-space — call inside the camera transform, after the fighters.
 export function drawAbilityFx(ctx, fighter, time) {
   const proj = fighter._projectiles;
 
@@ -3732,6 +3745,23 @@ export function drawAbilityFx(ctx, fighter, time) {
         ctx.fill();
         ctx.restore();
         continue;
+      }
+      // Pirate cannonball / broadside: the round IS its trail effect — a brass
+      // core inside a smoke wake (Cannon Blast) or a wide forward cone
+      // (Broadside Burst) — oriented along travel and mirrored with the facing,
+      // exactly like every other rider trail. Draw-only: the projectile's own
+      // r-sized orb hurtbox is what hits.
+      if (p.trail === 'pirateTrail' || p.trail === 'pirateWide') {
+        const eff = getVfxEffect(p.trail === 'pirateWide' ? 'pirateBroadside' : 'pirateCannonTrail');
+        if (eff) {
+          _trailParams.progress = 0;
+          _trailParams.scale = p.trail === 'pirateWide' ? 0.8 + (p.r || 10) / 40 : 1;
+          _trailParams.color = null;
+          _trailParams.mirrorX = (p.vx || p.facing || 1) >= 0 ? 1 : -1;
+          _trailParams.rotation = (Math.atan2(p.vy, p.vx) * 180) / Math.PI;
+          eff.draw(ctx, _trailParams, p);
+          continue;
+        }
       }
       // Default projectile orb.
       const pulse = 1 + 0.15 * Math.sin(time * 0.02);
