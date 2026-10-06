@@ -1636,6 +1636,217 @@ const _PI_BURST_CRESCENTS = [
   { ox: 0, r: 13, w: 1.8, a: 1 },
 ];
 
+// ── 1:1 HTML-demo ports ────────────────────────────────────────────────
+// The four pirate demos are the SOURCE OF TRUTH (GA/vfx/Rope swing.html,
+// Cutlasslunge.html, Anchor drop.html, cannon blast.html). The helpers below
+// are line-for-line ports of the demos' own shape functions — same paths,
+// same gradients, same colors — re-expressed as pure functions of progress
+// with deterministic hashes instead of Math.random(), per this module's
+// contract. Effect draws map v.progress onto the demo's own timeline
+// proportionally (ht = prog * T_END), so relative timing, easing and visual
+// progression match the standalone versions; only the absolute duration is
+// the move's own lifetime.
+function pirateEo(p) { const q = p < 0 ? 0 : p > 1 ? 1 : p; return 1 - (1 - q) * (1 - q) * (1 - q); }
+function pirateEio(p) { const q = p < 0 ? 0 : p > 1 ? 1 : p; return q < 0.5 ? 2 * q * q : 1 - (-2 * q + 2) * (-2 * q + 2) / 2; }
+
+// Rope-swing demo: cres() — lens-shaped ember crescent with a hot cream core
+// (linear gradient orange -> cream -> orange) and a white leading edge.
+function pirateCrescent(ctx, x, y, f, r0, b0, u) {
+  const e = pirateEo(u), a = 1 - u * u, r = r0 * (0.55 + 0.6 * e), bg = b0 * (0.6 + 0.7 * e), k = 0.3 + 0.55 * u;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(f);
+  ctx.beginPath(); ctx.moveTo(0, -r); ctx.quadraticCurveTo(bg * 2, 0, 0, r); ctx.quadraticCurveTo(bg * 2 * k, 0, 0, -r); ctx.closePath();
+  const g = ctx.createLinearGradient(0, 0, bg, 0);
+  g.addColorStop(0, 'rgba(255,120,20,' + (a * 0.4).toFixed(3) + ')');
+  g.addColorStop(0.6, 'rgba(255,248,225,' + a.toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(255,170,60,' + (a * 0.35).toFixed(3) + ')');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0, -r); ctx.quadraticCurveTo(bg * 2, 0, 0, r);
+  ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(255,255,255,' + a.toFixed(3) + ')'; ctx.stroke();
+  ctx.restore();
+}
+// Rope-swing demo: splat() — 18-point impact blob, dark umber fill + amber rim.
+// Points are deterministic hashes (demo rolled R(i%2?.4:.95, i%2?.7:1.5)).
+function pirateSplat(ctx, x, y, rad, u, salt) {
+  const e = pirateEo(Math.min(u * 5, 1)), a = u < 0.5 ? 1 : 1 - (u - 0.5) * 2;
+  ctx.save(); ctx.globalAlpha = Math.max(0, a);
+  ctx.beginPath();
+  for (let i = 0; i < 18; i++) {
+    const lo = i % 2 ? 0.4 : 0.95, hi = i % 2 ? 0.7 : 1.5;
+    const rr = rad * (lo + pirateHash01c(i, salt) * (hi - lo)) * (0.3 + 0.7 * e);
+    const an = (i / 18) * PIRATE_TAU, px = x + Math.cos(an) * rr, py = y + Math.sin(an) * rr;
+    if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+  }
+  ctx.closePath(); ctx.fillStyle = '#4a1a05'; ctx.fill();
+  ctx.lineWidth = 2.5; ctx.strokeStyle = '#ffb44d'; ctx.stroke();
+  ctx.restore();
+}
+// Rope/cannon demos: flash() — white-hot core washing to transparent amber.
+function pirateFlash(ctx, x, y, R, u, peak) {
+  const a = (1 - u) * (1 - u);
+  if (a <= 0.004) return;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, R);
+  g.addColorStop(0, 'rgba(255,255,255,' + (a * (peak || 1)).toFixed(3) + ')');
+  g.addColorStop(0.35, 'rgba(255,170,70,' + (a * 0.5).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(255,100,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(x - R, y - R, R * 2, R * 2);
+}
+// Rope-swing demo: ring() — stroked circle blooming from 10% to full radius.
+function pirateRing(ctx, x, y, r, u, rgb, lw) {
+  if (u <= 0 || u >= 1) return;
+  ctx.beginPath(); ctx.arc(x, y, r * (0.1 + 0.9 * pirateEo(u)), 0, PIRATE_TAU);
+  ctx.lineWidth = lw * (1 - u) + 0.5; ctx.strokeStyle = 'rgba(' + rgb + ',' + ((1 - u) * 0.9).toFixed(3) + ')'; ctx.stroke();
+}
+// Rope-swing demo: drawRope() — 3-pass rope (dark outline, fibre, dashed
+// highlight) with a travelling sine wave; drawHook() — the hook head.
+function pirateRopeSpan(ctx, len, wave, clock) {
+  const N = 20;
+  const trace = (off) => {
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const s = i / N, w = Math.sin(s * Math.PI) * wave * Math.sin(s * 11 - clock * 38);
+      // Rope runs along +x; the wave offsets perpendicular (y here).
+      const x = len * s, y = w + (off || 0);
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    }
+  };
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  trace(0); ctx.lineWidth = 6.5; ctx.strokeStyle = '#1b120e'; ctx.stroke();
+  trace(0); ctx.lineWidth = 4; ctx.strokeStyle = '#8f6040'; ctx.stroke();
+  ctx.save(); ctx.setLineDash([3, 5]); trace(0); ctx.lineWidth = 2.4; ctx.strokeStyle = '#d0a373'; ctx.stroke(); ctx.restore();
+}
+function pirateHookHead(ctx, x, y, a) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(-12, 0); ctx.lineTo(5, 0); ctx.arc(5, 6, 6, -Math.PI / 2, Math.PI * 0.85);
+  ctx.lineWidth = 7; ctx.strokeStyle = '#0f1624'; ctx.stroke();
+  ctx.lineWidth = 3.6; ctx.strokeStyle = '#dbe6f4'; ctx.stroke();
+  ctx.restore();
+}
+// Rope-swing demo LAYERS — the 3-pass comet wake + head glow + 4 accent lines.
+// Colors are the demo's own gradient stops, verbatim.
+function pirateRopeWake(ctx, len, wid, clock, alpha) {
+  if (alpha <= 0.004 || len < 2) return;
+  ctx.save(); ctx.globalAlpha = alpha;
+  const passes = [
+    { k: 1.0, stops: [[0, 'rgba(255,120,20,.5)'], [0.5, 'rgba(255,90,10,.22)'], [1, 'rgba(220,60,0,0)']] },
+    { k: 0.6, stops: [[0, 'rgba(255,200,110,.85)'], [0.6, 'rgba(255,150,50,.3)'], [1, 'rgba(255,110,20,0)']] },
+    { k: 0.22, stops: [[0, 'rgba(255,255,255,1)'], [0.7, 'rgba(255,240,200,.45)'], [1, 'rgba(255,255,255,0)']] },
+  ];
+  const N = 9;
+  for (let li = 0; li < 3; li++) {
+    const P = passes[li];
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const u = i / N, wob = Math.sin(u * 6.5 + clock * 9 + li * 2.1) * wid * P.k * 0.3 * u;
+      const x = -len * P.k * u, y = -wid * P.k * (1 - u * 0.7) + wob;
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    }
+    for (let i = N; i >= 0; i--) {
+      const u = i / N, wob = Math.sin(u * 6.5 + clock * 9 + li * 2.1 + 1.6) * wid * P.k * 0.3 * u;
+      ctx.lineTo(-len * P.k * u, wid * P.k * (1 - u * 0.7) + wob);
+    }
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, 0, -len, 0);
+    for (const [s, c] of P.stops) g.addColorStop(s, c);
+    ctx.fillStyle = g; ctx.fill();
+  }
+  // The demo's 4 thin accent strokes over the wake.
+  ctx.lineCap = 'round'; ctx.lineWidth = 1.6;
+  for (const off of [8, 18, 30, 44]) {
+    ctx.strokeStyle = 'rgba(255,200,120,' + (0.5 * alpha).toFixed(3) + ')';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-off * (len / 58), 0); ctx.stroke();
+  }
+  ctx.restore();
+}
+// Anchor-drop demo: anchor() — dark outline + steel body + flukes + highlight,
+// with an optional gold bloom (shadowBlur) while it falls.
+function pirateAnchorShape(ctx, rot, U, glow) {
+  ctx.save(); ctx.rotate(rot); ctx.scale(U, U); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const shape = () => {
+    ctx.beginPath(); ctx.arc(0, -48, 7, 0, PIRATE_TAU);
+    ctx.moveTo(0, -41); ctx.lineTo(0, 34); ctx.moveTo(-20, -30); ctx.lineTo(20, -30);
+    ctx.moveTo(-38, 6); ctx.quadraticCurveTo(-34, 40, 0, 38); ctx.quadraticCurveTo(34, 40, 38, 6);
+  };
+  if (glow > 0) { ctx.shadowColor = 'rgba(255,190,80,' + glow.toFixed(3) + ')'; ctx.shadowBlur = 16; }
+  ctx.strokeStyle = '#11141b'; ctx.lineWidth = 10; shape(); ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#808a9b'; ctx.lineWidth = 5.5; shape(); ctx.stroke();
+  for (const s of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(s * 46, -2); ctx.lineTo(s * 36, 14); ctx.lineTo(s * 24, 4); ctx.closePath();
+    ctx.fillStyle = '#808a9b'; ctx.strokeStyle = '#11141b'; ctx.lineWidth = 3; ctx.fill(); ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(210,220,235,.55)'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.moveTo(-1.5, -38); ctx.lineTo(-1.5, 30); ctx.stroke();
+  ctx.restore();
+}
+// Anchor-drop demo: chain() — alternating oval links along a sagging quadratic.
+function pirateChainLinks(ctx, x0, y0, x1, y1, sag, U) {
+  const cxm = (x0 + x1) / 2, cym = (y0 + y1) / 2 + sag;
+  const dist = Math.hypot(x1 - x0, y1 - y0);
+  const n = Math.max(3, Math.round((dist * 1.04 + sag) / (7 * U)));
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n, u = 1 - t;
+    const x = u * u * x0 + 2 * u * t * cxm + t * t * x1, y = u * u * y0 + 2 * u * t * cym + t * t * y1;
+    const dx = 2 * u * (cxm - x0) + 2 * t * (x1 - cxm), dy = 2 * u * (cym - y0) + 2 * t * (y1 - cym);
+    ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(dy, dx));
+    const rx = (i % 2 ? 3.4 : 6) * U, ry = (i % 2 ? 2.4 : 3.6) * U;
+    ctx.strokeStyle = '#11141b'; ctx.lineWidth = 3.8 * U;
+    ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, PIRATE_TAU); ctx.stroke();
+    ctx.strokeStyle = '#9aa3b2'; ctx.lineWidth = 1.8 * U; ctx.stroke();
+    ctx.restore();
+  }
+}
+// Anchor-drop demo: puffs() — the 9-lobed ground-dust row (brown radial puffs).
+function pirateDustRow(ctx, cx, gy, k, a, U) {
+  if (a <= 0.004) return;
+  for (let i = 0; i < 9; i++) {
+    const s = i / 4 - 1, x = cx + s * (36 + 78 * k) * U, y = gy + (i % 3) * 3 * U - 4 * U * k;
+    const r = (14 + 16 * k + (i % 3) * 4) * U;
+    const g = ctx.createRadialGradient(x, y - r * 0.3, 0, x, y - r * 0.3, r);
+    g.addColorStop(0, 'rgba(150,122,90,' + (0.6 * a).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(110,90,70,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y - r * 0.3, r, 0, PIRATE_TAU); ctx.fill();
+  }
+}
+// Cannon-blast demo: muzzle() — 9-point gold starburst + white-hot core.
+function pirateMuzzleStar(ctx, a, u, len) {
+  const al = 1 - u;
+  if (al <= 0.004) return;
+  ctx.save(); ctx.rotate(a);
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, len);
+  g.addColorStop(0, 'rgba(255,255,240,' + al.toFixed(3) + ')');
+  g.addColorStop(0.4, 'rgba(255,200,70,' + (al * 0.9).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(255,90,10,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(0, 0);
+  const N = 9;
+  for (let i = 0; i <= N; i++) {
+    const an = -0.6 + 1.2 * i / N, r = len * (i % 2 ? 0.5 : 1) * (i === 4 || i === 5 ? 1.15 : 1);
+    ctx.lineTo(Math.cos(an) * r, Math.sin(an) * r);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.arc(6, 0, 14 * (1 - u * 0.5), 0, PIRATE_TAU);
+  ctx.fillStyle = 'rgba(255,255,255,' + al.toFixed(3) + ')'; ctx.fill();
+  ctx.restore();
+}
+// Cannon-blast demo: smoke puff (k:3) — grey ball, dark outline, pale highlight.
+function pirateSmokePuff(ctx, x, y, r, a) {
+  if (a <= 0.004 || r <= 0.5) return;
+  ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, a));
+  ctx.fillStyle = '#8a8a96'; ctx.strokeStyle = 'rgba(34,34,46,.55)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, PIRATE_TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = 'rgba(195,195,208,.5)';
+  ctx.beginPath(); ctx.arc(x - r * 0.28, y - r * 0.28, r * 0.55, 0, PIRATE_TAU); ctx.fill();
+  ctx.restore();
+}
+// Cannon-blast demo: fireball (k:4) — white -> amber -> ember by age u.
+function pirateFirePuff(ctx, x, y, r, u, a) {
+  if (a <= 0.004 || r <= 0.5) return;
+  const c = u < 0.2 ? '255,245,200' : u < 0.55 ? '255,180,50' : '235,70,20';
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, 'rgba(' + c + ',' + (a * 0.9).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(' + c + ',0)');
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, PIRATE_TAU); ctx.fill(); ctx.restore();
+}
+
 const PIRATE_VFX = {
   // ── Rope Swing ──────────────────────────────────────────────────────────
   // The thrown grapple. Anchored to the front hand, so the rope, the hook and
@@ -1647,49 +1858,150 @@ const PIRATE_VFX = {
     name: 'Pirate Rope',
     color: '#c9b489',
     draw(ctx, v, p) {
+      // 1:1 port of GA/vfx/Rope swing.html. prog maps onto the demo timeline
+      // (tL=.35 launch, tS=.75 swing start, tH=1.5 impact, tRel=2.3 release,
+      // tEnd=3.3) so the rope throw -> pendulum swing -> burst -> release reads
+      // in the same order with the same relative beats. Anchored to the front
+      // hand (spawned with anchor frontHand + captured mirrorX), so the whole
+      // rig rides the dash exactly as the demo's rope rode its ball; facing is
+      // the caller's mirrorX and the effect follows the pirate, the camera and
+      // world position for free. Cleanup is the temp-VFX lifetime; no loop, no
+      // DOM, no second animation system.
       ctx.save();
       ctx.translate(p.x, p.y);
       const s = v.scale || 1;
       const mx = v.mirrorX == null ? 1 : v.mirrorX;
       if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
       if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
-      const prog = v.progress;
+      const prog = v.progress == null ? 0 : v.progress;
+      if (prog < 0 || prog >= 1) { ctx.restore(); return; }
       const P = v.params || PIRATE_NO_PARAMS;
-      const len = (P.length || 78) * (0.35 + 0.65 * Math.min(1, prog * 2.2));
-      // Wake first and underneath: the rope and the hook are the hard read,
-      // the comet stream is the motion behind them.
+      const baseLen = P.length || 82;
+      const ht = prog * 3.3, clock = prog * 6;
+      // Rope length / wave / alpha follow the demo phases: thrown during
+      // launch (tL..tS), taut through the swing (tS..tH), released after tRel.
+      let ropeA = 1, wave = 0, len = baseLen;
+      if (ht < 0.35) { const q = ht / 0.35; len = baseLen * (0.3 + 0.7 * pirateEo(q)); ropeA = 0.35 + 0.65 * q; wave = 12 * (1 - q); }
+      else if (ht < 0.75) { const q = (ht - 0.35) / 0.4; len = baseLen * (0.55 + 0.45 * pirateEo(q)); ropeA = 1; wave = 12 * (1 - q); }
+      else if (ht < 1.5) { len = baseLen; ropeA = 1; wave = 0; }
+      else if (ht < 2.3) { len = baseLen; ropeA = 1; wave = 0; }
+      else { const q = Math.min(1, (ht - 2.3) / 0.6); ropeA = Math.max(0, 1 - q * 1.6); wave = 0; len = baseLen * (1 - q * 0.25); }
+      // Comet wake streaming behind the swing (demo LAYERS + head glow),
+      // strongest mid-swing, fading into the release.
+      const wakeA = ht < 0.75 ? Math.max(0, (ht - 0.35) / 0.4) * 0.7 : ht < 1.5 ? 0.7 + 0.3 * ((ht - 0.75) / 0.75) : Math.max(0, 1 - (ht - 1.5) / 0.9);
       ctx.globalCompositeOperation = 'lighter';
-      pirateWake(ctx, len * 1.5, 9 + 12 * Math.min(1, prog * 2), prog * 6, _prFlameMid);
+      const gg = ctx.createRadialGradient(0, 0, 0, 0, 0, 75);
+      gg.addColorStop(0, 'rgba(255,150,40,' + (0.35 * wakeA).toFixed(3) + ')'); gg.addColorStop(1, 'rgba(255,100,0,0)');
+      ctx.fillStyle = gg; ctx.fillRect(-75, -75, 150, 150);
       ctx.globalCompositeOperation = 'source-over';
-      // Rope: dark under-stroke, fibre highlight, then the hook head.
-      ctx.lineCap = 'round';
-      ctx.strokeStyle = '#4a3f2c';
-      ctx.lineWidth = 3.4;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.quadraticCurveTo(len * 0.5, 7 * (1 - prog), len, 0);
-      ctx.stroke();
-      ctx.strokeStyle = '#c9b489';
-      ctx.lineWidth = 1.6;
-      ctx.stroke();
-      ctx.strokeStyle = '#2f2a22';
-      ctx.lineWidth = 3.2;
-      ctx.beginPath();
-      ctx.arc(len, 0, 5.6, -1.9, 1.5);
-      ctx.stroke();
-      ctx.strokeStyle = '#d8dde6';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      pirateRopeWake(ctx, len * 1.5, 9 + 12 * Math.min(1, prog * 2), clock, wakeA);
+      // Rope + hook head (demo drawRope/drawHook paths, verbatim styling).
+      // Tether mode (the rope swing's pendulum): params.pivX/pivY carry the
+      // world pivot in canonical space (+x facing, −y up), refreshed every
+      // frame by combat.js — so the rope runs from the hand UP to the pivot
+      // the pirate is swinging on, with the hook seated at the pivot end.
+      // Without a pivot it is the demo's forward grapple throw.
+      let tipX = len, tipY = 0, ropeAng = 0, ropeLen = len;
+      if (P.pivX != null && P.pivY != null) {
+        tipX = P.pivX; tipY = P.pivY;
+        ropeLen = Math.max(8, Math.hypot(tipX, tipY));
+        ropeAng = Math.atan2(tipY, tipX);
+      }
+      if (ropeA > 0.01) {
+        ctx.save(); ctx.globalAlpha = Math.min(1, ropeA);
+        ctx.save(); ctx.rotate(ropeAng);
+        pirateRopeSpan(ctx, ropeLen, wave, clock);
+        pirateHookHead(ctx, ropeLen, 0.6, 0);
+        ctx.restore();
+        ctx.restore();
+      }
+      // Anchor nick at the throw (demo anchorFx ring at the top, re-based to
+      // the hook tip) + launch sparks.
+      if (ht < 0.9) {
+        const u = Math.max(0, ht - 0.35) / 0.4;
+        if (u > 0 && u < 1) {
+          ctx.save(); ctx.globalCompositeOperation = 'lighter';
+          pirateRing(ctx, tipX, tipY, 46, u, '255,200,120', 4);
+          for (let i = 0; i < 8; i++) {
+            const a = pirateHash01c(i, 21) * PIRATE_TAU, sp = 80 + pirateHash01c(i, 22) * 280;
+            const d = sp * 0.3 * pirateEo(u);
+            ctx.strokeStyle = 'rgba(255,220,160,' + (1 - u).toFixed(3) + ')';
+            ctx.lineWidth = 1.2 + pirateHash01c(i, 23) * 1.2;
+            ctx.beginPath(); ctx.moveTo(tipX + Math.cos(a) * d * 0.3, tipY + Math.sin(a) * d * 0.3);
+            ctx.lineTo(tipX + Math.cos(a) * d, tipY + Math.sin(a) * d); ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }
+      // Impact burst (demo burst(): flash + ring + 3 crescents + splat +
+      // 54 streaks + 30 dots + 14 debris). Fires at ht=1.5, decays over ~0.8s
+      // of demo time; re-based here to bu = (ht-1.5)/0.8.
+      if (ht >= 1.5) {
+        const bu = (ht - 1.5) / 0.8;
+        if (bu < 1) {
+          const ix = len * 0.55;
+          ctx.save(); ctx.globalCompositeOperation = 'lighter';
+          pirateFlash(ctx, ix, 0, 170, Math.min(1, bu / 0.28));
+          pirateRing(ctx, ix, 0, 160, Math.min(1, bu / 0.5), '255,190,100', 8);
+          ctx.globalCompositeOperation = 'source-over';
+          pirateCrescent(ctx, ix, 0, 0.3, 150, 85, Math.min(1, bu / 0.45));
+          pirateCrescent(ctx, ix, 0, 0.75, 105, 60, Math.min(1, Math.max(0, bu - 0.05) / 0.4));
+          pirateCrescent(ctx, ix, 0, -0.1, 120, 50, Math.min(1, Math.max(0, bu - 0.09) / 0.42));
+          pirateSplat(ctx, ix, 0, 58, bu, 31);
+          // Streak sparks: 54, cone around facing (+x) with a wide tail.
+          ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+          for (let i = 0; i < 24; i++) {
+            const wide = pirateHash01c(i, 32) < 0.3;
+            const a = (pirateHash01c(i, 33) - 0.5) * 3 * (wide ? 2.1 : 1);
+            const sp = 180 + pirateHash01c(i, 34) * 600;
+            const e = pirateEo(Math.min(1, bu * 2.2)), d = sp * 0.35 * e;
+            const fade = Math.max(0, 1 - bu * 1.6);
+            if (fade <= 0.01) continue;
+            const warm = pirateHash01c(i, 35) < 0.5;
+            ctx.strokeStyle = warm ? 'rgba(255,255,255,' + fade.toFixed(3) + ')' : 'rgba(255,190,100,' + fade.toFixed(3) + ')';
+            ctx.lineWidth = (1.4 + pirateHash01c(i, 36) * 1.8) * fade + 0.4;
+            const sx = ix + Math.cos(a) * d, sy = Math.sin(a) * d;
+            ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - Math.cos(a) * sp * 0.04, sy - Math.sin(a) * sp * 0.04); ctx.stroke();
+          }
+          // Hot dots: 30, all directions.
+          for (let i = 0; i < 12; i++) {
+            const a = pirateHash01c(i, 37) * PIRATE_TAU, sp = 30 + pirateHash01c(i, 38) * 300;
+            const e = pirateEo(Math.min(1, bu * 2)), d = sp * 0.3 * e;
+            const fade = Math.max(0, 1 - bu * 1.5);
+            if (fade <= 0.01) continue;
+            ctx.fillStyle = 'rgba(255,150,50,' + (fade * 0.8).toFixed(3) + ')';
+            ctx.beginPath(); ctx.arc(ix + Math.cos(a) * d, Math.sin(a) * d, (2 + pirateHash01c(i, 39) * 3) * fade + 0.5, 0, PIRATE_TAU); ctx.fill();
+          }
+          // Debris chips: 14, gravity 520, tumbling triangles.
+          ctx.globalCompositeOperation = 'source-over';
+          for (let i = 0; i < 8; i++) {
+            const a = (pirateHash01c(i, 41) - 0.5) * 3.6, sp = 150 + pirateHash01c(i, 42) * 330;
+            const t = bu * 0.8, d = sp * t * (1 - t * 0.5);
+            const y = Math.sin(a) * d + 520 * t * t * 0.5, x = ix + Math.cos(a) * d;
+            const fade = Math.max(0, 1 - bu * 1.3);
+            if (fade <= 0.01) continue;
+            ctx.save(); ctx.translate(x, y); ctx.rotate(pirateHash01c(i, 43) * PIRATE_TAU + bu * (pirateHash01c(i, 44) - 0.5) * 24);
+            ctx.globalAlpha = fade; ctx.fillStyle = 'rgba(255,225,170,1)';
+            const sz = 5 + pirateHash01c(i, 45) * 5;
+            ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.6, sz * 0.5); ctx.lineTo(-sz * 0.4, -sz * 0.6); ctx.closePath(); ctx.fill();
+            ctx.restore();
+          }
+          ctx.restore();
+        }
+      }
       ctx.restore();
     },
   },
 
   // ── Cutlass Lunge ───────────────────────────────────────────────────────
-  // The lunge's crescent. PINNED at the world point the lunge started from
-  // (spawnTempVfx's pinnedX/pinnedY), so as the body moves along the path the
-  // blade arc stays behind in the world and the fighter visibly passes through
-  // it. The head runs ahead of the tail by a fixed arc length, which is what
-  // makes it read as a blade travelling rather than a shape being scaled up.
+  // 1:1 port of GA/vfx/Cutlasslunge.html. PINNED at the lunge start point so
+  // the body passes through the arc exactly as the demo's ball passes through
+  // its world-anchored crescent. prog maps onto charge (0-.35) -> dash sweep
+  // (.35-.55) -> impact (.55-1): charge aura + inward dots, the 3-layer dash
+  // crescent along the demo's P0/C/P1 bezier, ghost afterimages, then the
+  // 2-layer impact crescent with its spike fan, ice dots and tip glow. Facing
+  // is the caller's mirrorX; the weapon tip is the origin (spawned at the
+  // hand with pinned start), so left/right both originate at the blade.
   pirateCutlassSlash: {
     name: 'Cutlass Slash',
     color: '#9fd8ff',
@@ -1700,47 +2012,145 @@ const PIRATE_VFX = {
       const mx = v.mirrorX == null ? 1 : v.mirrorX;
       if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
       if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
-      const prog = v.progress;
-      if (prog >= 1) return;
+      const prog = v.progress == null ? 0 : v.progress;
+      if (prog < 0 || prog >= 1) { ctx.restore(); return; }
       const P = v.params || PIRATE_NO_PARAMS;
       const unit = P.unit == null ? 1 : P.unit;
       const reach = (P.reach || 96) * unit;
-      // Head races out over the first third, then the whole arc holds its
-      // shape while it fades.
-      const head = artEaseOutExpo(Math.min(1, prog / 0.34));
-      const alpha = prog < 0.34 ? 1 : Math.max(0, 1 - (prog - 0.34) / 0.66);
-      if (alpha <= 0.004) return;
-      // The demo's blade path: up out of the ground behind, through a low
-      // control point, up and forward past the tip.
+      const S = unit;
+      // Demo path, game-sized: dash bezier P0 (behind/low) -> C -> P1 (tip).
       const x0 = -reach * 0.16, y0 = reach * 0.30;
       const cx = reach * 0.42, cy = reach * 0.34;
       const x1 = reach * 0.82, y1 = -reach * 0.14;
-      ctx.globalCompositeOperation = 'lighter';
-      for (let li = 0; li < _PI_SLASH_LAYERS.length; li++) {
-        const L = _PI_SLASH_LAYERS[li];
-        // Each layer's tail lags its head, so the three read as one stroke
-        // with a hot leading edge and a soft trailing one.
-        const tail = Math.max(0, head - L.lag);
-        pirateRibbon(ctx, x0, y0, cx, cy, x1, y1, tail, head,
-          reach * L.w, L.ramp[prA(alpha * L.a)]);
+      const bez = (u) => {
+        const iv = 1 - u;
+        return [iv * iv * x0 + 2 * iv * u * cx + u * u * x1, iv * iv * y0 + 2 * iv * u * cy + u * u * y1];
+      };
+      // Charge aura (demo T<CHG): blue wash + inward-drifting motes + dash ticks.
+      if (prog < 0.38) {
+        const k = prog / 0.38;
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 80 * S);
+        g.addColorStop(0, 'rgba(60,140,255,' + (0.14 + 0.2 * k * k).toFixed(3) + ')');
+        g.addColorStop(1, 'rgba(60,140,255,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 80 * S, 0, PIRATE_TAU); ctx.fill();
+        for (let i = 0; i < 8; i++) {
+          const a = pirateHash01c(i, 51) * PIRATE_TAU, r0 = (46 + pirateHash01c(i, 52) * 22) * S;
+          const rr = r0 * (1 - k * 0.45), tw = Math.sin(Math.PI * Math.min(1, k + pirateHash01c(i, 53) * 0.4));
+          const col = pirateHash01c(i, 54) < 0.25 ? '200,235,255' : '80,160,255';
+          ctx.fillStyle = 'rgba(' + col + ',' + (Math.max(0, tw) * 0.9).toFixed(3) + ')';
+          ctx.beginPath(); ctx.arc(Math.cos(a) * rr, Math.sin(a) * rr * 0.85, (1.3 + pirateHash01c(i, 55) * 1.5) * S, 0, PIRATE_TAU); ctx.fill();
+        }
+        // The demo's 9 charge dash ticks snapping left at release.
+        if (prog > 0.26) {
+          const q = (prog - 0.26) / 0.12;
+          ctx.lineCap = 'round';
+          for (let i = 0; i < 6; i++) {
+            const yy = (pirateHash01c(i, 56) - 0.5) * 44 * S, xx = (pirateHash01c(i, 57) - 0.5) * 60 * S;
+            ctx.strokeStyle = 'rgba(110,190,255,' + ((1 - q) * 0.8).toFixed(3) + ')';
+            ctx.lineWidth = (1.6 + pirateHash01c(i, 58) * 0.8) * S;
+            ctx.beginPath(); ctx.moveTo(xx, yy); ctx.lineTo(xx + (4 + pirateHash01c(i, 59) * 5) * S, yy); ctx.stroke();
+          }
+        }
+        ctx.restore();
       }
-      // Bloom at the leading tip, while the head is still travelling.
-      if (prog < 0.5) {
-        const g = (1 - prog * 2) * 0.5;
-        if (g > 0.01) {
-          const iv = 1 - head;
-          const hx = iv * iv * x0 + 2 * iv * head * cx + head * head * x1;
-          const hy = iv * iv * y0 + 2 * iv * head * cy + head * head * y1;
-          const R = reach * 0.3 * g;
-          ctx.save();
-          ctx.globalAlpha = g;
-          ctx.translate(hx, hy);
-          ctx.scale(R, R);
-          ctx.fillStyle = _prCyan[_PR_A_STEPS];
+      // Dash crescent (demo layered(): 3 passes, widths 1.8/1.0/0.36, alphas).
+      const sw = Math.max(0, Math.min(1, (prog - 0.3) / 0.25)), fade = 1 - Math.max(0, prog - 0.6) / 0.4;
+      if (sw > 0 && fade > 0) {
+        const h = pirateEo(sw), tl = Math.max(0, Math.min(1, h - 0.8 - (1 - fade) * 0.4));
+        const layers = [
+          { w: 24 * S * 1.8, rgb: '50,130,255', a: 0.26 * fade },
+          { w: 24 * S, rgb: '150,215,255', a: 0.75 * fade },
+          { w: 24 * S * 0.36, rgb: '255,255,255', a: 1.0 * fade },
+        ];
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        for (const L of layers) {
+          const N = 16;
           ctx.beginPath();
-          ctx.arc(0, 0, 1, 0, PIRATE_TAU);
-          ctx.fill();
+          for (let i = 0; i <= N; i++) {
+            const u = tl + (h - tl) * (i / N);
+            const [bx, by] = bez(u);
+            // Normal from bezier tangent.
+            const e = 0.01, [ax, ay] = bez(Math.max(0, u - e)), [c2x, c2y] = bez(Math.min(1, u + e));
+            let dx = c2x - ax, dy = c2y - ay; const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d;
+            const w = L.w * Math.pow(Math.sin(Math.PI * (0.03 + 0.94 * (i / N))), 0.8) * (0.4 + 0.6 * (i / N));
+            const px = bx + -dy * w / 2, py = by + dx * w / 2;
+            if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+          }
+          for (let i = N; i >= 0; i--) {
+            const u = tl + (h - tl) * (i / N);
+            const [bx, by] = bez(u);
+            const e = 0.01, [ax, ay] = bez(Math.max(0, u - e)), [c2x, c2y] = bez(Math.min(1, u + e));
+            let dx = c2x - ax, dy = c2y - ay; const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d;
+            const w = L.w * Math.pow(Math.sin(Math.PI * (0.03 + 0.94 * (i / N))), 0.8) * (0.4 + 0.6 * (i / N));
+            ctx.lineTo(bx - -dy * w / 2, by - dx * w / 2);
+          }
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(' + L.rgb + ',' + L.a.toFixed(3) + ')'; ctx.fill();
+        }
+        ctx.restore();
+      }
+      // Impact crescent (demo hit>=0: R=78*S head + R*.86 lagging layer + glow).
+      if (prog >= 0.55) {
+        const hit = (prog - 0.55) / 0.45, p2 = pirateEo(Math.min(1, hit / 0.31));
+        const a = 1 - Math.max(0, Math.min(1, (hit - 0.4) / 0.89));
+        if (a > 0.004) {
+          const R = 78 * S * (0.6 + 0.4 * p2);
+          const tipX = x1 + 10 * S * p2, cyA = y1;
+          const cxA = tipX - 0.45 * R;
+          ctx.save(); ctx.globalCompositeOperation = 'lighter';
+          const arcs = [
+            { r: R, ox: 0, w: 24 * S, al: a },
+            { r: R * 0.86, ox: -14 * S, w: 12 * S, al: a * 0.7 },
+          ];
+          for (const A of arcs) {
+            for (const [wr, al] of [[A.w * 1.8, 0.26], [A.w, 0.75], [A.w * 0.36, 1]]) {
+              ctx.beginPath();
+              for (let i = 0; i <= 20; i++) {
+                const u = i / 20, ang = -1.1 + 2.2 * u;
+                const rr = A.r, ex = cxA + A.ox + rr * Math.cos(ang), ey = cyA + rr * 1.25 * Math.sin(ang);
+                const wob = wr * Math.sin(Math.PI * u) * 0.5;
+                const nx = Math.cos(ang), ny = Math.sin(ang);
+                if (i) ctx.lineTo(ex + nx * wob, ey + ny * wob); else ctx.moveTo(ex + nx * wob, ey + ny * wob);
+              }
+              for (let i = 20; i >= 0; i--) {
+                const u = i / 20, ang = -1.1 + 2.2 * u;
+                const rr = A.r, ex = cxA + A.ox + rr * Math.cos(ang), ey = cyA + rr * 1.25 * Math.sin(ang);
+                const wob = wr * Math.sin(Math.PI * u) * 0.5;
+                const nx = Math.cos(ang), ny = Math.sin(ang);
+                ctx.lineTo(ex - nx * wob, ey - ny * wob);
+              }
+              ctx.closePath();
+              const rgb = al >= 0.9 ? '255,255,255' : al >= 0.6 ? '150,215,255' : '50,130,255';
+              ctx.fillStyle = 'rgba(' + rgb + ',' + (A.al * al * 0.5).toFixed(3) + ')'; ctx.fill();
+            }
+          }
+          const gg2 = ctx.createRadialGradient(cxA + R, cyA, 0, cxA + R, cyA, 50 * S);
+          gg2.addColorStop(0, 'rgba(200,235,255,' + (0.5 * (1 - Math.min(1, hit / 0.67))).toFixed(3) + ')');
+          gg2.addColorStop(1, 'rgba(200,235,255,0)');
+          ctx.fillStyle = gg2; ctx.beginPath(); ctx.arc(cxA + R, cyA, 50 * S, 0, PIRATE_TAU); ctx.fill();
           ctx.restore();
+          // Spike fan (demo 8: 6 warm + 2 ice) + ice dots (4).
+          const sa = Math.max(0, 1 - hit * 1.8);
+          if (sa > 0.01) {
+            ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+            for (let i = 0; i < 8; i++) {
+              const warm = i < 6, base = (pirateHash01c(i, 61) - 0.5) * 1.8 + (i % 2 ? 0.15 : -0.15);
+              const sp = (110 + pirateHash01c(i, 62) * 150) * S, d = sp * hit * 0.35;
+              const l = (7 + pirateHash01c(i, 63) * 6) * S * (1 - hit * 0.6);
+              const sx = tipX + Math.cos(base) * d, sy = cyA + Math.sin(base) * d;
+              ctx.fillStyle = warm ? 'rgba(255,175,90,' + sa.toFixed(3) + ')' : 'rgba(190,235,255,' + sa.toFixed(3) + ')';
+              const c = Math.cos(base), sn2 = Math.sin(base), w = 1.8 * S * (1 - hit * 0.5);
+              ctx.beginPath(); ctx.moveTo(sx + c * l, sy + sn2 * l); ctx.lineTo(sx - sn2 * w, sy + c * w);
+              ctx.lineTo(sx - c * l, sy - sn2 * l); ctx.lineTo(sx + sn2 * w, sy - c * w); ctx.closePath(); ctx.fill();
+            }
+            for (let i = 0; i < 4; i++) {
+              const dx = (20 + pirateHash01c(i, 64) * 70) * S * hit, dy = (pirateHash01c(i, 65) - 0.5) * 52 * S;
+              ctx.fillStyle = 'rgba(120,200,255,' + (sa * 0.8).toFixed(3) + ')';
+              ctx.beginPath(); ctx.arc(tipX + dx, cyA + dy, (1.5 + pirateHash01c(i, 66) * 1.1) * S, 0, PIRATE_TAU); ctx.fill();
+            }
+            ctx.restore();
+          }
         }
       }
       ctx.restore();
@@ -1748,9 +2158,17 @@ const PIRATE_VFX = {
   },
 
   // ── Anchor Drop ─────────────────────────────────────────────────────────
-  // The ground eruption. Gold light pillars and radial cracks are the demo's
-  // signature, so they lead; the shock ring, tumbling rock and rising embers
-  // fill in behind them.
+  // 1:1 port of GA/vfx/Anchor drop.html. prog maps onto rise (.0-.14) ->
+  // hold (.14-.24) -> slam (.24-.30) -> eruption (.30-1), preserving the
+  // demo's RISE/HOLD/I/B/END beats proportionally. The anchor (demo anchor()
+  // paths, steel + flukes + highlight + gold bloom while airborne) drops from
+  // above on a sagging chain (demo chain() links) with motion ghosts, then
+  // the ground eruption: 9 dust lobes, 9 flickering light pillars, 9x7-node
+  // cracks, expanding shock ring, 16 tapered rays, dual core glows, tumbling
+  // rock (gravity 520) and rising embers. PINNED at the landing spot (the
+  // actual collision point from the attack, not a hardcoded location), so the
+  // impact stays in the floor while the pirate recovers off it; mirrorX is
+  // the captured facing. Cleanup is the temp-VFX lifetime.
   pirateAnchorSlam: {
     name: 'Pirate Anchor Slam',
     color: '#ffbe50',
@@ -1761,129 +2179,202 @@ const PIRATE_VFX = {
       const mx = v.mirrorX == null ? 1 : v.mirrorX;
       if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
       if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
-      const prog = v.progress;
-      if (prog >= 1) return;
+      const prog = v.progress == null ? 0 : v.progress;
+      if (prog < 0 || prog >= 1) { ctx.restore(); return; }
       const P = v.params || PIRATE_NO_PARAMS;
       const U = P.unit == null ? 1 : P.unit;
-      // Crack reach runs out first, the ring just behind it, everything else
-      // rides the whole life.
-      const reachE = artEaseOutExpo(Math.min(1, prog / 0.22));
-      const ringE = artEaseOutExpo(Math.min(1, prog / 0.4));
+      // Phase map: fall .0-.3 (anchor descends), impact at .3, eruption after.
+      const fall = Math.min(1, prog / 0.3), fE = fall * fall * (3 - 2 * fall);
+      const hit = prog < 0.3 ? -1 : (prog - 0.3) / 0.7;
       const fade = Math.max(0, 1 - prog);
-
-      // Gold light pillars, rising off the floor.
-      ctx.globalCompositeOperation = 'lighter';
-      const pf = Math.max(0, 1 - Math.max(0, prog - 0.1) / 0.9);
-      if (pf > 0.01) {
-        for (let i = 0; i < _PI_PILLARS.length; i++) {
-          const h1 = pirateHash01c(i, 3);
-          const h2 = pirateHash01c(i, 4);
-          const x = (i - 4) * 9 * U + (h1 - 0.5) * 5 * U;
-          const w = (5 + h2 * 6) * U;
-          const h = (60 + h1 * 70) * U * artEaseOutExpo(Math.min(1, prog / 0.16));
-          ctx.globalAlpha = pf * (0.32 + h2 * 0.26);
-          ctx.fillStyle = _prGold[prA(0.55 + h1 * 0.4)];
-          ctx.fillRect(x - w * 0.5, -h, w, h);
+      const ax = 0, ay = hit < 0 ? -140 * U * (1 - fE) : Math.min(9, 9 * pirateEo(Math.max(0, hit) / 0.1)) * U;
+      const rot = hit < 0 ? (Math.PI + 0.55 + 0.6) + ((2 * Math.PI) - (Math.PI + 0.55 + 0.6)) * fE : 2 * Math.PI + (hit > 0 ? 0.05 * Math.sin(hit * 14) * Math.exp(-hit * 4.5) : 0);
+      const glow = hit < 0 ? 0.8 + 0.2 * fall : Math.max(0, 1 - Math.max(0, hit) / 0.6);
+      // Airborne aura + falling embers (demo: glow + continuous ember spawn).
+      if (hit < 0) {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(ax, ay, 0, ax, ay, 82 * U);
+        g.addColorStop(0, 'rgba(255,190,80,' + (glow * 0.31).toFixed(3) + ')');
+        g.addColorStop(1, 'rgba(255,190,80,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ax, ay, 82 * U, 0, PIRATE_TAU); ctx.fill();
+        for (let i = 0; i < 6; i++) {
+          const ex = ax + (pirateHash01c(i, 71) - 0.5) * 100 * U;
+          const ey = ay + (pirateHash01c(i, 72) - 0.5) * 85 * U - fall * 18 * U;
+          const tw = Math.sin(Math.PI * Math.min(1, fall + pirateHash01c(i, 73) * 0.5));
+          if (tw <= 0.01) continue;
+          ctx.fillStyle = 'rgba(255,190,80,' + (tw * 0.8).toFixed(3) + ')';
+          ctx.beginPath(); ctx.arc(ex, ey, (1.2 + pirateHash01c(i, 74) * 1.4) * U, 0, PIRATE_TAU); ctx.fill();
         }
-        ctx.globalAlpha = 1;
-      }
-      // Ground bloom.
-      if (prog < 0.5) {
-        const R = (26 + 40 * ringE) * U;
-        ctx.save();
-        ctx.scale(R * 1.5, R * 0.42);
-        ctx.fillStyle = pirateGoldGlow(ctx);
-        ctx.beginPath();
-        ctx.arc(0, 0, 1, 0, PIRATE_TAU);
-        ctx.fill();
         ctx.restore();
+        // Chain from the fighter (above) to the falling anchor.
+        ctx.save(); ctx.globalCompositeOperation = 'source-over';
+        pirateChainLinks(ctx, -30 * U, -120 * U, ax, ay - 48 * U, (16 - 10 * fall) * U, U);
+        ctx.restore();
+        // Motion ghosts (demo: 3 afterimages on the fall).
+        ctx.save(); ctx.globalAlpha = 0.18;
+        for (let gi = 3; gi >= 1; gi--) {
+          const q2 = Math.max(0, fall - gi * 0.09);
+          if (q2 <= 0.02) continue;
+          const e2 = q2 * q2 * (3 - 2 * q2);
+          ctx.save(); ctx.translate(ax, -140 * U * (1 - e2)); ctx.globalAlpha = 0.1;
+          pirateAnchorShape(ctx, rot, U, 0);
+          ctx.restore();
+        }
+        ctx.restore();
+        pirateAnchorShape(ctx, rot, U, glow * 0.9);
+        // Contact shadow on the floor while it falls.
+        ctx.fillStyle = 'rgba(0,0,0,.25)';
+        ctx.beginPath(); ctx.ellipse(0, 3 * U, 36 * U * (0.5 + fall * 0.5), 6 * U, 0, 0, PIRATE_TAU); ctx.fill();
+        ctx.restore();
+        return;
       }
-      ctx.globalCompositeOperation = 'source-over';
-
-      // Radial cracks, thrown out along the floor.
-      ctx.lineCap = 'round';
-      for (let i = 0; i < _PI_CRACKS.length; i++) {
-        const a0 = pirateHash01c(i, 5) * PIRATE_TAU;
+      // ── Eruption (hit >= 0) ──
+      const bt = hit;
+      // Ground dust row (demo puffs: 9 lobes, leading + trailing passes).
+      pirateDustRow(ctx, 0, 0, Math.min(1, bt / 0.5), 1 - Math.min(1, bt / 0.7), U);
+      // Light pillars (demo: 9 flickering gold shafts) + floor bloom.
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      const pk = pirateEo(Math.min(1, bt / 0.08)), pf = bt < 0 ? 0 : 1 - Math.min(1, Math.max(0, bt - 0.14) / 0.23);
+      if (pf > 0.01) {
+        for (let i = 0; i < 9; i++) {
+          const h1 = pirateHash01c(i, 3), h2 = pirateHash01c(i, 4);
+          const x = (i - 4) * 8.5 * U + (((i * 7) % 5) - 2) * U;
+          const w = (5 + ((i * 5) % 4) * 6) * U, h = (95 + ((i * 37) % 75)) * U * pk;
+          const a = (0.45 + 0.3 * Math.sin(prog * 16 + i * 1.7)) * pf;
+          if (a <= 0.01 || h <= 1) continue;
+          const g = ctx.createLinearGradient(0, 0, 0, -h);
+          g.addColorStop(0, 'rgba(255,190,80,' + a.toFixed(3) + ')');
+          g.addColorStop(1, 'rgba(255,190,80,0)');
+          ctx.fillStyle = g; ctx.fillRect(x - w / 2, -h, w, h);
+        }
+        const g2 = ctx.createRadialGradient(0, -10 * U, 0, 0, -10 * U, 70 * U);
+        g2.addColorStop(0, 'rgba(255,210,120,' + (0.35 * pf).toFixed(3) + ')');
+        g2.addColorStop(1, 'rgba(255,210,120,0)');
+        ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(0, -10 * U, 70 * U, 0, PIRATE_TAU); ctx.fill();
+      }
+      ctx.restore();
+      // Resting anchor + chain + contact shadow.
+      ctx.fillStyle = 'rgba(0,0,0,.25)';
+      ctx.beginPath(); ctx.ellipse(0, 3 * U, 36 * U, 6 * U, 0, 0, PIRATE_TAU); ctx.fill();
+      ctx.save(); ctx.globalCompositeOperation = 'source-over';
+      pirateChainLinks(ctx, -30 * U, -120 * U, ax, ay - 48 * U, 6 * U, U);
+      ctx.restore();
+      pirateAnchorShape(ctx, rot, U, glow * 0.9);
+      pirateDustRow(ctx, 0, 6 * U, Math.min(1, bt / 0.5) * 0.8, (1 - Math.min(1, bt / 0.7)) * 0.7, U);
+      // Radial cracks (demo CRACKS: 9 spokes x 7 nodes, gold glow).
+      ctx.save(); ctx.lineCap = 'round';
+      ctx.shadowColor = 'rgba(255,190,80,.9)'; ctx.shadowBlur = 8 * U;
+      const reachE = pirateEo(Math.min(1, bt / 0.11)), life = 1 - Math.min(1, Math.max(0, bt - 0.1) / 0.5);
+      ctx.strokeStyle = 'rgba(255,205,110,' + (0.9 * Math.max(0, life)).toFixed(3) + ')';
+      ctx.lineWidth = 1.8 * U;
+      for (let i = 0; i < 9; i++) {
+        const a0 = (i / 9) * PIRATE_TAU;
         let r = 0;
-        ctx.strokeStyle = _prGold[prA(fade * 0.85)];
-        ctx.lineWidth = (1.6 + pirateHash01c(i, 6) * 1.4) * U;
         ctx.beginPath();
-        for (let j = 0; j < _PI_CRACK_NODES; j++) {
-          r += (14 + pirateHash01c(i * 8 + j, 7) * 14) * U;
-          const a = a0 + (pirateHash01c(i * 8 + j, 8) - 0.5) * 0.18;
-          const x = Math.cos(a) * r * reachE * 1.15;
-          const y = Math.sin(a) * r * reachE * 0.28;
+        for (let j = 0; j < 7; j++) {
+          r += (14 + ((i * 17 + j * 29) % 14)) * U;
+          const a = a0 + (((i + j * 3) % 5) - 2) * 0.05;
+          const x = Math.cos(a) * r * reachE * 1.15, y = Math.sin(a) * r * reachE * 0.28;
           if (j) ctx.lineTo(x, y); else ctx.moveTo(x, y);
         }
         ctx.stroke();
       }
-
-      // Shock ring.
-      if (ringE < 1) {
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.strokeStyle = _prGoldHot[prA((1 - ringE) * 0.8)];
-        ctx.lineWidth = 4 * U * (1 - ringE * 0.6) + 0.5;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, (18 + 96 * ringE) * U, (6 + 26 * ringE) * U, 0, 0, PIRATE_TAU);
-        ctx.stroke();
-        ctx.globalCompositeOperation = 'source-over';
+      ctx.restore();
+      // Shock ring (demo: expanding gold ellipse).
+      const rr = pirateEo(Math.min(1, bt / 0.2));
+      if (rr < 1) {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = 'rgba(255,190,80,' + (0.8 * (1 - rr)).toFixed(3) + ')';
+        ctx.lineWidth = 4 * U * (1 - rr * 0.6);
+        ctx.beginPath(); ctx.ellipse(0, 0, (20 + 105 * rr) * U, (6 + 28 * rr) * U, 0, 0, PIRATE_TAU); ctx.stroke();
+        ctx.restore();
       }
-
-      // Tumbling rock, on gravity arcs.
-      for (let i = 0; i < _PI_ROCKS.length; i++) {
-        const h1 = pirateHash01c(i, 9);
-        const h2 = pirateHash01c(i, 10);
-        const a = -0.15 - h1 * 2.5;
-        const sp = 0.5 + h2 * 1.4;
-        const d = (30 + h1 * 70) * U * sp * artEaseOutExpo(Math.min(1, prog * 2.4));
-        const y = Math.sin(a) * d + 340 * U * prog * prog;
-        if (y > 0) continue;
-        ctx.save();
-        ctx.translate(Math.cos(a) * d, y);
-        ctx.rotate(prog * (4 + h2 * 8) * (h1 > 0.5 ? 1 : -1));
-        ctx.globalAlpha = fade;
-        ctx.fillStyle = _prRock[_PR_A_STEPS];
-        const sz = (2.6 + h1 * 3) * U;
-        ctx.beginPath();
-        ctx.moveTo(-sz, -sz * 0.5);
-        ctx.lineTo(0, -sz);
-        ctx.lineTo(sz, 0);
-        ctx.lineTo(sz * 0.3, sz);
-        ctx.lineTo(-sz, sz * 0.4);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = '#17110c';
-        ctx.lineWidth = 1.4 * U;
-        ctx.stroke();
+      // Explosion rays (demo RAYS: 16 tapered gold blades) + dual core glows.
+      const fl = 1 - Math.min(1, bt / 0.18), life2 = 1 - Math.min(1, Math.max(0, bt - 0.1) / 0.5);
+      if ((fl > 0.01 || life2 > 0.01)) {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        const rk = pirateEo(Math.min(1, bt / 0.06));
+        const ra = (0.9 * Math.max(0, fl) + 0.25 * Math.max(0, life2)) * (0.85 + 0.15 * Math.sin(prog * 24));
+        for (let i = 0; i < 16; i++) {
+          const a = -Math.PI + ((i + 0.5) / 16) * Math.PI;
+          const Ln = (40 + ((i * 53) % 55)) * U * rk * (0.5 + 0.5 * Math.max(0, fl) + 0.3 * Math.max(0, life2));
+          if (Ln < 2) continue;
+          const ox = 0, oy = -6 * U, ex = ox + Math.cos(a) * Ln * 1.1, ey = oy + Math.sin(a) * Ln;
+          const g = ctx.createLinearGradient(ox, oy, ex, ey);
+          g.addColorStop(0, 'rgba(255,230,160,' + Math.max(0, ra).toFixed(3) + ')');
+          g.addColorStop(1, 'rgba(255,190,80,0)');
+          const nx = -Math.sin(a) * 4 * U, ny = Math.cos(a) * 4 * U;
+          ctx.fillStyle = g; ctx.beginPath();
+          ctx.moveTo(ox + nx, oy + ny); ctx.lineTo(ex, ey); ctx.lineTo(ox - nx, oy - ny);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        const g3 = ctx.createRadialGradient(0, -8 * U, 0, 0, -8 * U, (30 + 50 * Math.max(0, fl)) * U);
+        g3.addColorStop(0, 'rgba(255,225,150,' + (0.35 * Math.max(0, life2) + 0.6 * Math.max(0, fl)).toFixed(3) + ')');
+        g3.addColorStop(1, 'rgba(255,225,150,0)');
+        ctx.fillStyle = g3; ctx.beginPath(); ctx.arc(0, -8 * U, (30 + 50 * Math.max(0, fl)) * U, 0, PIRATE_TAU); ctx.fill();
+        const g4 = ctx.createRadialGradient(0, -6 * U, 0, 0, -6 * U, 18 * U);
+        g4.addColorStop(0, 'rgba(255,255,240,' + (0.8 * Math.max(0, fl)).toFixed(3) + ')');
+        g4.addColorStop(1, 'rgba(255,255,240,0)');
+        ctx.fillStyle = g4; ctx.beginPath(); ctx.arc(0, -6 * U, 18 * U, 0, PIRATE_TAU); ctx.fill();
+        ctx.restore();
+      }
+      // Tumbling rock (demo: 6 + 8, gravity 520) + gold sparks (9, gravity 120).
+      for (let i = 0; i < 9; i++) {
+        const t = bt * 0.55, h1 = pirateHash01c(i, 9), h2 = pirateHash01c(i, 10);
+        const a = i < 5 ? (pirateHash01c(i, 81) - 0.5) * 2 : -0.5 - h1 * 2.1;
+        const sp = i < 5 ? 110 + h2 * 100 : (80 + h2 * 110);
+        const vx = Math.cos(a) * sp * U, vy0 = Math.sin(a) * sp * U;
+        const x = vx * t * 0.6, y = vy0 * t * 0.6 + 520 * U * t * t * 0.5 - 4 * U;
+        if (y > 2 * U) continue;
+        const lf = Math.max(0, 1 - bt * (i < 5 ? 0.9 : 0.7));
+        if (lf <= 0.01) continue;
+        ctx.save(); ctx.translate(x, y); ctx.rotate(pirateHash01c(i, 82) * PIRATE_TAU + bt * (h2 - 0.5) * 14);
+        ctx.globalAlpha = lf; ctx.fillStyle = '#5a4733'; ctx.strokeStyle = '#17110c'; ctx.lineWidth = 1.5 * U;
+        const sz = (2.5 + h1 * (i < 5 ? 2 : 2.5)) * U;
+        ctx.beginPath(); ctx.moveTo(-sz, -sz * 0.5); ctx.lineTo(0, -sz); ctx.lineTo(sz, 0);
+        ctx.lineTo(sz * 0.3, sz); ctx.lineTo(-sz, sz * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke();
         ctx.restore();
       }
       ctx.globalAlpha = 1;
-
-      // Embers drifting up.
-      ctx.globalCompositeOperation = 'lighter';
-      for (let i = 0; i < _PI_EMBERS.length; i++) {
-        const h1 = pirateHash01c(i, 11);
-        const h2 = pirateHash01c(i, 12);
-        const x = (h1 - 0.5) * 90 * U;
-        const y = -((14 + h2 * 26) * U + prog * (50 + h1 * 70) * U);
-        const a = fade * Math.sin(Math.PI * Math.min(1, prog * 1.4));
-        ctx.fillStyle = _prGoldHot[prA(a * 0.9)];
-        ctx.beginPath();
-        ctx.arc(x, y, (1.2 + h1 * 1.6) * U, 0, PIRATE_TAU);
-        ctx.fill();
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 9; i++) {
+        const h1 = pirateHash01c(i, 83), h2 = pirateHash01c(i, 84);
+        const a = -2.9 + h1 * 2.7, sp = (60 + h2 * 140) * U;
+        const t = bt * 0.5, x = Math.cos(a) * sp * t, y = -6 * U + Math.sin(a) * sp * t + 120 * U * t * t * 0.5;
+        const lf = Math.max(0, 1 - bt * 1.1);
+        if (lf <= 0.01) continue;
+        const col = h1 < 0.3 ? '255,240,200' : '255,190,80';
+        ctx.fillStyle = 'rgba(' + col + ',' + (lf * 0.85).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc(x, y, (1.8 + h2 * 1.6) * U, 0, PIRATE_TAU); ctx.fill();
       }
+      ctx.restore();
+      // Rising embers over the whole eruption.
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 14; i++) {
+        const h1 = pirateHash01c(i, 11), h2 = pirateHash01c(i, 12);
+        const x = (h1 - 0.5) * 90 * U, y = -((14 + h2 * 26) * U + prog * (50 + h1 * 70) * U);
+        const tw = fade * Math.sin(Math.PI * Math.min(1, prog * 1.4));
+        if (tw <= 0.01) continue;
+        ctx.fillStyle = _prGoldHot[prA(tw * 0.9)];
+        ctx.beginPath(); ctx.arc(x, y, (1.2 + h1 * 1.6) * U, 0, PIRATE_TAU); ctx.fill();
+      }
+      ctx.restore();
       ctx.restore();
     },
   },
 
   // ── Cannon Blast (in flight) ────────────────────────────────────────────
-  // The round itself. The demo drew a dark iron ball with a bright rim sheen
-  // inside a three-layer flame wake; that is what rides the projectile here.
-  // Local +x points down the travel direction (the renderer sets `rotation`
-  // from the velocity and `mirrorX` from the facing), so the wake streams off
-  // behind in -x. `p.spin` is the projectile's own advancing clock, used only
-  // to make the flame writhe — the ball's motion already carries the wake
-  // down the screen.
+  // 1:1 port of GA/vfx/cannon blast.html flight: the dark iron ball (rim
+  // sheen arc) inside the demo's 3-layer FLAME wake + head glow, with the
+  // demo's trailing smoke puffs and ember dots streaming off behind. Rides
+  // the REAL projectile (render.js draws it at p.x/p.y with rotation from
+  // velocity and mirrorX from facing), so the trail follows the true
+  // trajectory, facing, camera and world position; it never owns a hitbox
+  // (the projectile's r-sized hurtbox does). p.spin is the flight clock that
+  // makes the flame writhe. Draw-only, no allocation per frame beyond the
+  // demo's own gradient fills.
   pirateCannonTrail: {
     name: 'Pirate Cannon Trail',
     color: '#ffbe50',
@@ -1896,20 +2387,33 @@ const PIRATE_VFX = {
       if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
       const r = p.r || 10;
       const clock = (p.spin || 0) * 0.35;
+      // Demo FLAME wake, verbatim stops: outer ember, mid gold, white core.
       ctx.globalCompositeOperation = 'lighter';
       pirateWake(ctx, r * 5.4, r * 1.25, clock, _prFlameOut);
       pirateWake(ctx, r * 4.4, r * 0.95, clock * 1.3, _prFlameMid);
       pirateWake(ctx, r * 2.6, r * 0.55, clock * 1.7, _prFlameCore);
-      const R = r * 2.6;
-      ctx.save();
-      ctx.scale(R, R);
-      ctx.fillStyle = pirateFlameGlow(ctx);
-      ctx.beginPath();
-      ctx.arc(0, 0, 1, 0, PIRATE_TAU);
-      ctx.fill();
-      ctx.restore();
-      // The ball.
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 30);
+      g.addColorStop(0, 'rgba(255,170,60,.7)'); g.addColorStop(1, 'rgba(255,90,10,0)');
+      ctx.fillStyle = g; ctx.fillRect(-30, -30, 60, 60);
       ctx.globalCompositeOperation = 'source-over';
+      // Trailing smoke puffs (demo k:3 flight emission, fixed wake offsets so
+      // the static trail draw reads as the live emission trail).
+      for (let i = 0; i < 5; i++) {
+        const bx = -r * (1.6 + pirateHash01c(i, 91) * 3.2);
+        const by = (pirateHash01c(i, 92) - 0.5) * r * 1.6 + Math.sin(clock * 9 + i * 2.1) * r * 0.3;
+        const pr = r * (0.5 + pirateHash01c(i, 93) * 0.4);
+        pirateSmokePuff(ctx, bx, by, pr, 0.55 - i * 0.07);
+      }
+      // Ember dots (demo k:0 flight sparks).
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 5; i++) {
+        const bx = -r * (0.8 + pirateHash01c(i, 94) * 3.4) + (pirateHash01c(i, 95) - 0.5) * 8;
+        const by = (pirateHash01c(i, 96) - 0.5) * r * 1.8;
+        ctx.fillStyle = 'rgba(255,180,70,' + (0.8 - i * 0.1).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc(bx, by, (1.5 + pirateHash01c(i, 97) * 1.5) * (r / 10), 0, PIRATE_TAU); ctx.fill();
+      }
+      ctx.restore();
+      // The ball (demo drawProj: iron + dark outline + rim sheen).
       ctx.fillStyle = '#2b2f38';
       ctx.beginPath();
       ctx.arc(0, 0, r, 0, PIRATE_TAU);
@@ -1926,12 +2430,63 @@ const PIRATE_VFX = {
     },
   },
 
+  // ── Cannon Blast (muzzle) ──────────────────────────────────────────────
+  // 1:1 port of the demo's fire() pop: the 9-point gold starburst + white
+  // core (muzzle()), the launch streak fan and the first smoke. Spawned once
+  // by combat.js at the REAL muzzle (the weapon-anchor spawn point, captured
+  // facing) on the cast frame, so it sits on the cannon, points down the
+  // shot and dies with the attack. Lifetime is the spawn's own 0.2s.
+  pirateCannonMuzzle: {
+    name: 'Pirate Cannon Muzzle',
+    color: '#ffbe50',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      const prog = v.progress == null ? 0 : v.progress;
+      if (prog < 0 || prog >= 1) { ctx.restore(); return; }
+      const P = v.params || PIRATE_NO_PARAMS;
+      const U = P.unit == null ? 1 : P.unit;
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      pirateMuzzleStar(ctx, 0, Math.min(1, prog / 0.5), (55 + 40 * pirateEo(Math.min(1, prog / 0.5))) * U);
+      ctx.restore();
+      // Launch streak fan (demo fire(): 22 streaks in a narrow cone).
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+      for (let i = 0; i < 12; i++) {
+        const a = (pirateHash01c(i, 101) - 0.5) * 1.1;
+        const sp = (200 + pirateHash01c(i, 102) * 500) * U;
+        const e = pirateEo(Math.min(1, prog * 2.4)), d = sp * 0.25 * e;
+        const fade = Math.max(0, 1 - prog * 2.2);
+        if (fade <= 0.01) continue;
+        const warm = pirateHash01c(i, 103) < 0.5;
+        ctx.strokeStyle = warm ? 'rgba(255,240,170,' + fade.toFixed(3) + ')' : 'rgba(255,150,40,' + fade.toFixed(3) + ')';
+        ctx.lineWidth = (1.2 + pirateHash01c(i, 104) * 1.8) * U * fade + 0.4;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a) * d * 0.3, Math.sin(a) * d * 0.3);
+        ctx.lineTo(Math.cos(a) * d, Math.sin(a) * d); ctx.stroke();
+      }
+      ctx.restore();
+      // First smoke (demo fire(): 7 grey puffs coughing off the muzzle).
+      for (let i = 0; i < 5; i++) {
+        const vx = (-70 + pirateHash01c(i, 105) * 120) * U * prog * 0.4;
+        const vy = (-110 + pirateHash01c(i, 106) * 90) * U * prog * 0.4 - 30 * U * prog * prog * 0.2;
+        pirateSmokePuff(ctx, vx, vy, (8 + pirateHash01c(i, 107) * 6) * U * (1 - prog * 0.4), Math.max(0, 0.8 - prog * 1.2));
+      }
+      ctx.restore();
+    },
+  },
+
   // ── Cannon Blast (detonation) ───────────────────────────────────────────
-  // Spawned by combat.js wherever a round actually RESOLVES — a landed hit, a
-  // shielded block, a destructible it blew through. Never on a round that
-  // simply ran out of life or left the arena, so an air fireball never paints
-  // an explosion over empty stage. `params.unit` scales the whole burst off
-  // the round's own radius, so a Plunder-enhanced ball bursts bigger.
+  // 1:1 port of the demo's explode(): core flash, dome shockwave with its
+  // white arc highlight, flattened ground ring, scorch, 44 radial streaks,
+  // 26 fireballs (white->amber->ember by age), 18 grey smoke puffs and 16
+  // tumbling debris chips (gravity 700). Spawned by updateProjectiles'
+  // kill path wherever the round ACTUALLY resolved (hit / block /
+  // destructible) and PINNED there — never on a timeout over empty stage.
+  // params.unit scales the burst off the round's own radius. Facing is the
+  // round's travel side.
   pirateCannonImpact: {
     name: 'Pirate Cannon Impact',
     color: '#ffbe50',
@@ -1941,74 +2496,102 @@ const PIRATE_VFX = {
       const s = v.scale || 1;
       const mx = v.mirrorX == null ? 1 : v.mirrorX;
       if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
-      const prog = v.progress;
-      if (prog >= 1) return;
+      const prog = v.progress == null ? 0 : v.progress;
+      if (prog < 0 || prog >= 1) { ctx.restore(); return; }
       const P = v.params || PIRATE_NO_PARAMS;
       const U = P.unit == null ? 1 : P.unit;
       const fade = Math.max(0, 1 - prog);
       const flash = Math.max(0, 1 - prog / 0.22);
-      const dome = artEaseOutExpo(Math.min(1, prog / 0.5));
+      const dome = pirateEo(Math.min(1, prog / 0.5));
 
-      ctx.globalCompositeOperation = 'lighter';
-      // Core flash.
-      if (flash > 0.01) {
-        const R = 90 * U * (0.6 + 0.4 * flash);
-        ctx.save();
-        ctx.scale(R, R);
-        ctx.globalAlpha = flash;
-        ctx.fillStyle = _prFlameCore[_PR_A_STEPS];
-        ctx.beginPath();
-        ctx.arc(0, 0, 1, 0, PIRATE_TAU);
-        ctx.fill();
-        ctx.restore();
-      }
-      // Dome shockwave.
+      // Core flash (demo flash radius 200, white->amber wash).
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      if (flash > 0.01) pirateFlash(ctx, 0, 0, 200 * U * (0.7 + 0.3 * flash), Math.min(1, prog / 0.22));
+      // Dome shockwave (demo dome(): amber shell + white highlight arc).
       if (prog < 0.55) {
-        const dr = 130 * U * dome;
-        const da = (1 - prog / 0.55) * 0.7;
-        ctx.strokeStyle = _prFlameMid[prA(da)];
-        ctx.lineWidth = 4 * U * (1 - dome) + 1;
-        ctx.beginPath();
-        ctx.arc(0, 0, dr, 0, PIRATE_TAU);
-        ctx.stroke();
-        ctx.strokeStyle = _prFlameCore[prA(da * 0.8)];
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(0, 0, dr * 0.88, 3.6, 4.6);
-        ctx.stroke();
+        const dr = 130 * U * dome, da = (1 - prog / 0.55) * 0.7;
+        if (dr > 1) {
+          const g = ctx.createRadialGradient(0, 0, dr * 0.6, 0, 0, dr);
+          g.addColorStop(0, 'rgba(255,170,60,0)');
+          g.addColorStop(1, 'rgba(255,170,60,' + (0.22 * Math.max(0, da)).toFixed(3) + ')');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, dr, 0, PIRATE_TAU); ctx.fill();
+          ctx.strokeStyle = 'rgba(255,205,130,' + Math.max(0, da * 0.8).toFixed(3) + ')';
+          ctx.lineWidth = 4 * U * (1 - dome) + 1;
+          ctx.beginPath(); ctx.arc(0, 0, dr, 0, PIRATE_TAU); ctx.stroke();
+          ctx.strokeStyle = 'rgba(255,255,255,' + Math.max(0, da * 0.7).toFixed(3) + ')';
+          ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(0, 0, dr * 0.88, 3.6, 4.6); ctx.stroke();
+        }
       }
-      // Ground ring, flattened like the demo's.
+      // Ground ring (demo gring(): flat 210 ellipse).
       if (dome < 1) {
-        ctx.strokeStyle = _prFlameOut[prA((1 - dome) * 0.8)];
-        ctx.lineWidth = 7 * U * (1 - dome * 0.7) + 0.5;
+        ctx.strokeStyle = 'rgba(255,160,50,' + ((1 - dome)).toFixed(3) + ')';
+        ctx.lineWidth = 7 * U * (1 - dome * 0.7) + 1;
         ctx.beginPath();
         ctx.ellipse(0, 0, 210 * U * dome, 210 * U * dome * 0.14, 0, 0, PIRATE_TAU);
         ctx.stroke();
       }
-      // Debris spikes thrown out radially.
-      ctx.lineCap = 'round';
-      for (let i = 0; i < _PI_SPIKES.length; i++) {
-        const h1 = pirateHash01c(i, 13);
-        const h2 = pirateHash01c(i, 14);
+      ctx.restore();
+      // Radial streaks (demo: 44, alternating pale/gold).
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+      for (let i = 0; i < 22; i++) {
+        const h1 = pirateHash01c(i, 13), h2 = pirateHash01c(i, 14);
         const a = h1 * PIRATE_TAU;
-        const len = 90 * U * (0.6 + h2 * 1.5) * artEaseOutExpo(Math.min(1, prog * 2.6));
+        const len = 90 * U * (0.6 + h2 * 1.5) * pirateEo(Math.min(1, prog * 2.6)) * 3.2;
         if (len < 3) continue;
-        ctx.strokeStyle = (i % 2 ? _prFlameMid : _prFlameCore)[prA(fade * (0.5 + h1 * 0.5))];
-        ctx.lineWidth = (1.6 + h2 * 2.4) * U;
+        const al = fade * (0.5 + h1 * 0.5);
+        if (al <= 0.01) continue;
+        ctx.strokeStyle = (i % 2 ? 'rgba(255,235,160,' : 'rgba(255,150,40,') + al.toFixed(3) + ')';
+        ctx.lineWidth = (1.4 + h2 * 2) * U;
         ctx.beginPath();
         ctx.moveTo(Math.cos(a) * 10 * U, Math.sin(a) * 10 * U);
         ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len);
         ctx.stroke();
       }
-      ctx.globalCompositeOperation = 'source-over';
-      // Scorch left behind.
-      if (prog > 0.06) {
-        ctx.globalAlpha = Math.max(0, 0.5 * (1 - Math.max(0, prog - 0.1) / 0.9));
+      ctx.restore();
+      // Fireballs (demo k:4, 26: white->amber->ember, rising as they cool).
+      for (let i = 0; i < 14; i++) {
+        const a = pirateHash01c(i, 111) * PIRATE_TAU, sp = (30 + pirateHash01c(i, 112) * 230) * U;
+        const t = prog * 0.8, d = sp * t * (1 - t * 0.4);
+        const x = Math.cos(a) * d + (pirateHash01c(i, 113) - 0.5) * 36 * U;
+        const y = Math.sin(a) * d + (pirateHash01c(i, 114) - 0.5) * 36 * U - 90 * U * t * 0.4;
+        const u = Math.min(1, prog * 1.6 + pirateHash01c(i, 115) * 0.3);
+        pirateFirePuff(ctx, x, y, (22 + pirateHash01c(i, 116) * 24) * U * (0.6 + u * 0.9) * Math.max(0, 1 - prog * 0.9), u, Math.max(0, fade * 1.1 - u * 0.3));
+      }
+      // Smoke (demo k:3, 18: grey puffs with dark outline, drifting up).
+      ctx.save(); ctx.globalCompositeOperation = 'source-over';
+      for (let i = 0; i < 10; i++) {
+        const bx = (pirateHash01c(i, 117) - 0.5) * 120 * U + (pirateHash01c(i, 118) - 0.5) * 40 * U * prog;
+        const by = -8 * U + (pirateHash01c(i, 119) - 0.5) * 24 * U - (20 + pirateHash01c(i, 120) * 70) * U * prog * 0.5;
+        pirateSmokePuff(ctx, bx, by, (14 + pirateHash01c(i, 121) * 14) * U * (1 + prog * 0.5), Math.max(0, fade * 0.85 - prog * 0.2));
+      }
+      ctx.restore();
+      // Debris chips (demo k:2, 16: tumbling triangles, gravity 700).
+      ctx.save(); ctx.globalCompositeOperation = 'source-over';
+      for (let i = 0; i < 10; i++) {
+        const a = -2.6 + pirateHash01c(i, 122) * 2.1, sp = (250 + pirateHash01c(i, 123) * 370) * U;
+        const t = prog * 0.9, x = Math.cos(a) * sp * t * 0.5, y = Math.sin(a) * sp * t * 0.5 + 700 * U * t * t * 0.5;
+        const lf = Math.max(0, 1 - prog * 1.1);
+        if (lf <= 0.01) continue;
+        ctx.save(); ctx.translate(x, y); ctx.rotate(pirateHash01c(i, 124) * PIRATE_TAU + prog * (pirateHash01c(i, 125) - 0.5) * 24);
+        ctx.globalAlpha = lf;
+        const dark = pirateHash01c(i, 126) < 0.5;
+        ctx.fillStyle = dark ? 'rgba(70,32,14,1)' : 'rgba(255,140,40,1)';
+        const sz = (4 + pirateHash01c(i, 127) * 5) * U;
+        ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.6, sz * 0.5); ctx.lineTo(-sz * 0.4, -sz * 0.6); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
+      ctx.save(); ctx.globalCompositeOperation = 'source-over';
+      // Scorch left behind (demo: dark ellipse, 2.2s, under everything).
+      if (prog > 0.03) {
+        ctx.globalAlpha = Math.max(0, 0.5 * (1 - Math.max(0, prog - 0.03) / 0.97));
         ctx.fillStyle = '#120c08';
         ctx.beginPath();
-        ctx.ellipse(0, 0, 70 * U, 12 * U, 0, 0, PIRATE_TAU);
+        ctx.ellipse(0, 4 * U, 70 * U, 6 * U, 0, 0, PIRATE_TAU);
         ctx.fill();
       }
+      ctx.restore();
       ctx.restore();
     },
   },
@@ -2747,10 +3330,27 @@ export function drawFighterVfx(ctx, fighter) {
     if (!_keep) return;
   }
   const pool = fighter._vfxPool;
+  // A live temp instance wins over a timeline row of the same effect: the
+  // temp carries runtime truth (pinned positions, computed params) the row
+  // cannot express, so the row yields instead of double-drawing. This is what
+  // keeps ability art single-drawn in-game (the ability's adopted spawn is the
+  // live instance) while the same rows still paint in the animator preview,
+  // where no temp instance exists. Both lists are tiny, so the scan below
+  // only runs when both are non-empty.
+  const liveTemp = fighter._tempVfx;
+  const tempLive = liveTemp && liveTemp.length > 0;
   if (pool && pool.length) {
     for (let i = 0; i < pool.length; i++) {
       const v = pool[i];
       if (!v || v.progress < 0 || v.progress > 1) continue;
+      if (tempLive) {
+        let shadowed = false;
+        for (let j = 0; j < liveTemp.length; j++) {
+          const t = liveTemp[j];
+          if (t && t.progress >= 0 && t.progress < 1 && t.effect === v.effect) { shadowed = true; break; }
+        }
+        if (shadowed) continue;
+      }
       const eff = VFX_EFFECTS[v.effect] || VFX_EFFECTS.bullet;
       resolveAnchor(fighter, v, _pos);
       // Timeline offsets are authored canonically (facing right), so they
@@ -3512,8 +4112,7 @@ export function emitAbilityFx(fighter, atk, kind) {
       break;
     }
     // Pirate cannon (Cannon Blast): the shared firearm muzzle pop off the
-    // barrel, sized off the projectile's own radius so a Plunder-Enhanced
-    // (bigger) ball gets a proportionally bigger flash.
+    // barrel, sized off the projectile's own radius.
     case 'cannon': {
       const pr = (atk && atk.fxProjR) || r * 0.45;
       emitFlash(x, y, { style, radius: pr * 1.5, life: 0.08, alpha: 0.9, color: '#fff3c4' });

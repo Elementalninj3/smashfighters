@@ -1,7 +1,7 @@
 import { AIController, AI_DIFFICULTIES, configForDifficulty, createTrainer, evaluateModels, loadTrainedModel, listTrainedModels, listModels, getModel, getActiveModel, activateModel, renameModel, duplicateModel, deleteModel, exportModel, importModel, attachEval, listRunHistory, getRun, clearRunHistory, loadCheckpoint, computeFitnessBreakdown } from './ai.js';
 import { allWeapons, getWeapon, setAnimationLoader, updateAnimator, attachAnimator, getAnimation, setAnimLibChangeListener } from './anim.js';
 import { SFX } from './assets.js';
-import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resolveFighterSkin, drawCombatDebug, resetCombat, removeAttackerHitboxes, clearHitLocks, clearDeadeye, clearBoxerState, __debugHitboxes, startAttackForKey, resolveAttackDef, setCombatStage, ALL_FIGHTERS, setCustomHitboxes, clearCustomHitboxes, plunderOf, PLUNDER_MAX, PLUNDER_TIER_KNOCKBACK } from './combat.js';
+import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resolveFighterSkin, drawCombatDebug, resetCombat, removeAttackerHitboxes, clearHitLocks, clearDeadeye, clearBoxerState, __debugHitboxes, startAttackForKey, resolveAttackDef, setCombatStage, ALL_FIGHTERS, setCustomHitboxes, clearCustomHitboxes } from './combat.js';
 import { openEditor, closeEditor, updateEditor, renderEditor, setEditorCloseHandler, openHitboxCustomizer, closeHitboxCustomizer, updateHitboxCustomizer, renderHitboxCustomizer, setHitboxCustomizerCloseHandler, setCustomizerMove, setWorkingBoxValue, saveCustomizer, resetCustomizerMove, getWorkingBoxes, isHitboxCustomizerOpen, hitboxCustomizerHits } from './editors.js';
 import { drawFighterVfx, setVfxViewBounds, warmEffectSprites, stepTimeDilation, timeDilationState, peekTimeDilation, resetTimeDilation, drawTimeDilationPost, updateDamageIndicators, drawDamageIndicators, resetDamageIndicators, updateWorldFx, drawWorldFx, resetWorldFx, setWorldFxViewBounds, setFxQuality, setParticleDetail, setPostDetail, setWorldFxBatch, setDamageTextCache, worldFxState } from './fx.js';
 import { initInput, flushInput, isJustPressed, createFighter, createDefaultStage, drawStage, updatePlatforms, isInBlastZone, onLoopQualityChange, setDestructibleViewBounds, clearDestructibleViewBounds, sanitizeDeathZone, applyDeathZoneToStage, blastRectFor, DEFAULT_DEATH_MARGINS, DEATHZONE_MIN, DEATHZONE_MAX, DEATHZONE_STEP } from './physics.js';
@@ -879,114 +879,11 @@ function drawHealthBar(ctx, fighter, time) {
     ctx.fillText(label, fighter.x, fighter.y - fighter.radius - 25);
     ctx.restore();
   }
-
-  drawPlunderMeter(ctx, fighter);
 }
 
-// Pirate's Plunder meter — a small five-pip bar stacked ABOVE the damage
-// readout, so it floats over the pirate's head instead of colliding with the
-// damage bar. Same world space (under the camera transform) and the same flat
-// black + one-fill language as the damage bar.
-//
-// Vertical stack, every offset measured UP from the top of the fighter's ball
-// (`fighter.y - fighter.radius`):
-//   -57 .. -44   READY / CHARGED label  (only while an enhancement is armed)
-//   -42 .. -37   the five Plunder pips
-//   -35 .. -15   the damage percent label (existing, unchanged)
-//   -20 .. -12   the damage bar         (existing, unchanged)
-// The label and the pips are kept as named constants below so the stack stays
-// readable and cannot drift back into the damage bar.
-//
-// It repaints every frame, exactly like the damage bar above it: the arena
-// canvas is cleared and refilled each frame, so a skipped draw would make the
-// meter disappear rather than save work. What "only when necessary" buys here
-// is the two cheap guards below plus the cached label sprite — the whole meter
-// is 6 tiny fills and one stroke, an order of magnitude below the damage bar's
-// per-frame cost, so it is not worth a correctness risk to try to skip it.
-//   - non-pirates return on the `plunderOf` check (a single id compare),
-//   - a pirate at zero returns without touching the canvas at all (an empty
-//     meter is information-free).
-const PLUNDER_PIPS = 5;
-// Stack geometry, as offsets up from the top of the fighter's ball. PLUNDER_PIP_Y
-// clears the damage percent label's sprite (top edge at -35) and sits above the
-// damage bar entirely.
-const PLUNDER_PIP_Y = -42;
-const PLUNDER_PIP_H = 5;
-const PLUNDER_LABEL_GAP = 2;
-function drawPlunderMeter(ctx, fighter) {
-  const p = plunderOf(fighter);
-  if (p <= 0) return;
-
-  // Ready states: at 3 the next cannon is empowered, at 5 it is a Charged
-  // Broadside. Both are drawn in the same gold so "an enhancement is armed"
-  // is one glance, and the pips read bright instead of dim.
-  const charged = p >= PLUNDER_MAX_UI;
-  const armed = p >= PLUNDER_READY_UI;
-  const w = 44, h = PLUNDER_PIP_H;
-  const gap = 2.2;
-  const pipW = (w - gap * (PLUNDER_PIPS - 1)) / PLUNDER_PIPS;
-  const bx = fighter.x - w / 2;
-  const by = fighter.y - fighter.radius + PLUNDER_PIP_Y;
-  const pipFill = charged ? '#ffe27a' : armed ? '#f0c65a' : '#cbb98f';
-
-  ctx.save();
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-  ctx.fillRect(bx, by, w, h);
-  ctx.fillStyle = pipFill;
-  for (let i = 0; i < p && i < PLUNDER_PIPS; i++) {
-    ctx.fillRect(bx + i * (pipW + gap), by, pipW, h);
-  }
-  ctx.lineWidth = 1.2;
-  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.strokeRect(bx + 0.6, by + 0.6, w - 1.2, h - 1.2);
-  // Armed/charged label: one cached sprite per state, not a per-frame fillText.
-  const mark = charged ? 'CHARGED' : armed ? 'READY' : '';
-  if (mark) {
-    const s = _plunderMarkSprite(mark, charged);
-    if (s) ctx.drawImage(s.c, fighter.x - s.w / 2, by - PLUNDER_LABEL_GAP - s.h, s.w, s.h);
-  }
-  ctx.restore();
-}
-
-// The meter's display thresholds, taken from the passive's own constants
-// (PLUNDER_MAX / PLUNDER_TIER_KNOCKBACK in combat.js) rather than re-typed
-// here, so the HUD can never show a "READY" at a point the cannon will not
-// actually honour.
-const PLUNDER_MAX_UI = PLUNDER_MAX;
-const PLUNDER_READY_UI = PLUNDER_TIER_KNOCKBACK;
-
-// Cached "READY" / "CHARGED" labels under the meter, same bake rules as
-// _pctSprite (world space, WORLD_TEXT_SS supersample, FIFO eviction).
-const _plunderMarks = new Map();
-function _plunderMarkSprite(text, charged) {
-  const key = text;
-  let rec = _plunderMarks.get(key);
-  if (rec) return rec;
-  try {
-    const m = document.createElement('canvas').getContext('2d');
-    m.font = '11px Consolas, "Courier New", monospace';
-    const w = Math.ceil(m.measureText(text).width) + 6;
-    const h = 13;
-    const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.ceil(w * WORLD_TEXT_SS));
-    c.height = Math.max(1, Math.ceil(h * WORLD_TEXT_SS));
-    const g = c.getContext('2d');
-    g.scale(WORLD_TEXT_SS, WORLD_TEXT_SS);
-    g.font = '11px Consolas, "Courier New", monospace';
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.lineJoin = 'round';
-    g.lineWidth = 3;
-    g.strokeStyle = 'rgba(0,0,0,0.85)';
-    g.strokeText(text, w / 2, h / 2);
-    g.fillStyle = charged ? '#ffe27a' : '#f0c65a';
-    g.fillText(text, w / 2, h / 2);
-    rec = { c, w, h };
-  } catch (_) { return null; }
-  if (_plunderMarks.size >= 8) _plunderMarks.delete(_plunderMarks.keys().next().value);
-  _plunderMarks.set(key, rec);
-  return rec;
-}
+// (The pirate's former Plunder meter lived here — five pips above the damage
+// readout. The passive is removed, so the meter, its thresholds and its label
+// cache are gone with it.)
 
 // Bounded percent-label sprite cache (FIFO eviction at 96 entries). The set of
 // distinct labels actually on screen at once is tiny, so this is effectively a

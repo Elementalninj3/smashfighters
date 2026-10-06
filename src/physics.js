@@ -1070,6 +1070,10 @@ _tempVfx: [],
     // the burst has not ended yet") so the leftover frames of the burst window
     // cannot add distance past dashDistance.
     _shadowDashRemain: -1,
+    // Live rope-swing pendulum (pirate Down Light): null when no swing is
+    // running, otherwise { px, py, len, th0, th1, t, dur, dir }. combat.js
+    // owns the arc; physics only clears it when the burst window ends.
+    _ropeSwing: null,
     lastGroundedX: 0,
     // Aerial Light recovery assist: seconds remaining of the upward launch
     // buff (gravity reduction + boosted air control). Set by combat.js when an
@@ -1222,6 +1226,9 @@ export function updateFighterState(fighter) {
 // (it runs on dodgeTimer, not dashTimer).
 function endDashBurst(fighter) {
   if (fighter._shadowDashSpeed) fighter.vx = 0;
+  // A rope swing ends hanging: kill the arc's vertical carry too, or the
+  // fighter would keep the swing's last upward velocity into recovery.
+  if (fighter._ropeSwing) { fighter.vy = 0; fighter._ropeSwing = null; }
   fighter.dashTimer = 0;
   fighter.dashing = false;
   fighter._shadowDashDir = 0;

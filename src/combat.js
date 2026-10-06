@@ -689,6 +689,108 @@ const BOXER_STRAIGHT = {
 // pose â€” the bullet leaves the barrel), mirrored correctly when facing left.
 // Falls back to a reach-forward offset when no animation/weapon is available.
 const _spawnPos = { x: 0, y: 0 };
+// Scratch for the rope-swing pivot math below (hand world position, resolved
+// once per frame while the swing is live — never retained, never allocated).
+const _ropeAnchor = { x: 0, y: 0 };
+
+// ── Ability-driven VFX adoption ─────────────────────────────────────────
+// An ability's art rows (anim.js _PIRATE_ABILITY_VFX and _KNIGHT_ABILITY_VFX,
+// plus the boxer's Straight Right row) are tuned in the Hand Animator: effect
+// rows with `ability: true` on the move's own animation. Those rows ALSO paint
+// in the animator preview (the pool draws them there, where no live instance
+// exists). In-game the ability's own
+// spawn carries the live instance — adopting the row field by field below —
+// and the pool row yields to it (fx.js drawFighterVfx shadows same-effect
+// timeline rows behind a live temp instance), so the art can never
+// double-draw. The row still owns runtime truth the timeline cannot express
+// (pinned world positions, radius-derived unit, hitbox-derived reach,
+// rope-pivot tracking). Adoption contract, so preview and game agree:
+//
+//   effect    — adopted too: the row picks the art, the defaultId below is
+//             only the fallback when the row is missing. Swapping art is
+//             always safe (unknown ids fall back to the bullet orb); only
+//             ability-specific runtime extras are art-bound — e.g. rope-pivot
+//             tracking follows pirateRope instances, so a swapped-in art
+//             simply ignores the pivot while a swapped-back rope resumes it.
+//   anchor    — adopted verbatim.
+//   startFrame— adopted as a DELAY past the cast: (startFrame − castFrame)/60,
+//             applied as a negative starting age, so the art waits exactly
+//             like the preview's bar does. A startFrame at or before the cast
+//             plays immediately. Gameplay sync (hitbox, pivot, projectile)
+//             always stays on the cast — only the art shifts.
+//   duration  — overrides the lifetime (duration frames at 60fps), same span
+//             the preview plays the bar over.
+//   scale / rotation — adopted verbatim (rotation in degrees, like the pool).
+//   offsetX / offsetY — authored canonically (facing right, like the pool)
+//             and converted to the world-space offsets spawnTempVfx expects.
+//   loop      — NOT honored: ability art plays once per cast in-game. (A
+//             looped row loops in the preview but still plays once in-game;
+//             leave loop off on ability rows.)
+//   color     — carried nowhere: pirate art uses fixed palettes, so a color
+//             edit changes nothing in EITHER path. Consistent by construction.
+//   params    — merged UNDER the runtime params, so the ability's computed
+//             values (unit, reach, pivot) always win; a row can only add keys
+//             the ability does not compute (e.g. rope length). Params are not
+//             on the editor panel, so there is nothing else to match.
+//
+// An ability may carry MORE than one row (the knight Shield Bash seeds its
+// bash burst and its speed lines): every `ability: true` row spawns its own
+// instance, each adopting its own fields over the shared runtime defaults;
+// the first spawn is returned. Projectile trails and target-anchored impact
+// art stay code-driven — their position is runtime state the timeline cannot
+// express.
+//
+// No row (or a deleted row) → built-in defaults, so the move always paints.
+// force:true: already decided correctly here — the row IS the deference, so
+// the shared guard must not also eat the spawn.
+function abilityVfxRows(fighter, out) {
+  out.length = 0;
+  const list = fighter && fighter.anim && fighter.anim.anim && fighter.anim.anim.vfx;
+  if (!Array.isArray(list)) return out;
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    if (e && e.ability === true) out.push(e);
+  }
+  return out;
+}
+// Scratch reused across casts so adoption allocates nothing extra per frame.
+const _abilityRows = [];
+function spawnAbilityVfx(fighter, defaultId, lifetime, scale, rotation, offsetX, offsetY, extra) {
+  const rows = abilityVfxRows(fighter, _abilityRows);
+  const cast = (fighter && fighter.attack && fighter.attack.castFrame) || 0;
+  // No adopted row: the move still paints, at the built-in defaults.
+  if (!rows.length) {
+    const out = Object.assign({}, extra);
+    out.force = true;
+    return spawnTempVfx(fighter, defaultId, lifetime, scale, rotation, offsetX, offsetY, out);
+  }
+  const dir = (extra && extra.mirrorX != null && extra.mirrorX < 0) ? -1 : 1;
+  let first = null;
+  for (let i = 0; i < rows.length; i++) {
+    const e = rows[i];
+    const out = Object.assign({}, extra);
+    let life = lifetime, s = scale, rot = rotation, ox = offsetX, oy = offsetY;
+    if (e.anchor) out.anchor = e.anchor;
+    if (e.scale != null) s = e.scale;
+    if (e.rotation != null) rot = e.rotation;
+    if (e.offsetX != null) ox = dir * e.offsetX;
+    if (e.offsetY != null) oy = e.offsetY;
+    if (e.duration > 0) life = e.duration / 60;
+    if (e.params) out.params = Object.assign({}, e.params, out.params);
+    out.force = true;
+    const inst = spawnTempVfx(fighter, e.effect || defaultId, life, s, rot, ox, oy, out);
+    // Start-frame delay: a negative starting age counts up through zero on the
+    // same clock everything else uses. Negative progress draws nothing (both
+    // draw paths skip progress < 0), so the art waits without a timer of its
+    // own and then plays its full adopted lifetime.
+    if (inst && e.startFrame != null) {
+      const delay = Math.max(0, (e.startFrame - cast) / 60);
+      if (delay > 0) inst.age = -delay;
+    }
+    if (!first) first = inst;
+  }
+  return first;
+}
 function projectileSpawn(fighter, dir) {
   if (
     fighter.anim && fighter.anim.out &&
@@ -735,7 +837,7 @@ export const ABILITIES = {
         },
         muzzleDone: false,
       });
-      SFX.rifleShot();
+      SFX.rifleShot(0.7 * WHIFF_VOLUME_MULT);
       emitAbilityFx(fighter, atk, 'muzzle');
     },
   },
@@ -770,7 +872,7 @@ export const ABILITIES = {
         // fought the readability of the homing bullets for no gain.
         invertMax: cfg && cfg.invertMax != null ? cfg.invertMax : 0.85,
       });
-      SFX.deadeyeShot();
+      SFX.deadeyeShot(0.7 * WHIFF_VOLUME_MULT);
       emitAbilityFx(fighter, atk, 'volley');
 
       // === DEADEYE: hand the volley config to combat (fighter-owned state) ===
@@ -833,7 +935,7 @@ export const ABILITIES = {
           oy: 0,
         },
       };
-      SFX.gallop();
+      SFX.gallop(0.7 * WHIFF_VOLUME_MULT);
       emitAbilityFx(fighter, atk, 'mount');
     },
   },
@@ -893,7 +995,7 @@ export const ABILITIES = {
           w: 24, h: 24, ox: 0, oy: 0,
         },
       });
-      SFX.shurikenThrow();
+      SFX.shurikenThrow(0.7 * WHIFF_VOLUME_MULT);
       emitAbilityFx(fighter, atk, 'throw');
     },
   },
@@ -959,7 +1061,7 @@ export const ABILITIES = {
       // the move covers exactly what the attack table asks for, at any frame
       // rate, from any position.
       fighter._shadowDashRemain = dashDist;
-      SFX.shadowStrike();
+      SFX.shadowStrike(0.7 * WHIFF_VOLUME_MULT);
       // Visual: the anime shadow dash (GA/vfx/shadowdash.html art, converted in
       // fx.js) is spawned here â€” the single call that arms it â€” and
       // paints itself backwards over the distance the dash ACTUALLY covered (a
@@ -1271,7 +1373,7 @@ export const ABILITIES = {
       const unit = (r * 2) / 44;
       const x = fighter.x + dir * r * 0.6;
       const y = fighter.y - 4;
-      spawnTempVfx(fighter, 'boxerStraightPunch', BOXER_STRAIGHT.reachLife, BOXER_STRAIGHT.reachScale, 0, 0, 0, {
+      spawnAbilityVfx(fighter, 'boxerStraightPunch', BOXER_STRAIGHT.reachLife, BOXER_STRAIGHT.reachScale, 0, 0, 0, {
         anchor: 'character',
         offsetX: dir * r * 0.5,
         offsetY: -4,
@@ -1340,11 +1442,11 @@ export const ABILITIES = {
       // the shield face, pooled and weapon-anchored through the shared temp
       // VFX path — plus speed lines trailing behind the user for the push.
       // The dash streak and dust below stay as the push read.
-      spawnTempVfx(fighter, 'knightBash', 0.45, 1, 0, 0, 0, {
+      // Both art pieces are ability rows (anim.js _KNIGHT_ABILITY_VFX), so the
+      // Hand Animator lane owns their effect/anchor/timing/scale/rotation/X/Y
+      // and this one call spawns every adopted row.
+      spawnAbilityVfx(fighter, 'knightBash', 0.45, 1, 0, 0, 0, {
         anchor: 'character', offsetX: dir * r * 1.1, offsetY: -4, mirrorX: dir,
-      });
-      spawnTempVfx(fighter, 'knightSpeedLines', 0.15, 1, 0, 0, 0, {
-        anchor: 'character', mirrorX: dir,
       });
       emitFlash(x, y, { style, radius: r * 0.45, life: 0.08, alpha: 0.7, color: '#dfe9f2' });
       emitStreak(x, y, dir, 0, { style, length: r * 1.4, width: 3, life: 0.1, alpha: 0.5 });
@@ -1352,7 +1454,7 @@ export const ABILITIES = {
         style, dir: dir >= 0 ? Math.PI : 0, spread: 0.9, speed: 110,
         size: r * 0.12, life: 0.22, gravity: 60, alpha: 0.3,
       });
-      SFX.shieldBash();
+      SFX.shieldBash(0.6 * WHIFF_VOLUME_MULT);
     },
   },
 
@@ -1363,52 +1465,72 @@ export const ABILITIES = {
   // `fighter._projectiles` entry (updateProjectiles) for the two cannons.
   // Nothing here touches damage or knockback formulas.
 
-  // Rope Swing (pirate Down Light, PIRATE_ATTACKS.dtilt): throw the grapple
-  // forward, then swing through a short arc. A FIXED-LENGTH burst in the
-  // captured facing direction — never a teleport (it covers `dashDistance`
-  // pixels from wherever the cast happened, no matter where the opponent is)
-  // and never homing (nothing here reads a target position). The same travel
-  // budget mechanism the ninja's Shadow Dash uses (`dashing` for the friction
-  // suppression, `_shadowDashRemain` for the exact distance) is reused rather
-  // than reinvented, so the pirate cannot pass through an opponent or clip
-  // through stage geometry either: Fighter.js integrates and separates him
-  // exactly as it does every other move.
+  // Rope Swing (pirate Down Light, PIRATE_ATTACKS.dtilt): the pirate throws a
+  // grapple to a point above and ahead, then swings on the rope in a real
+  // pendulum arc — up off the ground, forward over the gap, landing past it.
+  // The pivot is fixed in the WORLD at the cast (never homing, never a
+  // teleport: it hangs off wherever the cast happened), and advanceNonHitbox
+  // re-asserts the arc velocity every frame, so the fighter rides the circle
+  // around that pivot for the burst window and stops when it ends. The strike
+  // box is glued to the fighter, so the blow travels the arc too.
   pirateRopeSwing: {
     name: 'Rope Swing',
-    // startup 8 + active 6 + recovery 16 from PIRATE_ATTACKS.dtilt. A
-    // nonHitbox move's length is the ability's `frames`.
-    frames: 30,
+    // startup 8 + active 36 + recovery 16 from PIRATE_ATTACKS.dtilt. A
+    // nonHitbox move's length is the ability's `frames`. The swing itself is
+    // deliberately slow (2.5x the old dash speed) — the strike window covers
+    // the whole arc so the blow can connect anywhere along it.
+    frames: 60,
     castFrame: 8,
     strikeHitbox: true,
     run(fighter, atk, cfg) {
       const dir = atk.facing || (fighter.facingRight ? 1 : -1);
       const dist = (cfg && cfg.dashDistance) || (atk && atk.def && atk.def.dashDistance) || 150;
-      // Same speed/friction exemption contract as the Shadow Dash: the burst
-      // covers exactly `dist` and stops, instead of coasting a
-      // friction-dependent extra distance that would make "fixed distance" a lie.
-      const speed = 620;
+      // Rope overhead: the pivot hangs above and ahead of the cast point, so
+      // the fighter starts hanging back-down the rope and swings forward
+      // through the bottom. `dist` still sets the scale of the move (rope
+      // length and swing time both derive from it).
+      const speed = 248; // 620 / 2.5 — a slow, heavy swing, not a dash
       const dur = dist / speed;
-      fighter.vx = dir * speed;
+      const px = fighter.x + dir * dist * 0.35;
+      const py = fighter.y - 150;
+      const dx0 = fighter.x - px, dy0 = fighter.y - py;
+      const len = Math.max(60, Math.hypot(dx0, dy0));
+      const th0 = Math.atan2(dx0, dy0);
+      // Swing through the bottom and up the far side (~1.1 rad of travel,
+      // toward the facing side — the world-space atan2 already carries the
+      // side, so this just extends the arc forward).
+      const th1 = th0 + (dir >= 0 ? 1.1 : -1.1);
+      fighter._ropeSwing = { px, py, len, th0, th1, t: 0, dur, dir };
+      // The grapple catches: the swing starts from the hang (zero velocity —
+      // the upkeep drives the arc from here), it does not carry run momentum
+      // into the circle.
+      fighter.vx = 0;
       fighter.vy = 0;
+      // Same friction-exemption contract as the Shadow Dash (`dashing` for the
+      // window; `_shadowDashSpeed` so the burst's horizontal carry is zeroed
+      // when it ends instead of coasting). No `_shadowDashRemain` budget: the
+      // upkeep sets the velocity kinematically every frame, so the arc is
+      // already exact at any frame rate. vy is driven by the arc, not zeroed.
       fighter.dashing = true;
       fighter.dashTimer = dur;
       fighter._shadowDashDir = dir;
       fighter._shadowDashSpeed = speed;
-      fighter._shadowDashRemain = dist;
+      fighter._shadowDashRemain = -1;
       const r = fighter.radius || 22;
-      // The grapple itself: a rope + hook drawn forward from the hand, plus the
-      // shared throw pop at the hand. Purely cosmetic — the dash above already
-      // did the movement, and the box below does the hitting.
+      // The rope VFX carries the pivot (canonical space: +x facing, -y up),
+      // refreshed every frame by the upkeep, so the drawn tether stays glued
+      // to both the hand and the world pivot for the whole swing.
+      resolveWorldAnchor(fighter, { anchor: 'frontHand' }, _ropeAnchor);
       try {
-        spawnTempVfx(fighter, 'pirateRope', dur + 0.06, 1, 0, 0, 0, {
-          anchor: 'frontHand', offsetX: dir * 14, offsetY: 0, mirrorX: dir,
-          params: { length: 82 },
+        spawnAbilityVfx(fighter, 'pirateRope', dur + 0.06, 1, 0, dir * 14, 0, {
+          anchor: 'frontHand', mirrorX: dir,
+          params: { length: 82, pivX: (px - (_ropeAnchor.x + dir * 14)) * dir, pivY: py - _ropeAnchor.y },
         });
       } catch (_) {}
       atk.fxX = fighter.x + dir * r * 1.2;
       atk.fxY = fighter.y - 4;
       emitAbilityFx(fighter, atk, 'rope');
-      try { SFX.slash(0.16); } catch (_) {}
+      try { SFX.slash(0.16 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
 
@@ -1432,7 +1554,7 @@ export const ABILITIES = {
       // box reach (ox + w), so the art and the box it stands for cannot drift.
       const reach = (atk.def && atk.def.ox || 56) + (atk.def && atk.def.w || 82);
       try {
-        spawnTempVfx(fighter, 'pirateCutlassSlash', 0.34, 1, 0, 0, 0, {
+        spawnAbilityVfx(fighter, 'pirateCutlassSlash', 0.34, 1, 0, 0, 0, {
           anchor: 'character',
           pinnedX: fighter.x,
           pinnedY: fighter.y,
@@ -1449,7 +1571,7 @@ export const ABILITIES = {
       atk.fxX = x;
       atk.fxY = y;
       emitAbilityFx(fighter, atk, 'cutlass');
-      try { SFX.slash(0.16); } catch (_) {}
+      try { SFX.slash(0.16 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
 
@@ -1480,12 +1602,12 @@ export const ABILITIES = {
         // whole thing off his own size, the same way boxerPunchImpact does,
         // so a big pirate slams bigger ground than a small one without a
         // second set of numbers.
-        spawnTempVfx(fighter, 'pirateAnchorSlam', 0.5, 1, 0, 0, 0, {
+        spawnAbilityVfx(fighter, 'pirateAnchorSlam', 0.5, 1, 0, 0, 0, {
           anchor: 'character',
           pinnedX: fighter.x + ox,
           pinnedY: fighter.y + oy,
           mirrorX: dir,
-          params: { unit: r / 22 },
+          params: { unit: (r / 22) * 0.7 },
         });
       } catch (_) {}
       atk.fxX = fighter.x + ox;
@@ -1502,11 +1624,6 @@ export const ABILITIES = {
   // can only ever fire once per attack (the cast frame is a single frame on the
   // attack instance, and starting the move at all requires a fresh press through
   // the one combatInput path — holding the button cannot re-fire it).
-  //
-  // PLUNDER is applied HERE, at the cast, by reading the meter's tier: the
-  // projectile's def is built from the tier's multipliers and stamped
-  // `plunderEnhanced`, which is also what stops the enhanced round from paying
-  // Plunder for itself when it connects (notePlunderHit checks that flag).
   pirateCannonBlast: {
     name: 'Cannon Blast',
     // startup 19 + recovery 29 from PIRATE_ATTACKS.fsmash (no melee window —
@@ -1515,14 +1632,9 @@ export const ABILITIES = {
     castFrame: 19,
     run(fighter, atk, cfg) {
       const dir = atk.facing || (fighter.facingRight ? 1 : -1);
-      const tier = plunderTier(fighter);
       const base = CANNON_BASE;
-      const sizeMul = tier === 2 ? PLUNDER_TIER5_SIZE_MUL
-        : tier === 1 ? PLUNDER_TIER3_SIZE_MUL : 1;
-      const dmgMul = tier === 2 ? PLUNDER_TIER5_DMG_MUL : 1;
-      const kbMul = tier > 0 ? PLUNDER_KB_MUL : 1;
       const r = (cfg && cfg.r) || base.r;
-      const rr = r * sizeMul;
+      const rr = r;
       const list = fighter._projectiles || (fighter._projectiles = []);
       const pos = projectileSpawn(fighter, dir);
       list.push({
@@ -1539,16 +1651,13 @@ export const ABILITIES = {
         trail: 'pirateTrail',
         def: {
           name: base.name,
-          dmg: base.dmg * dmgMul,
-          kbBase: base.kbBase * kbMul,
+          dmg: base.dmg,
+          kbBase: base.kbBase,
           kbGrowth: base.kbGrowth,
           angle: base.angle,
           launchAngle: base.launchAngle,
           kbDir: dir,
           w: rr * 2, h: rr * 2, ox: 0, oy: 0,
-          // Read back by notePlunderHit: an enhanced round never re-credits
-          // the meter that paid for it.
-          plunderEnhanced: tier > 0,
           // Read back by updateProjectiles' kill path: spawn the detonation
           // wherever this round actually resolved.
           impactFx: 'pirateCannonImpact',
@@ -1556,17 +1665,25 @@ export const ABILITIES = {
         muzzleDone: false,
       });
       // Muzzle flash sized off the actual ball, so a bigger enhanced round gets
-      // a proportionally bigger pop.
+      // a proportionally bigger pop. The starburst itself is the cannon-blast
+      // demo's muzzle() art (pirateCannonMuzzle), pinned at the real muzzle
+      // (the weapon-anchor spawn point) in the captured facing, so it sits on
+      // the cannon and points down the shot; the pooled flash/sparks/dust
+      // below are the shared firearm report under it.
       atk.fxX = pos.x;
       atk.fxY = pos.y;
       atk.fxProjR = rr;
+      try {
+        spawnAbilityVfx(fighter, 'pirateCannonMuzzle', 0.2, 1, 0, 0, 0, {
+          anchor: 'character',
+          pinnedX: pos.x,
+          pinnedY: pos.y,
+          mirrorX: dir,
+          params: { unit: rr / 10 },
+        });
+      } catch (_) {}
       emitAbilityFx(fighter, atk, 'cannon');
-      if (tier > 0) {
-        spendPlunder(fighter);
-        try { spawnFloatingText(fighter.x, fighter.y - (fighter.radius || 22) - 40,
-          tier === 2 ? 'CHARGED BROADSIDE!' : 'PLUNDERED!', '#ffd76a', { life: 0.9, size: 24 }); } catch (_) {}
-      }
-      try { SFX.rifleShot(); } catch (_) {}
+      try { SFX.rifleShot(0.7 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
 
@@ -1585,13 +1702,8 @@ export const ABILITIES = {
     castFrame: 12,
     run(fighter, atk, cfg) {
       const dir = atk.facing || (fighter.facingRight ? 1 : -1);
-      const tier = plunderTier(fighter);
       const base = BROADSIDE_BASE;
-      const sizeMul = tier === 2 ? PLUNDER_TIER5_SIZE_MUL
-        : tier === 1 ? PLUNDER_TIER3_SIZE_MUL : 1;
-      const dmgMul = tier === 2 ? PLUNDER_TIER5_DMG_MUL : 1;
-      const kbMul = tier > 0 ? PLUNDER_KB_MUL : 1;
-      const rr = base.r * sizeMul;
+      const rr = base.r;
       const list = fighter._projectiles || (fighter._projectiles = []);
       // Spawned clear of the body so the very first step of its travel cannot
       // start already inside the pirate.
@@ -1614,14 +1726,13 @@ export const ABILITIES = {
         trail: 'pirateWide',
         def: {
           name: base.name,
-          dmg: base.dmg * dmgMul,
-          kbBase: base.kbBase * kbMul,
+          dmg: base.dmg,
+          kbBase: base.kbBase,
           kbGrowth: base.kbGrowth,
           angle: base.angle,
           launchAngle: base.launchAngle,
           kbDir: dir,
           w: rr * 2.4, h: rr * 2, ox: 0, oy: 0,
-          plunderEnhanced: tier > 0,
           impactFx: 'pirateCannonImpact',
         },
         muzzleDone: false,
@@ -1630,12 +1741,7 @@ export const ABILITIES = {
       atk.fxY = pos.y;
       atk.fxProjR = rr;
       emitAbilityFx(fighter, atk, 'cannon');
-      if (tier > 0) {
-        spendPlunder(fighter);
-        try { spawnFloatingText(fighter.x, fighter.y - (fighter.radius || 22) - 40,
-          tier === 2 ? 'CHARGED BROADSIDE!' : 'PLUNDERED!', '#ffd76a', { life: 0.9, size: 24 }); } catch (_) {}
-      }
-      try { SFX.rifleShot(); } catch (_) {}
+      try { SFX.rifleShot(0.7 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
 };
@@ -1972,7 +2078,7 @@ const KNIGHT_ATTACKS = {
 
 // Pirate attacks — rope mobility, cutlass reach and cannon pressure. Midweight
 // numbers: honest damage and honest launch, with the character identity living
-// OUTSIDE the table — the Plunder passive (below) and the four ability moves
+// OUTSIDE the table — the four ability moves
 // (ABILITIES.pirateRopeSwing / pirateAnchorDrop / pirateCannonBlast /
 // pirateBroadside) — so every blow resolves through the same deliverHit as the
 // rest of the roster.
@@ -1982,7 +2088,7 @@ const KNIGHT_ATTACKS = {
 // tables use (repeated HERE rather than only on the animation, so a saved
 // animation store can never strip a signature move back to a plain swing —
 // see resolveAnimDef):
-//   dtilt  = the Rope Swing (dash-in strike behind a thrown grapple)
+//   dtilt  = the Rope Swing (pendulum swing on a grapple rope + strike)
 //   dsmash = the Anchor Drop (heavy downward slam + ground impact)
 //   fsmash = the Cannon Blast (travelling cannonball projectile)
 //   nsmash = the Broadside Burst (wide, short close-range blast)
@@ -1993,8 +2099,7 @@ const PIRATE_ATTACKS = {
   ftilt:  { name: 'Cutlass Lunge', anim: 'pirateFtilt', category: 'tilt', direction: 'forward', state: 'ground', startup: 6, active: 4, recovery: 13, dmg: 8.0, kbBase: 110, kbGrowth: 0.60, angle: 25, launchAngle: 25, w: 82, h: 34, ox: 56, oy: -2, abilityType: 'nonHitbox', abilityId: 'pirateCutlassLunge', abilityCfg: {}, hitFx: 'pirateHitBurst' },
   // Forward Heavy is the Cannon Blast. Its real damage lives on the ability's
   // projectile def (a nonHitbox move's row is only the move's shell), so the
-  // numbers here mirror that def exactly — 15 / 210 / 1.05 / 30 — and the
-  // Plunder enhancements are applied to the projectile def at the cast.
+  // numbers here mirror that def exactly — 15 / 210 / 1.05 / 30.
   fsmash: { name: 'Cannon Blast', anim: 'pirateFsmash', category: 'special', direction: 'forward', state: 'ground', startup: 19, active: 0, recovery: 29, dmg: 15.0, kbBase: 210, kbGrowth: 1.05, angle: 30, launchAngle: 30, w: 40, h: 40, ox: 52, oy: -6, abilityType: 'nonHitbox', abilityId: 'pirateCannonBlast', abilityCfg: {} },
   // Neutral Heavy is the Broadside Burst: a wide, SHORT-range blast — the
   // ability's projectile is slow and short-lived so it reads as a point-blank
@@ -2005,7 +2110,7 @@ const PIRATE_ATTACKS = {
   // Down Light is the Rope Swing: a fixed-length forward burst (so it is a
   // dash, never a teleport or a homing grab) that ends in this row's melee box,
   // glued to the moving fighter for the move's whole active window.
-  dtilt:  { name: 'Rope Swing', anim: 'pirateDtilt', category: 'special', direction: 'down', state: 'ground', startup: 8, active: 6, recovery: 16, dmg: 7.0, kbBase: 95, kbGrowth: 0.55, angle: 35, launchAngle: 35, w: 76, h: 40, ox: 46, oy: 2, dashDistance: 150, abilityType: 'nonHitbox', abilityId: 'pirateRopeSwing', abilityCfg: {}, hitFx: 'pirateHitBurst' },
+  dtilt:  { name: 'Rope Swing', anim: 'pirateDtilt', category: 'special', direction: 'down', state: 'ground', startup: 8, active: 36, recovery: 16, dmg: 7.0, kbBase: 143, kbGrowth: 0.83, angle: 55, launchAngle: 55, w: 76, h: 40, ox: 46, oy: 2, dashDistance: 150, abilityType: 'nonHitbox', abilityId: 'pirateRopeSwing', abilityCfg: {}, hitFx: 'pirateHitBurst' },
   // Down Heavy is the Anchor Drop: a deliberate 15-frame wind-up into a short,
   // low slam. `active` covers the whole 5-frame impact window so the box stays
   // glued to the fighter for the duration (the ability owns the ground impact
@@ -2016,34 +2121,10 @@ const PIRATE_ATTACKS = {
   dash:   { name: 'Saber Dash', anim: 'pirateDash', category: 'dash', direction: 'forward', state: 'ground', startup: 4, active: 6, recovery: 12, dmg: 7.0, kbBase: 84, kbGrowth: 0.75, angle: 22, launchAngle: 22, w: 96, h: 46, ox: 48, oy: 0 },
 };
 
-// ── Pirate: Plunder ─────────────────────────────────────────────────────
-// A resource the character builds by CONNECTING, spent on his cannon. All of
-// the state lives on the fighter record (`_plunder` / `_plunderTimer`) and every
-// rule below is enforced in this one file — combat, the HUD and the AI all read
-// these same helpers, so the meter, the enhancement and the AI's knowledge of
-// it can never disagree.
-//
-//   1 point  per attack that LANDS on an opponent, max PLUNDER_MAX (5).
-//             Once per attack per opponent, never on a miss / shield / breakable.
-//   decay   1 point per PLUNDER_DECAY seconds without landing a hit.
-//   3+      the next cannon attack gets a bigger blast and +10% knockback.
-//   5       the next cannon attack is a CHARGED BROADSIDE: +20% damage,
-//           +10% base knockback, +15% projectile size, and all 5 are spent.
-//   spend   a Plunder-enhanced cannon resets the meter to 0 (both tiers).
-//   no self An enhanced attack's own hit never grants Plunder.
-//   no stack 3 and 5 never stack — 5 wins outright.
-export const PLUNDER_MAX = 5;
-const PLUNDER_DECAY = 8;        // seconds per lost point
-export const PLUNDER_TIER_KNOCKBACK = 3;   // "slightly larger blast, +10% knockback"
-const PLUNDER_KB_MUL = 1.10;        // +10% base knockback, both tiers
-const PLUNDER_TIER3_SIZE_MUL = 1.12; // "slightly larger blast"
-const PLUNDER_TIER5_DMG_MUL = 1.20;  // Charged Broadside damage
-const PLUNDER_TIER5_SIZE_MUL = 1.15; // Charged Broadside projectile size
-
+// ── Pirate cannon rounds ────────────────────────────────────────────────
 // The two cannon rounds' BASE numbers, in the same units as PIRATE_ATTACKS.
-// They live here (with the passive) rather than inline in the ability so the
-// balance targets are readable in one place and a Plunder multiplier can be
-// applied to them without touching a formula.
+// (The pirate's former Plunder meter — build points on hit, spend on cannons
+// — has been removed: both rounds always fire at these base numbers.)
 //
 //   Cannon Blast   — the long gun: 15 / 210 / 1.05 / 30°, ~520px of travel.
 //   Broadside      — the close gun: 12 / 185 / 0.90 / 50°, ~110px only, so it
@@ -2058,82 +2139,14 @@ const BROADSIDE_BASE = {
   dmg: 12.0, kbBase: 185, kbGrowth: 0.90, angle: 50, launchAngle: 50,
 };
 
-function isPirate(f) { return !!f && !!f._fighterDef && f._fighterDef.id === 'pirate'; }
-
-// Current Plunder (0..PLUNDER_MAX). Read by the ability (to size an enhanced
-// shot), the HUD and the AI.
-export function plunderOf(f) { return isPirate(f) ? (f._plunder || 0) : 0; }
-
-// The enhancement tier an attack should be cast at, from the meter alone:
-// 2 = Charged Broadside (5 points), 1 = empowered (3+), 0 = normal. Returning
-// a single tier (never a pair of booleans) is what makes "must not stack"
-// structural rather than a rule someone has to remember.
-function plunderTier(f) {
-  const p = plunderOf(f);
-  if (p >= PLUNDER_MAX) return 2;
-  if (p >= PLUNDER_TIER_KNOCKBACK) return 1;
-  return 0;
-}
-
-// Bank one Plunder for a landed hit and reset the decay clock. Only called
-// from the single choke point that means "this attack actually connected on an
-// opponent" (deliverHit), so a miss, a shielded hit and a breakable can never
-// reach it. `alreadyEnhanced` suppresses the grant for a Plunder-enhanced
-// attack's OWN hit (rule: no self-reward), which is why the enhanced cast
-// stamps its projectile def rather than relying on the caller to remember.
-function grantPlunder(f, alreadyEnhanced) {
-  if (!isPirate(f) || alreadyEnhanced) return;
-  const cur = f._plunder || 0;
-  if (cur >= PLUNDER_MAX) return;
-  f._plunder = cur + 1;
-  f._plunderTimer = 0;
-}
-
-// Spend the meter after a Plunder-enhanced cannon attack. Both tiers reset to
-// zero — that is what stops enhanced shots chaining off each other.
-function spendPlunder(f) {
-  if (!isPirate(f)) return;
-  f._plunder = 0;
-  f._plunderTimer = 0;
-}
-
-// Record "this attack already paid for that opponent" and, if it is a first
-// hit, bank the point. The dedupe record lives on whatever identifies the
-// attack: the live `fighter.attack` for a melee row, or the projectile's own
-// def for a cannon round (a round resolves on exactly one target and is then
-// destroyed, so it needs no extra bookkeeping). Both are per-attack objects,
-// never the shared attack table, so nothing leaks between moves or fighters.
-function notePlunderHit(attacker, target, def) {
-  if (!isPirate(attacker) || !target || target === attacker) return;
-  if (def && def.plunderEnhanced) return;         // an enhanced shot never feeds itself
-  const token = (attacker.attack && attacker.attack.key) ? attacker.attack : def;
-  if (!token) return;
-  let seen = token._plunderHits;
-  if (!seen) seen = token._plunderHits = new Set();
-  if (seen.has(target.id)) return;
-  seen.add(target.id);
-  grantPlunder(attacker, false);
-}
-
-// Per-frame decay. Called from the shared roster step, so a pirate decays
-// identically in the match and in the sandbox/AI-training headless runs —
-// there is no second update path.
-export function updatePlunder(fighters, dt) {
-  for (let i = 0; i < fighters.length; i++) {
-    const f = fighters[i];
-    if (!f || !isPirate(f)) continue;
-    const p = f._plunder || 0;
-    if (p <= 0) { f._plunderTimer = 0; continue; }
-    f._plunderTimer = (f._plunderTimer || 0) + dt;
-    if (f._plunderTimer >= PLUNDER_DECAY) {
-      // while, not if: a single very long dt (a stalled tab) must not silently
-      // bank decay time instead of applying it.
-      f._plunderTimer -= PLUNDER_DECAY;
-      f._plunder = p - 1;
-      if (f._plunder < 0) f._plunder = 0;
-    }
-  }
-}
+// Removed-passive stubs. The HUD (Game.js), the AI (ai.js) and the roster
+// step import these names; they are kept as inert exports so those modules
+// need no import changes. The pirate no longer builds, holds or spends
+// anything: every read is 0 and every update is a no-op.
+export const PLUNDER_MAX = 5;
+export const PLUNDER_TIER_KNOCKBACK = 3;
+export function plunderOf(f) { return 0; }
+export function updatePlunder(fighters, dt) {}
 
 // ── Knight Shield Parry ──────────────────────────────────────────────────
 // The knight's signature: a precisely timed shield parry on the shield-press
@@ -2198,7 +2211,8 @@ function tryKnightParry(target, attacker) {
     emitSparks(target.x, target.y - r * 0.4, 8, { style, speed: 260, size: 4, life: 0.3 });
     spawnFloatingText(target.x, target.y - r - 40, 'PARRY!', '#ffd76a', { life: 0.9, size: 26 });
   } catch (_) {}
-  try { SFX.hit(true); } catch (_) {}
+  // No synthesized impact here: non-MP3 hit sounds are removed, and the parry
+  // already reads through the freeze, flash, ring, sparks and floating text.
   return true;
 }
 
@@ -2241,7 +2255,7 @@ function tryKnightCounter(target, attacker) {
       });
     } catch (_) {}
     try { freezeGame(0.09); } catch (_) {}
-    landed = !!applyAbilityHit(target, attacker, KNIGHT_COUNTER_DEF, dir);
+    landed = !!applyAbilityHit(target, attacker, KNIGHT_COUNTER_DEF, dir, true);
     if (landed) {
       try {
         spawnFloatingText(target.x, target.y - (target.radius || 22) - 40,
@@ -2838,11 +2852,6 @@ function startAttack(fighter, sel) {
   attr.deferStrike = false;
   attr.teleportDelayFrames = 0;
   attr.teleportDone = false;
-  // Plunder's "once per attack per opponent" ledger. Cleared HERE because the
-  // attack record comes off a pool: a recycled object must never inherit the
-  // previous swing's dedupe set (which would silently deny this attack its
-  // Plunder point on the same opponent).
-  attr._plunderHits = null;
   attr.totalFrames = rdef.abilityType === 'nonHitbox'
     ? Math.max(1, rdef.abilityFrames || (rdef.startup + rdef.active + rdef.recovery))
     : rdef.startup + rdef.active + rdef.recovery;
@@ -2902,9 +2911,30 @@ if (sel.key === 'aerialLight' && !fighter.grounded && fighter.launchTimer <= 0) 
 // 'toString' would match and play a voice for a move that does not exist.
 const LIGHT_ATTACK_KEYS = new Set(['jab', 'ftilt', 'aerialLight', 'aerialHeavy']);
 
-// Play the committed swing's voice. Each character owns its recording of the
-// same four basic moves, chosen from the fighter's own character def — no
-// second source of truth for "who is this fighter".
+// Whiff volume: swing/cast voices of damaging moves play this much quieter
+// than a landed hit (~60% reduction). A miss is only ever heard at this
+// level; a connect adds the full-volume confirm in launchFromHit.
+const WHIFF_VOLUME_MULT = 0.4;
+
+// The fighter's signature MP3 voice at a volume multiplier. Shared by the
+// quiet swing (playLightAttackVoice) and the full-volume landing confirm
+// (playHitConfirmVoice), so both takes are always the same recording.
+function playSignatureVoice(fighter, volMult) {
+  const def = fighter && fighter._fighterDef;
+  if (def && def.id === 'ninja') SFX.slash(0.2 * volMult);
+  else if (def && def.id === 'knight') SFX.knightSlash(0.12 * volMult);
+  else if (def && def.id === 'boxer') {
+    // Depsey mode swaps the basics to the usus voice while the roll runs.
+    if (fighter._boxerRoll && fighter._boxerRoll.timeLeft > 0) SFX.usus(0.6 * volMult);
+    else SFX.boxerM1s(0.42 * volMult);
+  }
+  else SFX.cowboyM1s(0.6 * volMult);
+}
+
+// Play the committed swing's voice (at whiff volume — the landing confirm
+// brings it back to full when the blow actually connects). Each character
+// owns its recording of the same four basic moves, chosen from the fighter's
+// own character def — no second source of truth for "who is this fighter".
 function playLightAttackVoice(fighter, key) {
   const def = fighter && fighter._fighterDef;
   // The knight's Charged Sword Strike (fsmash) is not one of the four light
@@ -2912,18 +2942,18 @@ function playLightAttackVoice(fighter, key) {
   // before the light-move gate so the other roster's Side Smashes (which speak
   // through their own abilities on the cast frame) are not claimed here.
   if (key === 'fsmash') {
-    if (def && def.id === 'knight') SFX.chargedSword();
+    if (def && def.id === 'knight') SFX.chargedSword(0.55 * WHIFF_VOLUME_MULT);
     return;
   }
   if (!LIGHT_ATTACK_KEYS.has(key)) return;
-  if (def && def.id === 'ninja') SFX.slash();
-  else if (def && def.id === 'knight') SFX.knightSlash();
-  else if (def && def.id === 'boxer') {
-    // Depsey mode swaps the basics to the usus voice while the roll runs.
-    if (fighter._boxerRoll && fighter._boxerRoll.timeLeft > 0) SFX.usus();
-    else SFX.boxerM1s();
-  }
-  else SFX.cowboyM1s();
+  playSignatureVoice(fighter, WHIFF_VOLUME_MULT);
+}
+
+// Full-volume MP3 impact confirm, played only when a blow cleanly lands
+// (see launchFromHit). MP3-only by construction — the old synthesized
+// hit/punch/launch/deny impacts are gone.
+function playHitConfirmVoice(fighter) {
+  playSignatureVoice(fighter, 1);
 }
 
 
@@ -3273,11 +3303,47 @@ function advanceNonHitbox(fighter, fighters, dt) {
   // Shadow Dash upkeep: while the dash burst is live, re-assert the
   // cast-captured forward velocity every frame. The attack record's facing was
   // synced at the cast, so this pins the dash to that direction for its whole
-  // duration â€” nothing (world coords, target position, facing drift) can
+  // duration — nothing (world coords, target position, facing drift) can
   // reverse or redirect it mid-dash. Ends on its own when dashTimer expires.
   if (a.abilityId === 'ninjaDsmash' && fighter.dashing && fighter.dashTimer > 0
       && fighter._shadowDashSpeed) {
     fighter.vx = a.facing * fighter._shadowDashSpeed;
+  }
+
+  // Rope Swing upkeep: while the burst window is live, ride the pendulum arc
+  // around the cast-fixed world pivot. θ eases from th0 to th1 on a smoothstep
+  // (fast through the bottom, settling at the far side), and the velocity is
+  // the arc's own derivative — so Fighter.js integrates the fighter along the
+  // circle every frame, at any frame rate, through collisions and the camera.
+  // The rope VFX instance's pivot offset is refreshed with it, so the drawn
+  // tether stays glued to both ends. When the window ends the arc is spent
+  // (smoothstep derivative is 0 there anyway) and physics' endDashBurst drops
+  // the record and the vertical carry together.
+  if (a.abilityId === 'pirateRopeSwing' && fighter._ropeSwing) {
+    const rs = fighter._ropeSwing;
+    if (!fighter.dashing || fighter.dashTimer <= 0) {
+      fighter._ropeSwing = null;
+    } else {
+      rs.t += dt;
+      const q = rs.dur > 0 ? Math.max(0, Math.min(1, rs.t / rs.dur)) : 1;
+      const e = q * q * (3 - 2 * q);
+      const th = rs.th0 + (rs.th1 - rs.th0) * e;
+      // dθ/dt of the smoothstep: 6q(1−q)/dur × the arc span.
+      const w = (rs.th1 - rs.th0) * (6 * q * (1 - q)) / Math.max(1e-4, rs.dur);
+      fighter.vx = rs.len * w * Math.cos(th);
+      fighter.vy = -rs.len * w * Math.sin(th);
+      if (fighter._tempVfx) {
+        resolveWorldAnchor(fighter, { anchor: 'frontHand' }, _ropeAnchor);
+        for (let i = 0; i < fighter._tempVfx.length; i++) {
+          const vfx = fighter._tempVfx[i];
+          if (vfx.effect === 'pirateRope' && vfx.params) {
+            vfx.params.pivX = (rs.px - (_ropeAnchor.x + (vfx.offsetX || 0))) * (rs.dir >= 0 ? 1 : -1);
+            vfx.params.pivY = rs.py - _ropeAnchor.y;
+            break;
+          }
+        }
+      }
+    }
   }
 
   // Update Shadow Strike VFX with actual distance traveled if this is the ninjaDsmash ability
@@ -3522,8 +3588,8 @@ function releaseBoxerGrab(fighter, punch) {
     style, dir: g.facing >= 0 ? 0 : Math.PI, spread: 0.9, speed: 420,
     life: 0.16, size: 2.2, gravity: 140,
   });
-  SFX.punch();
-  SFX.launch();
+  // Impact sound lands through the shared MP3 confirm in launchFromHit
+  // (via applyAbilityHit above) — no synthesized punch/launch here.
 }
 
 // NOTE: the old Depsey Roll buff (speed/damage/dodge window on _boxerRoll)
@@ -3928,8 +3994,8 @@ function applyHit(attacker, target, hb, key) {
 // Returns whether the hit actually landed: a Depsey Roll dodge resolves through
 // this same function and must report itself, so a punch that a rolling target
 // slipped past does not play an impact it never caused.
-export function applyAbilityHit(attacker, target, def, facing) {
-    return deliverHit(attacker, target, def, facing);
+export function applyAbilityHit(attacker, target, def, facing, skipConfirm) {
+    return deliverHit(attacker, target, def, facing, undefined, skipConfirm);
 }
 
 // â”€â”€ Cowboy launcher (per-character knockback override) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -4100,7 +4166,7 @@ export function computeKnockbackVector(target, def, opts) {
 //   { attacker|target: null|fighter, def: def|null, hitDir, key, timer }
 // A whiffed attack never sets a lock â€” it only exists after a hit resolves,
 // and it always self-clears (timer) or is cleared by a reset/interrupt.
-function attachHitLock(attacker, target, def, hitDir, duration, key) {
+function attachHitLock(attacker, target, def, hitDir, duration, key, skipConfirm) {
   clearHitLocks(attacker);
   clearHitLocks(target);
   // Freeze both fighters from the very frame the lock attaches: the hit does
@@ -4109,8 +4175,8 @@ function attachHitLock(attacker, target, def, hitDir, duration, key) {
   target.vy = 0;
   attacker.vx = 0;
   attacker.vy = 0;
-  target._hitLock = { attacker, target: null, def, hitDir, key, timer: duration };
-  attacker._hitLock = { attacker: null, target, def: null, hitDir: 0, key: null, timer: duration };
+  target._hitLock = { attacker, target: null, def, hitDir, key, timer: duration, skipConfirm };
+  attacker._hitLock = { attacker: null, target, def: null, hitDir: 0, key: null, timer: duration, skipConfirm };
 }
 
 // Clear a lock plus its counterpart on the other fighter in the transaction.
@@ -4137,7 +4203,7 @@ function updateHitConfirm(fighters, dt) {
   for (const f of fighters) {
     const lock = f._hitLock;
     if (lock && lock.timer <= 0 && lock.def) {
-      launchFromHit(lock.attacker, f, lock.def, lock.hitDir, false, lock.key);
+      launchFromHit(lock.attacker, f, lock.def, lock.hitDir, false, lock.key, lock.skipConfirm);
     }
   }
   for (const f of fighters) {
@@ -4182,7 +4248,7 @@ function tryAutoDodge(target, attacker) {
   return true;
 }
 
-function deliverHit(attacker, target, def, facing, key) {
+function deliverHit(attacker, target, def, facing, key, skipConfirm) {
   if (tryAutoDodge(target, attacker)) return false;
   // Shield Counter answers first (a rooted stance beats a timed tap), then
   // the parry. Either way the incoming hit is fully negated.
@@ -4232,23 +4298,6 @@ function deliverHit(attacker, target, def, facing, key) {
 
   const hitDir = resolveHitDir(attacker, target, effDef, facing);
 
-  // Plunder (pirate passive): ONE point for an attack that actually connected
-  // on an OPPONENT. This is the right choke point for it — deliverHit is the
-  // single path every landed hit in the game takes (melee hitboxes and ability
-  // projectiles alike), so by construction a whiff, a shielded hit (the
-  // `shielded` guard) and a breakable (which never comes through here at all)
-  // cannot grant anything. `plunderEnhanced` on the def is the self-reward
-  // suppression: the enhanced cannon stamps it on its own projectile def, so
-  // the enhanced shot cannot pay for the next one.
-  //
-  // Once per attack per opponent: the dedupe record hangs off the ATTACK
-  // instance (melee) or the PROJECTILE def (a cannon round, which can only ever
-  // resolve on one target), and `deliverHit` is never entered twice for the
-  // same one of those by the shared registry.
-  if (!shielded) {
-    try { notePlunderHit(attacker, target, def); } catch (_) {}
-  }
-
   // Connect burst. OPT-IN on the attack def (`hitFx`), so this costs one
   // property read for every other character in the game and nothing else:
   // only the pirate's melee rows name an effect, and the effect itself is a
@@ -4276,22 +4325,24 @@ function deliverHit(attacker, target, def, facing, key) {
   }
 
   // Hit-confirm lock: damage lands now, the launch is deferred through a brief
-  // freeze of both fighters (see updateHitConfirm).
+  // freeze of both fighters (see updateHitConfirm). The MP3 impact confirm
+  // plays with the deferred launch in launchFromHit — no sound at attach, no
+  // synthesized hit here.
   if (!shielded && effDef.hitConfirm > 0) {
     interruptTarget(target);
-    attachHitLock(attacker, target, effDef, hitDir, effDef.hitConfirm, key);
+    attachHitLock(attacker, target, effDef, hitDir, effDef.hitConfirm, key, skipConfirm);
     // No re-hits and no projectile interference while the lock is live.
     target.invulnTimer = Math.max(target.invulnTimer, effDef.hitConfirm + HIT_FEEDBACK_INVULN);
     attacker._hitRenderTimer = HIT_RENDER_LINGER;
-    SFX.hit();
     return true;
   }
 
   // Shuriken hit-lock: apply normal hit, then lock target for brief period
   // (prevent movement but allow hitstun to expire normally)
   if (!shielded && effDef.hitLockDuration > 0) {
-    // Apply normal hit first (damage, knockback, hitstun)
-    launchFromHit(attacker, target, effDef, hitDir, shielded, key);
+    // Apply normal hit first (damage, knockback, hitstun). The MP3 impact
+    // confirm plays inside launchFromHit — no synthesized hit on top.
+    launchFromHit(attacker, target, effDef, hitDir, shielded, key, skipConfirm);
 
     // A lock that is already running is NEVER extended: a second shuriken
     // that lands mid-lock still deals its damage/knockback above, but the
@@ -4307,20 +4358,19 @@ function deliverHit(attacker, target, def, facing, key) {
       // projectile that landed is buried in the target and kept spinning there
       // for this same window (see updateProjectiles), drawn with the real
       // shuriken.png. Nothing is spawned on the target here â€” a second
-      // procedural star would just be a duplicate of the sprite that is already
-      // on screen, so the lock stays purely mechanical (above) and visual.
+    // procedural star would just be a duplicate of the sprite that is already
+    // on screen, so the lock stays purely mechanical (above) and visual.
     }
 
-    SFX.hit();
     return true;
   }
 
-  launchFromHit(attacker, target, effDef, hitDir, shielded, key);
+  launchFromHit(attacker, target, effDef, hitDir, shielded, key, skipConfirm);
   return true;
 }
 
 // Apply the launch portion of a hit: knockback vector + hitstun + air state.
-function launchFromHit(attacker, target, def, hitDir, shielded, key) {
+function launchFromHit(attacker, target, def, hitDir, shielded, key, skipConfirm) {
   let kbMul = shielded ? COMBAT_CONFIG.shieldKbMul : 1;
   const chargeMult = (attacker && attacker.attack && attacker.attack.chargeMult)
     || target._lastHitCharge || 1;
@@ -4384,8 +4434,13 @@ function launchFromHit(attacker, target, def, hitDir, shielded, key) {
     });
   } catch (_) {}
 
-  if (shielded) SFX.deny();
-  else SFX.hit();
+  // Landing confirm: the attacker's signature MP3 at FULL volume. Whiffed
+  // swings only ever played their cast voice at WHIFF_VOLUME_MULT, so a miss
+  // reads ~60% quieter than a connect. Blocked blows stay quiet (no confirm —
+  // the removed synthesized deny is not replaced). MP3-only by construction.
+  if (!shielded && !skipConfirm) {
+    try { playHitConfirmVoice(attacker); } catch (_) {}
+  }
 
   // Tiered hit feedback. The hit-stop is gameplay feel and stays; the screen
   // shake and the launch-trail particles that used to sit beside it are gone, so
@@ -4606,8 +4661,7 @@ export function updateProjectiles(fighters, dt) {
         // cowboy's and ninja's bullets are unaffected. Spawned at the round's
         // own position and PINNED there, because by this frame the owner has
         // usually moved on and the effect must stay in the hit it marks.
-        // `unit` scales the whole burst off the round's real radius, so a
-        // Plunder-enhanced ball detonates visibly bigger than a plain one.
+        // `unit` scales the whole burst off the round's real radius.
         if (_detonate && p.def && p.def.impactFx) {
           try {
             spawnTempVfx(p.owner, p.def.impactFx, 0.5, 1, 0, 0, 0, {
@@ -4876,8 +4930,8 @@ export const ALL_FIGHTERS = [
   //
   // Midweight spacing/zoner: honest mid values on every axis, with mobility
   // between the ninja and the cowboy and a recovery reach a touch past the
-  // knight's. All of his identity lives in PIRATE_ATTACKS (combat.js) and the
-  // Plunder passive, not in his stats.
+  // knight's. All of his identity lives in PIRATE_ATTACKS (combat.js), not in
+  // his stats.
   //
   // No `attacks` entry: it uses the PIRATE_ATTACKS table, picked by id in
   // attacksFor, the same way the ninja, boxer and knight are.
@@ -5050,9 +5104,8 @@ export function stepRosterCombat(fighters, inputOverrides, dt) {
   // Ability projectiles: move, expire and resolve collisions the same way an
   // active hitbox would (same damage rules).
   updateProjectiles(fighters, dt);
-  // The pirate's Plunder decay. Lives here, in the shared roster step, so the
-  // match, the sandbox and the AI-training headless matches all meter Plunder
-  // through the exact same clock — there is no second update path for it.
+  // Former Plunder hook: the pirate's meter is removed (see the stub above),
+  // so this is a no-op kept on the shared roster step for import stability.
   updatePlunder(fighters, dt);
 }
 
@@ -5220,8 +5273,4 @@ export function softResetFighter(f, stage) {
   // ...and no live counter stance either.
   f._knightCounter = 0;
   f._counterResolving = false;
-  // ...and the pirate's Plunder: a respawn starts the meter empty, never with
-  // banked points (or a half-run decay clock) carried in from the last stock.
-  f._plunder = 0;
-  f._plunderTimer = 0;
 }

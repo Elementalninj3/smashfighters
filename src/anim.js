@@ -1306,12 +1306,15 @@ for (const [id, srcId, name] of BOXER_ANIM_SOURCES) {
 // Default timeline VFX for the boxer's cast-timed art (same rule as the
 // knight's: combat.js defers to these, the timeline always wins). Straight
 // Right reach: cast frame 1, 0.16s life, forward offset + unit — the same
-// values the code spawn uses.
+// values the code spawn uses. `ability: true` makes the ability's spawn ADOPT
+// the row (combat.js spawnAbilityVfx) instead of shadowing it, so the Hand
+// Animator's scale/X/Y are the ones gameplay uses.
 for (const a of _boxerAnims) {
   if (a.id === 'boxerFsmash') {
     a.vfx = [{
       effect: 'boxerStraightPunch', anchor: 'character', startFrame: 1, duration: 10,
-      scale: 1, rotation: 0, offsetX: 15.6, offsetY: -4, loop: false, params: { unit: 1.42 },
+      scale: 1, rotation: 0, offsetX: 15.6, offsetY: -4, loop: false, ability: true,
+      params: { unit: 1.42 },
     }];
   }
 }
@@ -1401,13 +1404,60 @@ for (const [id, srcId, name] of PIRATE_ANIM_SOURCES) {
   else _pirateAnims.push(derived);
 }
 
+// Default timeline VFX for the pirate's ability art (same rule as the
+// knight's and the boxer's: the rows below are what the Hand Animator shows
+// out of the box, and combat.js adopts them — the timeline always wins).
+// Each row mirrors the code spawn's values (effect, anchor, cast-frame
+// timing, lifetime, scale, rotation, canonical offsets), so an unedited row
+// plays exactly the built-in art, and the rows paint in the animator preview
+// like any other timeline effect.
+//
+// `ability: true` marks rows the ability itself drives: at the cast the
+// ability's code spawn reads the row and adopts its editable presentation —
+// anchor, scale, rotation, canonical offsets, duration-as-lifetime and any
+// extra params — over the runtime truth the ability still owns (pinned world
+// positions, radius-derived unit, hitbox-derived reach, rope-pivot tracking).
+// In-game the live adopted instance shadows the row (fx.js drawFighterVfx
+// yields same-effect timeline rows to a live temp instance), so the art can
+// never double-draw. Deleting a row is safe: the spawn falls back to these
+// same built-ins. Retargeting a row's EFFECT swaps the art in BOTH paths
+// (the spawn adopts the row's pick); only ability-specific runtime extras
+// stay art-bound — rope-pivot tracking follows pirateRope, so other art on
+// the rope row simply ignores the pivot. The exact field-by-field
+// preview↔game contract lives on spawnAbilityVfx (combat.js).
+const _PIRATE_ABILITY_VFX = {
+  // Rope Swing: grapple tether + swing wake, thrown at the cast (frame 8),
+  // living the whole ~0.6s swing plus its release tail (40 frames), riding
+  // the front hand ahead of the body.
+  pirateDtilt: [
+    { effect: 'pirateRope', anchor: 'frontHand', startFrame: 8, duration: 40, scale: 1, rotation: 0, offsetX: 14, offsetY: 0, loop: false, ability: true, params: { length: 82 } },
+  ],
+  // Cutlass Lunge: world-pinned crescent at the lunge start (frame 6),
+  // ~0.34s of life (20 frames).
+  pirateFtilt: [
+    { effect: 'pirateCutlassSlash', anchor: 'character', startFrame: 6, duration: 20, scale: 1, rotation: 0, offsetX: 0, offsetY: 0, loop: false, ability: true },
+  ],
+  // Anchor Drop: ground eruption at the landing spot (frame 15), 0.5s of life.
+  pirateDsmash: [
+    { effect: 'pirateAnchorSlam', anchor: 'character', startFrame: 15, duration: 30, scale: 1, rotation: 0, offsetX: 0, offsetY: 0, loop: false, ability: true },
+  ],
+  // Cannon Blast: muzzle starburst on the cannon (frame 19), 0.2s of life.
+  pirateFsmash: [
+    { effect: 'pirateCannonMuzzle', anchor: 'character', startFrame: 19, duration: 12, scale: 1, rotation: 0, offsetX: 0, offsetY: 0, loop: false, ability: true },
+  ],
+};
+for (const a of _pirateAnims) {
+  const list = _PIRATE_ABILITY_VFX[a.id];
+  if (list) a.vfx = list.map((e) => ({ ...(e || {}), params: { ...((e || {}).params || {}) } }));
+}
+
 // Default timeline VFX for the knight's attack-start trails (durations in
 // frames mirror the code-spawn life: startup + active frames at 60fps). These
 // are the SAME instances combat.js would spawn (knightSwingTrail defers to
 // them — the timeline always wins), so every trail is visible and tunable in
 // the Hand Animator out of the box: effect, anchor, timing, scale, rotation
-// and X/Y offsets. Impact-timed art (Shield Bash hit, Counter answer) stays
-// code-driven — it cannot be expressed as attack-start timeline entries.
+// and X/Y offsets. The Counter answer's art is target-anchored and stays
+// code-driven — it cannot be expressed as an attack-start timeline entry.
 const _KNIGHT_TRAIL_VFX = {
   knightJab:         [{ effect: 'knightSlash', anchor: 'weapon', startFrame: 0, duration: 7, scale: 1 }],
   knightFtilt:       [{ effect: 'knightSlash', anchor: 'weapon', startFrame: 0, duration: 10, scale: 1 }],
@@ -1418,15 +1468,31 @@ const _KNIGHT_TRAIL_VFX = {
   knightDash: [
     { effect: 'knightCircleBurst', anchor: 'character', startFrame: 0, duration: 19, scale: 1 },
   ],
-  knightDtilt: [
-    { effect: 'knightSpeedLines', anchor: 'character', startFrame: 0, duration: 9, scale: 1 },
-  ],
 }; // Durations fit inside each source animation's frame count so every seeded
 // entry completes before the pose freezes (jab 9, ftilt 14, nair 10, fair 28,
 // ninjaNsmash 32, fsmash 32, dash 19).
 for (const a of _knightAnims) {
   const list = _KNIGHT_TRAIL_VFX[a.id];
   if (list) a.vfx = list.map((e) => ({ rotation: 0, offsetX: 0, offsetY: 0, loop: false, ...e }));
+}
+
+// Default timeline VFX for the knight's Shield Bash (Down Light) — cast-timed
+// impact art anchored to the knight, so it IS expressible as an ability row.
+// Same `ability: true` contract as the pirate rows: the ability's code spawn
+// adopts these field by field (combat.js spawnAbilityVfx), so the Hand Animator
+// lane owns the art's effect, anchor, timing, scale, rotation and X/Y in
+// gameplay. `knightBash` is the shield burst; `knightSpeedLines` is the push's
+// trail. startFrame 2 is the ability's castFrame; offsetX 34.1 is the code
+// spawn's radius-derived dir * r * 1.1 (r 31) authored canonically.
+const _KNIGHT_ABILITY_VFX = {
+  knightDtilt: [
+    { effect: 'knightBash', anchor: 'character', startFrame: 2, duration: 27, scale: 1, rotation: 0, offsetX: 34.1, offsetY: -4, loop: false, ability: true },
+    { effect: 'knightSpeedLines', anchor: 'character', startFrame: 2, duration: 9, scale: 1, rotation: 0, offsetX: 0, offsetY: 0, loop: false, ability: true },
+  ],
+};
+for (const a of _knightAnims) {
+  const list = _KNIGHT_ABILITY_VFX[a.id];
+  if (list) a.vfx = list.map((e) => ({ ...(e || {}) }));
 }
 
 export const DEFAULT_ANIMATIONS = [...BASE_ANIMATIONS, ..._boxerAnims, ..._knightAnims, ..._pirateAnims];
@@ -1613,6 +1679,133 @@ function migrateKnightVfxTopUp() {
   try { localStorage.setItem(KNIGHT_VFX_TOPUP_KEY, '1'); } catch (_) {}
 }
 
+// ── Pirate ability-VFX top-up ───────────────────────────────────────────
+// Same rule as the knight/boxer top-up above, for the pirate's ability rows
+// (_PIRATE_ABILITY_VFX): stored animations replace built-ins wholesale, so a
+// pirateDtilt / pirateFtilt / pirateDsmash / pirateFsmash saved before those
+// rows were seeded keeps shadowing the default with an empty vfx list — the
+// animator shows nothing editable. Top up stored entries that carry NO vfx
+// at all with the current defaults (tracks and everything else untouched).
+// Entries the user customized are left alone; and resurrecting a deleted row
+// is harmless, because with no row the ability spawn falls back to the same
+// built-in values anyway.
+//
+// v2: the Rope Swing got 2.5x slower, so its row's duration went 18 → 40. A
+// stored rope row matching the v1 seed EXACTLY was never touched by the user
+// (any edit breaks the match), so refresh just that fingerprint to the new
+// timing; anything customized keeps the user's numbers.
+const PIRATE_VFX_TOPUP_KEY = 'smashfighters.animlib.pirateVfxTopUp.v2';
+const _PIRATE_TOPUP_IDS = new Set(['pirateDtilt', 'pirateFtilt', 'pirateDsmash', 'pirateFsmash']);
+// The v1 rope seed, field for field. Only an exact match refreshes — a row
+// the user edited anywhere (timing, scale, offsets, anchor, effect) stays.
+const _PIRATE_ROPE_SEED_V1 = {
+  effect: 'pirateRope', anchor: 'frontHand', startFrame: 8, duration: 18,
+  scale: 1, rotation: 0, offsetX: 14, offsetY: 0, loop: false, ability: true,
+};
+function pirateRowMatches(r, s) {
+  if (!r || !s) return false;
+  for (const k of ['effect', 'anchor', 'startFrame', 'duration', 'scale', 'rotation', 'offsetX', 'offsetY', 'loop', 'ability']) {
+    if ((r[k] ?? null) !== (s[k] ?? null)) return false;
+  }
+  const rp = r.params || {}, sp = s.params || {};
+  const keys = new Set([...Object.keys(rp), ...Object.keys(sp)]);
+  for (const k of keys) if (rp[k] !== sp[k]) return false;
+  return true;
+}
+
+function migratePirateVfxTopUp() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (localStorage.getItem(PIRATE_VFX_TOPUP_KEY)) return;
+  } catch (_) { return; }
+  let changed = false;
+  const seedOf = (id) => {
+    for (const d of DEFAULT_ANIMATIONS) {
+      if (d && d.id === id) return d;
+    }
+    return null;
+  };
+  for (const a of animLib.values()) {
+    if (!a || typeof a.id !== 'string') continue;
+    if (!_PIRATE_TOPUP_IDS.has(a.id)) continue;
+    const def = seedOf(a.id);
+    if (!def || !Array.isArray(def.vfx) || !def.vfx.length) continue;
+    if (!Array.isArray(a.vfx) || !a.vfx.length) {
+      a.vfx = def.vfx.map((e) => ({ ...(e || {}), params: { ...((e || {}).params || {}) } }));
+      changed = true;
+    } else if (a.id === 'pirateDtilt' && a.vfx.length === 1 &&
+        pirateRowMatches(a.vfx[0], { ..._PIRATE_ROPE_SEED_V1, params: { length: 82 } })) {
+      // Untouched v1 rope row: refresh to the current (slower-swing) timing.
+      a.vfx = def.vfx.map((e) => ({ ...(e || {}), params: { ...((e || {}).params || {}) } }));
+      changed = true;
+    }
+  }
+  if (changed) persistAnimLib();
+  try { localStorage.setItem(PIRATE_VFX_TOPUP_KEY, '1'); } catch (_) {}
+}
+
+// ── Ability-VFX adoption migration ────────────────────────────────────────
+// Rows gameplay now ADOPTS (the boxer's Straight Right reach and the knight's
+// Shield Bash bash + speed lines) were seeded as plain timeline rows, or not
+// seeded at all. A stored animation still carrying the old shape would keep a
+// row the code spawn shadows (Straight Right) or show no row for the bash at
+// all, so the Hand Animator's numbers would not match gameplay. Add the
+// `ability` flag and the missing rows on stored entries, once. Custom values
+// are preserved — only the flag and the two bash rows are touched.
+const ABILITY_VFX_ADOPTION_KEY = 'smashfighters.animlib.abilityVfxAdoption.v1';
+
+// The pre-adoption Shield Bash speed-lines seed: startFrame 0, no flag. Only a
+// row still exactly matching it is moved to the real cast frame (2); a value
+// the user changed is left where they put it.
+function _isLegacyKnightSpeedLines(v) {
+  return !!v && v.effect === 'knightSpeedLines' && v.anchor === 'character'
+    && (v.startFrame == null || v.startFrame === 0) && v.ability !== true;
+}
+
+function migrateAbilityVfxAdoption() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (localStorage.getItem(ABILITY_VFX_ADOPTION_KEY)) return;
+  } catch (_) { return; }
+  let changed = false;
+
+  const boxer = animLib.get('boxerFsmash');
+  if (boxer && Array.isArray(boxer.vfx)) {
+    for (const v of boxer.vfx) {
+      if (v && v.effect === 'boxerStraightPunch' && v.ability !== true) {
+        v.ability = true;
+        changed = true;
+      }
+    }
+  }
+
+  const kd = animLib.get('knightDtilt');
+  if (kd) {
+    if (!Array.isArray(kd.vfx)) kd.vfx = [];
+    for (const v of kd.vfx) {
+      if (_isLegacyKnightSpeedLines(v)) {
+        v.startFrame = 2;
+        if (v.offsetX == null) v.offsetX = 0;
+        if (v.offsetY == null) v.offsetY = 0;
+        v.ability = true;
+        changed = true;
+      } else if (v && v.effect === 'knightSpeedLines' && v.ability !== true) {
+        v.ability = true;
+        changed = true;
+      }
+    }
+    for (const d of _KNIGHT_ABILITY_VFX.knightDtilt) {
+      if (!kd.vfx.some((v) => v && v.effect === d.effect)) {
+        kd.vfx.push({ ...d });
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) persistAnimLib();
+  try { localStorage.setItem(ABILITY_VFX_ADOPTION_KEY, '1'); } catch (_) {}
+}
+
 // ── Sprite-only catalogue migration ───────────────────────────────────────
 // The catalogue is PNG-only now: drop every stored custom weapon without a
 // PNG sprite (they would otherwise keep resolving through the store merge),
@@ -1705,6 +1898,8 @@ try {
       migrateBareKnight();
       migrateRetireDashTrail();
       migrateKnightVfxTopUp();
+      migratePirateVfxTopUp();
+      migrateAbilityVfxAdoption();
       migrateSpriteOnlyWeapons();
     }
   }

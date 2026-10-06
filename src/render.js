@@ -3604,14 +3604,16 @@ export function drawFighter(ctx, fighter, time) {
     const backGearShown = (handGear && handGear[backAnat] && !holdCoversSide(fighter, backAnat)) ? handGear[backAnat] : null;
 
     if (orbiting) {
-      // Body first, then BOTH fists over it (rear group then front group),
-      // weapons over their fist. The hands sit on the body edge, so nothing may
-      // duck behind the body — that swap popped a hand at each turn.
-      drawBody(ctx, fighter, skinLive, vradius);
-      drawFrontAccessory(ctx, fighter, x, y, vradius);
+      // Facing transition: the rear hand travels BEHIND the body (skin image)
+      // while the front hand stays in front, so the turn reads with depth —
+      // one fist over the body, one behind it — instead of both sliding over
+      // the top. Each hand keeps its own weapon entries on its own side of
+      // the body, so nothing swaps mid-turn.
       drawOrbitEntries(ctx, fighter, x, y, backAnat, _orbHands, gripDir, false, vradius);
       _drawHandState(ctx, backSt, handR, handFill, backGearShown, mirrorGear);
       drawOrbitEntries(ctx, fighter, x, y, backAnat, _orbHands, gripDir, true, vradius);
+      drawBody(ctx, fighter, skinLive, vradius);
+      drawFrontAccessory(ctx, fighter, x, y, vradius);
       drawOrbitEntries(ctx, fighter, x, y, frontAnat, _orbHands, gripDir, false, vradius);
       _drawHandState(ctx, frontSt, handR, handFill, frontGearShown, mirrorGear);
       drawOrbitEntries(ctx, fighter, x, y, frontAnat, _orbHands, gripDir, true, vradius);
