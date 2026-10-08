@@ -282,7 +282,12 @@ export const SFX = {
     playVoice(VOICE.plundered, () => SFX.goldOrb(), volume);
   },
   treasureDigging(volume = 0.7) {
-    playVoice(VOICE.treasureDigging, () => SFX.digThud(), volume);
+    // A fresh hold restarts the loop cleanly (see stopTreasureDigging).
+    try { stopTreasureDigging(); } catch (_) {}
+    const node = playSfxFromPath(VOICE.treasureDigging, volume, { onFail: () => SFX.digThud() });
+    if (node) { _digLoopNode = node; return true; }
+    SFX.digThud();
+    return false;
   },
   treasureChest(volume = 0.7) {
     playVoice(VOICE.treasureChest, () => SFX.chestUnearth(), volume);
@@ -406,6 +411,19 @@ export const SFX = {
     playVoice(VOICE.koPillar, () => SFX.explosion(), volume);
   },
 };
+
+// The live digging-loop node, tracked so the loop can be STOPPED the moment
+// the dig ends (chest up, dud, or walk-away) instead of ringing out under the
+// reward sound. The pool is per-path, so this element only ever plays this
+// loop — pausing it here can never cut another voice.
+let _digLoopNode = null;
+export function stopTreasureDigging() {
+  const n = _digLoopNode;
+  _digLoopNode = null;
+  if (!n) return;
+  try { n.pause(); } catch (_) {}
+  try { n.currentTime = 0; } catch (_) {}
+}
 
 // ── MP3 player with pool + broken-path tracking ────────────────────────
 let _sfxMuted = false;

@@ -5,7 +5,7 @@ import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighte
 import { openEditor, closeEditor, updateEditor, renderEditor, setEditorCloseHandler, openHitboxCustomizer, closeHitboxCustomizer, updateHitboxCustomizer, renderHitboxCustomizer, setHitboxCustomizerCloseHandler, setCustomizerMove, setWorkingBoxValue, saveCustomizer, resetCustomizerMove, getWorkingBoxes, isHitboxCustomizerOpen, hitboxCustomizerHits } from './editors.js';
 import { drawFighterVfx, setVfxViewBounds, warmEffectSprites, stepTimeDilation, timeDilationState, peekTimeDilation, resetTimeDilation, drawTimeDilationPost, updateDamageIndicators, drawDamageIndicators, resetDamageIndicators, updateWorldFx, drawWorldFx, resetWorldFx, setWorldFxViewBounds, setFxQuality, setParticleDetail, setPostDetail, setWorldFxBatch, setDamageTextCache, worldFxState } from './fx.js';
 import { initInput, flushInput, isJustPressed, createFighter, createDefaultStage, drawStage, updatePlatforms, isInBlastZone, onLoopQualityChange, setDestructibleViewBounds, clearDestructibleViewBounds, sanitizeDeathZone, applyDeathZoneToStage, blastRectFor, DEFAULT_DEATH_MARGINS, DEATHZONE_MIN, DEATHZONE_MAX, DEATHZONE_STEP } from './physics.js';
-import { updateCamera, applyCameraTransform, resetCamera, snapCameraToFit, updateCameraZoom, updateMatchZoom, getCameraState, getCameraStateInto, worldToScreen, VIEW_W, VIEW_H, syncCanvasBacking, backingScaleFor, setRenderScale, getSkinImage, drawFighter, drawAbilityFx, drawHorse, drawBoxerRollUnder, drawHeldLayer, holdCoversSide, handConfig, resolveHandColor, setViewBounds, setEffectBatch, warmFighterSprites, saveRig, clearRig, resolveHeld, resolveHoldSlot, orbitHandPose, orbitFrontSide, orbitTarget, resolveOrbitRig, resolveSkinMeta, updateCinematic, drawCinematicWorld, cinematicTint, resetCinematic, notifyCinematicKO, ACCESSORIES, accessoryName, loadAccessoryFor, saveAccessoryFor, cloneAccessory, drawAccessory, tickSkinImageRetries, handGearName, loadHandGearFor, saveHandGearSetFor, defaultHandGear, defaultGearIdFor, drawHandGear } from './render.js';
+import { updateCamera, applyCameraTransform, resetCamera, snapCameraToFit, updateCameraZoom, updateMatchZoom, getCameraState, getCameraStateInto, worldToScreen, VIEW_W, VIEW_H, syncCanvasBacking, backingScaleFor, setRenderScale, getSkinImage, drawFighter, drawAbilityFx, drawHorse, drawBoxerRollUnder, drawHeldLayer, holdCoversSide, handConfig, resolveHandColor, setViewBounds, setEffectBatch, warmFighterSprites, warmFighterArt, saveRig, clearRig, resolveHeld, resolveHoldSlot, orbitHandPose, orbitFrontSide, orbitTarget, resolveOrbitRig, resolveSkinMeta, updateCinematic, drawCinematicWorld, cinematicTint, resetCinematic, notifyCinematicKO, ACCESSORIES, accessoryName, loadAccessoryFor, saveAccessoryFor, cloneAccessory, drawAccessory, tickSkinImageRetries, handGearName, loadHandGearFor, saveHandGearSetFor, defaultHandGear, defaultGearIdFor, drawHandGear } from './render.js';
 import { openSandboxEditor, closeSandboxEditor, updateSandboxEditor, renderSandboxEditor, isSandboxEditorOpen, getSandboxDocument, setSandboxArenaSize, startSandboxSession, stopSandboxSession, updateSandboxSession, renderSandboxSession, isSandboxPlaying, toggleSandboxPause, isSandboxPaused, setSandboxTimeScale, getSandboxTimeScale, toggleSandboxDebug, getSandboxRoster, getSandboxStage, getSandboxSessionCount } from './sandbox.js';
 
 
@@ -118,19 +118,21 @@ let mapSettings = (() => {
       // PERFORMANCE trims harder. Gameplay, damage and timing are untouched —
       // only the number of spawned ability particles changes.
       quality: ['high', 'balanced', 'performance'].includes(saved.quality) ? saved.quality : 'high',
-      // Internal rendering resolution (1080p default = full 1080-line backing).
-      // PERFORMANCE follows the adaptive tier (smoothness first); 720p/1080p/
-      // 1440p pin the backing to that line count (square viewport, so 1440p =
-      // 1440×1440 backing — the 1440p-display equivalent, never stretched).
+      // Internal rendering resolution (PERFORMANCE default = adaptive tier
+      // scaling, smoothness first — full 1080-line backing on capable machines,
+      // stepped down only under sustained load). 480p/720p/1080p/1440p pin the
+      // backing to that line count (square viewport, so 1440p = 1440×1440
+      // backing — the 1440p-display equivalent, never stretched). 480p is the
+      // escape hatch for very weak rasterizers (software rendering).
       // Render-only like quality above: world units and physics never see it.
-      resolution: ['performance', '720p', '1080p', '1440p'].includes(saved.resolution) ? saved.resolution : '1080p',
+      resolution: ['performance', '480p', '720p', '1080p', '1440p'].includes(saved.resolution) ? saved.resolution : 'performance',
       // Death-zone margins (px beyond each arena edge). 0/0/0/0 preserves the
       // historical behavior exactly (death box == arena edge). Validated and
       // applied to stage.blastZones; older saves without it load fine.
       deathZone: sanitizeDeathZone(saved.deathZone),
     };
   } catch (_) {
-    return { backgroundColor: DEFAULT_BACKGROUND_COLOR, platformColor: null, stopwatch: true, showStocks: true, showMatchup: true, quality: 'high', resolution: '1080p', deathZone: { ...DEFAULT_DEATH_MARGINS } };
+    return { backgroundColor: DEFAULT_BACKGROUND_COLOR, platformColor: null, stopwatch: true, showStocks: true, showMatchup: true, quality: 'high', resolution: 'performance', deathZone: { ...DEFAULT_DEATH_MARGINS } };
   }
 })();
 function persistMapSettings() {
@@ -697,7 +699,7 @@ const MAP_SETTINGS_ROWS = [
   { id: 'showStocks', label: 'STOCK COUNTER', type: 'toggle', value: () => (mapSettings.showStocks !== false ? 'ON' : 'OFF') },
   { id: 'showMatchup', label: 'VERSUS TEXT', type: 'toggle', value: () => (mapSettings.showMatchup !== false ? 'ON' : 'OFF') },
   { id: 'quality', label: 'QUALITY', type: 'quality', value: () => (mapSettings.quality || 'high').toUpperCase() },
-  { id: 'resolution', label: 'RESOLUTION', type: 'resolution', value: () => (mapSettings.resolution || '1080p').toUpperCase() },
+  { id: 'resolution', label: 'RESOLUTION', type: 'resolution', value: () => (mapSettings.resolution || 'performance').toUpperCase() },
   // Death zone: px beyond each arena edge. 0 = KO exactly at the edge
   // (historical default). Positive = more forgiving, negative = tighter.
   { id: 'dzLeft', label: 'DEATH ZONE LEFT', type: 'deathzone', value: () => `${mapSettings.deathZone.left >= 0 ? '+' : ''}${mapSettings.deathZone.left}px` },
@@ -714,8 +716,8 @@ const QUALITY_ORDER = ['high', 'balanced', 'performance'];
 // (the sharpness a 1440p display resolves — a real resolution lift, not a
 // stretched 1080p image). 'performance' is absent: it means adaptive, handled
 // by the tier path below rather than a pinned value.
-const RESOLUTION_SCALES = { '720p': 720 / 1080, '1080p': 1, '1440p': 1440 / 1080 };
-const RESOLUTION_ORDER = ['performance', '720p', '1080p', '1440p'];
+const RESOLUTION_SCALES = { '480p': 480 / 1080, '720p': 720 / 1080, '1080p': 1, '1440p': 1440 / 1080 };
+const RESOLUTION_ORDER = ['performance', '480p', '720p', '1080p', '1440p'];
 // Applies the manual Settings ceiling to every render consumer, then lets the
 // adaptive tier (loop sensor -> perf mapper) reduce below it under load.
 // Render-only: physics, damage, timing untouched.
@@ -830,18 +832,13 @@ function drawHealthBar(ctx, fighter, time) {
   const bx = fighter.x - 40, by = fighter.y - fighter.radius - 20;
 
   ctx.save();
-  // Subtle drop shadow: one shadowed fill only (bg), fg drawn without shadow
-  // so no double-blur cost per frame.
-  ctx.shadowColor = 'rgba(0,0,0,0.45)';
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 2;
-  // Background bar
+  // Flat drop strip instead of a shadowBlur drop shadow: same depth read for
+  // the bar, no blur pass (blur is one of the slowest canvas ops, and this
+  // runs per fighter per frame).
   ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
   ctx.fillRect(bx, by, 80, 8);
-  ctx.shadowColor = 'rgba(0,0,0,0)';
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetY = 0;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.fillRect(bx + 2, by + 8, 76, 2);
 
   // Health color via precomputed LUT (48 buckets white → yellow → orange →
   // red → maroon). Identical colors within ~3%; replaces the per-frame rgb() template.
@@ -933,7 +930,11 @@ function _pctSprite(text) {
 
 export function initGame(canvasEl) {
   canvas = canvasEl;
-  ctx = canvas.getContext('2d');
+  // Opaque canvas: every state fills an opaque backdrop each frame, so alpha
+  // is never needed — telling the browser up front lets it skip alpha
+  // compositing on present. Zero visual change (page behind is black).
+  try { ctx = canvas.getContext('2d', { alpha: false }); }
+  catch (_) { ctx = canvas.getContext('2d'); }
   // Logical viewport is fixed at 1080 × 1080 regardless of the canvas backing
   // size (VIEW × DPR) or CSS size (uniform square fit). World coordinates,
   // physics and character sizes are therefore untouched by the viewport work.
@@ -1895,12 +1896,12 @@ function cycleMapSetting(row, dir) {
     persistMapSettings();
     applyQuality();
   } else if (row.id === 'resolution') {
-    // Internal rendering resolution (1080p default). PERFORMANCE = adaptive
-    // tier scaling (smoothness first); 720p/1080p/1440p pin the backing line
-    // count. Render-only: world units, physics and camera framing never see
-    // it. Applies live — no restart — via the next frame's store sync.
+    // Internal rendering resolution (PERFORMANCE default). PERFORMANCE =
+    // adaptive tier scaling (smoothness first); 720p/1080p/1440p pin the
+    // backing line count. Render-only: world units, physics and camera framing
+    // never see it. Applies live — no restart — via the next frame's store sync.
     const order = RESOLUTION_ORDER;
-    const cur = order.indexOf(mapSettings.resolution || '1080p');
+    const cur = order.indexOf(mapSettings.resolution || 'performance');
     mapSettings.resolution = order[(cur + dir + order.length) % order.length];
     persistMapSettings();
     applyQuality();
@@ -4759,8 +4760,12 @@ function startNewMatch() {
   fighter2.stocks = matchSettings.stocks;
   fighter2.eliminated = false;
 
- attachAnimator(fighter1);
-   attachAnimator(fighter2);
+  attachAnimator(fighter1);
+    attachAnimator(fighter2);
+
+  // Pre-decode + upload match art now (skins, hats, weapon sprites) so the
+  // first in-match draws never hitch on network/decode/upload mid-fight.
+  try { warmFighterArt([fighter1, fighter2]); } catch (_) {}
 
     // Initialize AI controllers based on game mode. Old controllers are
     // disposed first so restarted matches never keep stale fighter refs.
@@ -5741,8 +5746,11 @@ function _applyTier(idx, force) {
 
 // Map physics.js quality levels (2=high,1=medium,0=low) onto detail tiers,
 // clamped by the manual ceiling. Called only on actual loop tier changes.
+// A sustained collapse reaches verylow (not just low): at single-digit fps
+// the low floor is still too heavy, and the climb-back hysteresis in the loop
+// recovers automatically, so nothing gets stuck down here.
 export function setTierFromLoop(loopLevel) {
-  const mapped = loopLevel >= 2 ? 0 : loopLevel === 1 ? 1 : 2;
+  const mapped = loopLevel >= 2 ? 0 : loopLevel === 1 ? 1 : 3;
   _applyTier(mapped, false);
 }
 

@@ -1758,7 +1758,8 @@ function pirateRopeWake(ctx, len, wid, clock, alpha) {
   ctx.restore();
 }
 // Anchor-drop demo: anchor() — dark outline + steel body + flukes + highlight,
-// with an optional gold bloom (shadowBlur) while it falls.
+// with an optional gold bloom (shadowBlur) while it falls. The bloom is
+// full-detail only: shadowBlur forces a costly blur pass every frame it is up.
 function pirateAnchorShape(ctx, rot, U, glow) {
   ctx.save(); ctx.rotate(rot); ctx.scale(U, U); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   const shape = () => {
@@ -1766,7 +1767,7 @@ function pirateAnchorShape(ctx, rot, U, glow) {
     ctx.moveTo(0, -41); ctx.lineTo(0, 34); ctx.moveTo(-20, -30); ctx.lineTo(20, -30);
     ctx.moveTo(-38, 6); ctx.quadraticCurveTo(-34, 40, 0, 38); ctx.quadraticCurveTo(34, 40, 38, 6);
   };
-  if (glow > 0) { ctx.shadowColor = 'rgba(255,190,80,' + glow.toFixed(3) + ')'; ctx.shadowBlur = 16; }
+  if (glow > 0 && _particleDetail < 1) { ctx.shadowColor = 'rgba(255,190,80,' + glow.toFixed(3) + ')'; ctx.shadowBlur = 16; }
   ctx.strokeStyle = '#11141b'; ctx.lineWidth = 10; shape(); ctx.stroke(); ctx.shadowBlur = 0;
   ctx.strokeStyle = '#808a9b'; ctx.lineWidth = 5.5; shape(); ctx.stroke();
   for (const s of [-1, 1]) {
@@ -1795,9 +1796,11 @@ function pirateChainLinks(ctx, x0, y0, x1, y1, sag, U) {
   }
 }
 // Anchor-drop demo: puffs() — the 9-lobed ground-dust row (brown radial puffs).
+// Reduced detail draws every other lobe (5 of 9, same spread).
 function pirateDustRow(ctx, cx, gy, k, a, U) {
   if (a <= 0.004) return;
   for (let i = 0; i < 9; i++) {
+    if (_particleDetail >= 1 && (i % 2)) continue;
     const s = i / 4 - 1, x = cx + s * (36 + 78 * k) * U, y = gy + (i % 3) * 3 * U - 4 * U * k;
     const r = (14 + 16 * k + (i % 3) * 4) * U;
     const g = ctx.createRadialGradient(x, y - r * 0.3, 0, x, y - r * 0.3, r);
@@ -2261,9 +2264,12 @@ const PIRATE_VFX = {
       ctx.restore();
       pirateAnchorShape(ctx, rot, U, glow * 0.9);
       pirateDustRow(ctx, 0, 6 * U, Math.min(1, bt / 0.5) * 0.8, (1 - Math.min(1, bt / 0.7)) * 0.7, U);
-      // Radial cracks (demo CRACKS: 9 spokes x 7 nodes, gold glow).
+      // Radial cracks (demo CRACKS: 9 spokes x 7 nodes, gold glow). The glow is
+      // full-detail only (see pirateAnchorShape).
       ctx.save(); ctx.lineCap = 'round';
-      ctx.shadowColor = 'rgba(255,190,80,.9)'; ctx.shadowBlur = 8 * U;
+      if (_particleDetail < 1) {
+        ctx.shadowColor = 'rgba(255,190,80,.9)'; ctx.shadowBlur = 8 * U;
+      }
       const reachE = pirateEo(Math.min(1, bt / 0.11)), life = 1 - Math.min(1, Math.max(0, bt - 0.1) / 0.5);
       ctx.strokeStyle = 'rgba(255,205,110,' + (0.9 * Math.max(0, life)).toFixed(3) + ')';
       ctx.lineWidth = 1.8 * U;
@@ -2290,12 +2296,14 @@ const PIRATE_VFX = {
         ctx.restore();
       }
       // Explosion rays (demo RAYS: 16 tapered gold blades) + dual core glows.
+      // Reduced detail draws every other blade (8 of 16, same fan).
       const fl = 1 - Math.min(1, bt / 0.18), life2 = 1 - Math.min(1, Math.max(0, bt - 0.1) / 0.5);
       if ((fl > 0.01 || life2 > 0.01)) {
         ctx.save(); ctx.globalCompositeOperation = 'lighter';
         const rk = pirateEo(Math.min(1, bt / 0.06));
         const ra = (0.9 * Math.max(0, fl) + 0.25 * Math.max(0, life2)) * (0.85 + 0.15 * Math.sin(prog * 24));
         for (let i = 0; i < 16; i++) {
+          if (_particleDetail >= 1 && (i % 2)) continue;
           const a = -Math.PI + ((i + 0.5) / 16) * Math.PI;
           const Ln = (40 + ((i * 53) % 55)) * U * rk * (0.5 + 0.5 * Math.max(0, fl) + 0.3 * Math.max(0, life2));
           if (Ln < 2) continue;
@@ -3407,6 +3415,10 @@ const TREASURE_VFX = {
       // rig + beam (spawn passes 0.6); the dig site itself stays full-size.
       const PR = v.params || {};
       const cs = PR.cs || 1;
+      // Reduced detail thins the swarm (beam rays, mound rocks and spawned
+      // particles share one stride); staging, chest, rings and flash stay
+      // intact, so the reward moment never breaks. Full detail draws all.
+      const tdStride = _particleDetail >= 2 ? 3 : _particleDetail >= 1 ? 2 : 1;
       const t = prog * (PR.chest === 0 ? 2.75 : TD_TOTAL);
       const g = tdLight(t), o = tdOpen(t), sh = tdShake(t);
       const jx = Math.sin(t * 127.1 + 0.7) * sh, jy = Math.sin(t * 311.7 + 1.3) * sh;
@@ -3445,7 +3457,9 @@ const TREASURE_VFX = {
             if (ba > 0.01) {
               ctx.save(); ctx.translate(0, cs * tdMouthY(t));
               const fl = 0.9 + 0.1 * Math.sin(t * 37) * Math.sin(t * 23), w = tdLerp(26, 64, ba) * cs;
-              for (const r of _TD_RAYS) {
+              for (let ri = 0; ri < _TD_RAYS.length; ri++) {
+                if (ri % tdStride) continue;
+                const r = _TD_RAYS[ri];
                 const L = bh * r.l * (1 - 0.55 * Math.abs(r.a) / 1.35) * (0.8 + 0.2 * Math.sin(t * 9 + r.ph));
                 const rw = r.w * cs;
                 ctx.save(); ctx.rotate(r.a);
@@ -3558,7 +3572,9 @@ const TREASURE_VFX = {
           }
         }
         // mound rocks for this layer
-        for (const k of _TD_ROCKS) {
+        for (let ki = 0; ki < _TD_ROCKS.length; ki++) {
+          if (ki % tdStride) continue;
+          const k = _TD_ROCKS[ki];
           if (k.back !== wantBack) continue;
           const sd = (k.ox < 0 ? -1 : 1), near = Math.abs(k.ox) < 40;
           const x = k.ox * (1 + 0.25 * o) + sd * o * (near ? 30 : 12);
@@ -3568,7 +3584,9 @@ const TREASURE_VFX = {
         }
       }
       // spawned particles
-      for (const q of _TD_SPAWN) {
+      for (let qi = 0; qi < _TD_SPAWN.length; qi++) {
+        if (qi % tdStride) continue;
+        const q = _TD_SPAWN[qi];
         const age = t - q.bt;
         if (age < 0) continue;
         if (q.kind === 0) {
@@ -3640,7 +3658,12 @@ const TREASURE_VFX = {
       if (k <= 0.01) { ctx.restore(); return; }
       // params.dim scales the banded glow discs only (rays, crescents, coins
       // keep full body) — the game spawns the buff halo dimmed 80%.
+      // Reduced detail thins the swarm (rays, sparkles and coins share one
+      // stride; discs drop count); strokes and core stay, so the silhouette
+      // never breaks. Full detail draws everything, exactly as before.
       const dim = (v.params && v.params.dim) || 1;
+      const stride = _particleDetail >= 2 ? 4 : _particleDetail >= 1 ? 2 : 1;
+      const discN = _particleDetail >= 2 ? 2 : _particleDetail >= 1 ? 3 : 4;
       const R = 26, TAU2 = PIRATE_TAU;
       const bob = Math.sin(prog * TAU2 * 3) * 3;
       ctx.translate(0, bob);
@@ -3648,13 +3671,14 @@ const TREASURE_VFX = {
       // breathing banded glow (4 discs, out of phase)
       const br = R * tdLerp(1.2, 2.6, k) * (1 + 0.04 * Math.sin(prog * TAU2 * 3));
       const cols = ['255,150,20', '255,185,40', '255,215,80', '255,246,180'], al = [0.22, 0.32, 0.45, 0.7], ss = [1, 0.78, 0.56, 0.34];
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < discN; i++) {
         const rad = br * ss[i] * (1 + 0.05 * Math.sin(prog * TAU2 * 3.4 + i * 1.1));
         ctx.fillStyle = 'rgba(' + cols[i] + ',' + (k * al[i] * dim).toFixed(3) + ')';
         ctx.beginPath(); ctx.ellipse(0, 0, rad, rad, 0, 0, TAU2); ctx.fill();
       }
       // slow rotating flat rays (14, alternating long/short)
       for (let i = 0; i < 14; i++) {
+        if (i % stride) continue;
         const long = i % 2 === 0;
         const wq = 0.8 + pirateHash01c(i, 301) * 0.3, ph = pirateHash01c(i, 302) * PIRATE_TAU;
         const a0 = (i / 14) * TAU2 + (pirateHash01c(i, 303) - 0.5) * 0.2;
@@ -3682,6 +3706,7 @@ const TREASURE_VFX = {
       // orbiting coins, 3D-ish: behind pass, orb core, front pass
       for (let pass = 0; pass < 2; pass++) {
         for (let i = 0; i < 4; i++) {
+          if (i % stride) continue;
           const base = (i / 4) * TAU2 + (pirateHash01c(i, 304) - 0.5) * 0.6;
           const cdir = i % 2 ? -1 : 1, wob = 0.9 + pirateHash01c(i, 305) * 0.5;
           const rho = R * (1.9 + pirateHash01c(i, 306) * 0.5);
@@ -3700,16 +3725,23 @@ const TREASURE_VFX = {
           ctx.save(); ctx.scale(bsc, bsc);
           ctx.beginPath(); ctx.ellipse(0, 0, R, R, 0, 0, TAU2);
           ctx.fillStyle = 'rgb(43,46,58)'; ctx.fill();
-          ctx.save(); ctx.clip();
-          ctx.fillStyle = 'rgba(0,0,0,.4)';
-          ctx.beginPath(); ctx.rect(-2 * R, -2 * R, 4 * R, 4 * R);
-          ctx.moveTo(-0.35 * R + 1.1 * R, -0.4 * R); ctx.arc(-0.35 * R, -0.4 * R, 1.1 * R, 0, TAU2);
-          ctx.fill('evenodd');
+          if (_particleDetail < 1) {
+            ctx.save(); ctx.clip();
+            ctx.fillStyle = 'rgba(0,0,0,.4)';
+            ctx.beginPath(); ctx.rect(-2 * R, -2 * R, 4 * R, 4 * R);
+            ctx.moveTo(-0.35 * R + 1.1 * R, -0.4 * R); ctx.arc(-0.35 * R, -0.4 * R, 1.1 * R, 0, TAU2);
+            ctx.fill('evenodd');
+            ctx.restore();
+          } else {
+            // Cheap cel shade without the clip: one offset blob instead of an
+            // evenodd cutout. Indistinguishable once scaled onto the body.
+            ctx.fillStyle = 'rgba(0,0,0,.35)';
+            ctx.beginPath(); ctx.ellipse(0.25 * R, 0.3 * R, 0.9 * R, 0.85 * R, 0, 0, TAU2); ctx.fill();
+          }
           ctx.strokeStyle = 'rgba(255,214,80,' + (0.8 * k).toFixed(3) + ')'; ctx.lineWidth = 6;
           ctx.beginPath(); ctx.arc(0, 0, R - 1, 0.15, 1.5); ctx.stroke();
           ctx.fillStyle = 'rgba(185,196,228,.6)';
           ctx.beginPath(); ctx.ellipse(-0.4 * R, -0.45 * R, 0.3 * R, 0.17 * R, -0.6, 0, TAU2); ctx.fill();
-          ctx.restore();
           ctx.beginPath(); ctx.ellipse(0, 0, R, R, 0, 0, TAU2);
           ctx.lineWidth = 3.5; ctx.strokeStyle = '#000'; ctx.stroke();
           ctx.restore();
@@ -3717,6 +3749,7 @@ const TREASURE_VFX = {
       }
       // sparkle shimmer: fixed set cycling through pop windows
       for (let i = 0; i < 14; i++) {
+        if (i % stride) continue;
         const u = (prog * 3 + i / 14) % 1;
         if (u > 0.35) continue;
         const uu = u / 0.35;

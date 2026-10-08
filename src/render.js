@@ -1,4 +1,4 @@
-import { drawWeapon, getWeapon } from './anim.js';
+import { drawWeapon, getWeapon, getWeaponSprite, allWeapons } from './anim.js';
 import { SFX } from './assets.js';
 import { getVfxEffect } from './fx.js';
 import { GRAVITY, MAX_FALL_SPEED, LAUNCH_GRAVITY_MUL } from './physics.js';
@@ -2880,6 +2880,59 @@ function warmOne(drawFn) {
     c.width = c.height = 8;
     c.getContext('2d');
     bakedUnitSprite(drawFn);
+  } catch (_) {}
+}
+
+// Match-start art warm-up: decode + GPU-upload skins, accessory images and
+// weapon sprites AHEAD of first draw, so the first Cannon Blast (or any
+// first-show art) never pays network + decode + upload mid-fight. Anything
+// not yet loaded is kicked to load early; by first draw only the (cheap,
+// cached) bake remains. All guarded — warming must never break a match start.
+let _warmScratch = null;
+function _warmUpload(img) {
+  if (!img) return;
+  try {
+    if (!_warmScratch) _warmScratch = document.createElement('canvas');
+    _warmScratch.width = 8; _warmScratch.height = 8;
+    const m = _warmScratch.getContext('2d');
+    if (m) m.drawImage(img, 0, 0, 8, 8);
+  } catch (_) {}
+}
+function _warmSkinImage(path) {
+  if (typeof path !== 'string' || !path) return;
+  try {
+    const e = getSkinImage(path);
+    if (e && e.status === 'loaded' && e.img) _warmUpload(e.img);
+  } catch (_) {}
+}
+export function warmFighterArt(fighters) {
+  try {
+    for (const f of fighters || []) {
+      if (!f) continue;
+      // Body skin (string path or { path } record; resolved records may also
+      // carry the decoded image already).
+      const sk = f.skin;
+      if (typeof sk === 'string') _warmSkinImage(sk);
+      else if (sk) {
+        if (typeof sk.path === 'string') _warmSkinImage(sk.path);
+        if (sk.img) { try { _warmUpload(sk.img); } catch (_) {} }
+      }
+      // Built-in accessory image.
+      const acc = f.accessory;
+      if (acc && acc.type && acc.type !== 'none') {
+        const ae = _accessoryMap.get(acc.type);
+        if (ae && ae.img) _warmSkinImage(ae.img);
+      }
+    }
+  } catch (_) {}
+  // Weapon sprites: kick every registered sprite to load now (async fetch +
+  // decode), so first attacks only bake + blit.
+  try {
+    const list = allWeapons();
+    for (let i = 0; i < list.length; i++) {
+      const sp = list[i] && list[i].sprite;
+      if (sp) { try { getWeaponSprite(sp); } catch (_) {} }
+    }
   } catch (_) {}
 }
 

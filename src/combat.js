@@ -1,5 +1,5 @@
 import { getAnimationRaw, requestAnimation, updateAnimator, stopAnimation } from './anim.js';
-import { SFX } from './assets.js';
+import { SFX, stopTreasureDigging } from './assets.js';
 import { resolveWorldAnchor, playShadowStrikeVFX, playSmokePoofVFX, triggerTimeDilation, emitAbilityFx, emitFlash, emitImpactRing, emitSparks, emitDustPuff, emitStreak, emitGhost, fxStyleFor, spawnFloatingText, releaseTimeDilation, spawnDamageNumber, getVfxEffect } from './fx.js';
 import { spawnTempVfx, isHeld, isJustPressed, clearGrid, insertObject, queryNearby, projectilePool, hitboxPool, damageNumberPool, scratchVec2, clearTempArray, tempArray32, freezeGame, destructibleList, damageDestructible, AERIAL_LIGHT_RECOVERY_FORCE, AERIAL_LIGHT_RECOVERY_DURATION, BLOCK_COOLDOWN, DI_MAX_ANGLE, DI_WINDOW, stampAbilityCooldown, handleFighterInput, stepFighterPhysics, updateFighterState, resetAbilityCooldowns, applySoftPlayerSeparation, resolvePlatformCollision } from './physics.js';
 import { notifyCinematicHit, getSkinImage, updateHandOrbit, syncHeldRotSnap } from './render.js';
@@ -2320,10 +2320,18 @@ function grantGoldenOrb(f) {
 // behind the body while its rays, crescents and coins peek around the
 // silhouette. Progress derives from the buff record itself (elapsed share),
 // so the loop phase is exact no matter when the buff was granted.
+// Frame-stride counter (see below): the aura redraws every OTHER call.
+let _orbTick = 0;
 export function drawGoldOrbUnder(ctx, fighter) {
   if (!fighter || fighter.state === 'dead' || fighter.eliminated) return;
   const gb = fighter._goldOrb;
   if (!gb || !(gb.timeLeft > 0) || !(gb.duration > 0)) return;
+  // 30Hz shimmer under a 60Hz game: a soft glow stepping every other frame
+  // is invisible, and it halves the aura's cost for its whole 30s life. With
+  // two buffed fighters the calls alternate, spreading the load across
+  // frames instead of stacking it.
+  _orbTick++;
+  if (_orbTick % 2) return;
   let eff = null;
   try { eff = getVfxEffect('goldOrbAura'); } catch (_) { eff = null; }
   if (!eff) return;
@@ -2395,7 +2403,13 @@ function updateTreasureHunt(fighters, dt) {
     // resets — the pirate must commit to a fresh hold).
     const canDig = mark && f.grounded && !f.attack && !f.dodging
       && !(f.hitstun > 0) && !(f._hitLock || (f._hitLockTimer || 0) > 0) && f.shielding;
-    if (!canDig) { f._dig = null; continue; }
+    if (!canDig) {
+      // Walked away (or hit, jumped, released): the dig is over, so the loop
+      // stops with it instead of ringing out.
+      if (f._dig) { try { stopTreasureDigging(); } catch (_) {} }
+      f._dig = null;
+      continue;
+    }
     let dig = f._dig;
     if (!dig || dig.id !== mark.id) {
       dig = f._dig = { id: mark.id, t: 0, puff: 0 };
@@ -2433,6 +2447,9 @@ function updateTreasureHunt(fighters, dt) {
       const done = _treasures[idx];
       _treasures.splice(idx, 1);
       _treasureTimer = Math.min(_treasureTimer <= 0 ? TREASURE_RESPAWN_DELAY : _treasureTimer, TREASURE_RESPAWN_DELAY);
+      // The dig is over: stop the digging loop before the reward sound, so
+      // the chest lands clean instead of under the ringing loop.
+      try { stopTreasureDigging(); } catch (_) {}
       // Not every hole holds a chest: on a dud the dirt flies but nothing
       // rises — no burst tail, no pending reward, no buff. The outcome is
       // rolled here, once, at completion.
