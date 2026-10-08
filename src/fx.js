@@ -2479,14 +2479,11 @@ const PIRATE_VFX = {
   },
 
   // ── Cannon Blast (detonation) ───────────────────────────────────────────
-  // 1:1 port of the demo's explode(): core flash, dome shockwave with its
-  // white arc highlight, flattened ground ring, scorch, 44 radial streaks,
-  // 26 fireballs (white->amber->ember by age), 18 grey smoke puffs and 16
-  // tumbling debris chips (gravity 700). Spawned by updateProjectiles'
-  // kill path wherever the round ACTUALLY resolved (hit / block /
-  // destructible) and PINNED there — never on a timeout over empty stage.
-  // params.unit scales the burst off the round's own radius. Facing is the
-  // round's travel side.
+  // Deliberately MINIMAL on feedback: a faint pop + one thin ring where the
+  // round resolved, nothing more. Spawned by updateProjectiles' kill path
+  // wherever the round ACTUALLY resolved (hit / block / destructible) and
+  // PINNED there — never on a timeout over empty stage. params.unit scales
+  // it off the round's own radius. Facing is the round's travel side.
   pirateCannonImpact: {
     name: 'Pirate Cannon Impact',
     color: '#ffbe50',
@@ -2501,96 +2498,19 @@ const PIRATE_VFX = {
       const P = v.params || PIRATE_NO_PARAMS;
       const U = P.unit == null ? 1 : P.unit;
       const fade = Math.max(0, 1 - prog);
-      const flash = Math.max(0, 1 - prog / 0.22);
-      const dome = pirateEo(Math.min(1, prog / 0.5));
-
-      // Core flash (demo flash radius 200, white->amber wash).
+      if (fade <= 0.01) { ctx.restore(); return; }
+      // Faint pop.
       ctx.save(); ctx.globalCompositeOperation = 'lighter';
-      if (flash > 0.01) pirateFlash(ctx, 0, 0, 200 * U * (0.7 + 0.3 * flash), Math.min(1, prog / 0.22));
-      // Dome shockwave (demo dome(): amber shell + white highlight arc).
-      if (prog < 0.55) {
-        const dr = 130 * U * dome, da = (1 - prog / 0.55) * 0.7;
-        if (dr > 1) {
-          const g = ctx.createRadialGradient(0, 0, dr * 0.6, 0, 0, dr);
-          g.addColorStop(0, 'rgba(255,170,60,0)');
-          g.addColorStop(1, 'rgba(255,170,60,' + (0.22 * Math.max(0, da)).toFixed(3) + ')');
-          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, dr, 0, PIRATE_TAU); ctx.fill();
-          ctx.strokeStyle = 'rgba(255,205,130,' + Math.max(0, da * 0.8).toFixed(3) + ')';
-          ctx.lineWidth = 4 * U * (1 - dome) + 1;
-          ctx.beginPath(); ctx.arc(0, 0, dr, 0, PIRATE_TAU); ctx.stroke();
-          ctx.strokeStyle = 'rgba(255,255,255,' + Math.max(0, da * 0.7).toFixed(3) + ')';
-          ctx.lineWidth = 3;
-          ctx.beginPath(); ctx.arc(0, 0, dr * 0.88, 3.6, 4.6); ctx.stroke();
-        }
-      }
-      // Ground ring (demo gring(): flat 210 ellipse).
-      if (dome < 1) {
-        ctx.strokeStyle = 'rgba(255,160,50,' + ((1 - dome)).toFixed(3) + ')';
-        ctx.lineWidth = 7 * U * (1 - dome * 0.7) + 1;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 210 * U * dome, 210 * U * dome * 0.14, 0, 0, PIRATE_TAU);
-        ctx.stroke();
-      }
-      ctx.restore();
-      // Radial streaks (demo: 44, alternating pale/gold).
-      ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
-      for (let i = 0; i < 22; i++) {
-        const h1 = pirateHash01c(i, 13), h2 = pirateHash01c(i, 14);
-        const a = h1 * PIRATE_TAU;
-        const len = 90 * U * (0.6 + h2 * 1.5) * pirateEo(Math.min(1, prog * 2.6)) * 3.2;
-        if (len < 3) continue;
-        const al = fade * (0.5 + h1 * 0.5);
-        if (al <= 0.01) continue;
-        ctx.strokeStyle = (i % 2 ? 'rgba(255,235,160,' : 'rgba(255,150,40,') + al.toFixed(3) + ')';
-        ctx.lineWidth = (1.4 + h2 * 2) * U;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(a) * 10 * U, Math.sin(a) * 10 * U);
-        ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len);
-        ctx.stroke();
-      }
-      ctx.restore();
-      // Fireballs (demo k:4, 26: white->amber->ember, rising as they cool).
-      for (let i = 0; i < 14; i++) {
-        const a = pirateHash01c(i, 111) * PIRATE_TAU, sp = (30 + pirateHash01c(i, 112) * 230) * U;
-        const t = prog * 0.8, d = sp * t * (1 - t * 0.4);
-        const x = Math.cos(a) * d + (pirateHash01c(i, 113) - 0.5) * 36 * U;
-        const y = Math.sin(a) * d + (pirateHash01c(i, 114) - 0.5) * 36 * U - 90 * U * t * 0.4;
-        const u = Math.min(1, prog * 1.6 + pirateHash01c(i, 115) * 0.3);
-        pirateFirePuff(ctx, x, y, (22 + pirateHash01c(i, 116) * 24) * U * (0.6 + u * 0.9) * Math.max(0, 1 - prog * 0.9), u, Math.max(0, fade * 1.1 - u * 0.3));
-      }
-      // Smoke (demo k:3, 18: grey puffs with dark outline, drifting up).
-      ctx.save(); ctx.globalCompositeOperation = 'source-over';
-      for (let i = 0; i < 10; i++) {
-        const bx = (pirateHash01c(i, 117) - 0.5) * 120 * U + (pirateHash01c(i, 118) - 0.5) * 40 * U * prog;
-        const by = -8 * U + (pirateHash01c(i, 119) - 0.5) * 24 * U - (20 + pirateHash01c(i, 120) * 70) * U * prog * 0.5;
-        pirateSmokePuff(ctx, bx, by, (14 + pirateHash01c(i, 121) * 14) * U * (1 + prog * 0.5), Math.max(0, fade * 0.85 - prog * 0.2));
-      }
-      ctx.restore();
-      // Debris chips (demo k:2, 16: tumbling triangles, gravity 700).
-      ctx.save(); ctx.globalCompositeOperation = 'source-over';
-      for (let i = 0; i < 10; i++) {
-        const a = -2.6 + pirateHash01c(i, 122) * 2.1, sp = (250 + pirateHash01c(i, 123) * 370) * U;
-        const t = prog * 0.9, x = Math.cos(a) * sp * t * 0.5, y = Math.sin(a) * sp * t * 0.5 + 700 * U * t * t * 0.5;
-        const lf = Math.max(0, 1 - prog * 1.1);
-        if (lf <= 0.01) continue;
-        ctx.save(); ctx.translate(x, y); ctx.rotate(pirateHash01c(i, 124) * PIRATE_TAU + prog * (pirateHash01c(i, 125) - 0.5) * 24);
-        ctx.globalAlpha = lf;
-        const dark = pirateHash01c(i, 126) < 0.5;
-        ctx.fillStyle = dark ? 'rgba(70,32,14,1)' : 'rgba(255,140,40,1)';
-        const sz = (4 + pirateHash01c(i, 127) * 5) * U;
-        ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.6, sz * 0.5); ctx.lineTo(-sz * 0.4, -sz * 0.6); ctx.closePath(); ctx.fill();
-        ctx.restore();
-      }
-      ctx.restore();
-      ctx.save(); ctx.globalCompositeOperation = 'source-over';
-      // Scorch left behind (demo: dark ellipse, 2.2s, under everything).
-      if (prog > 0.03) {
-        ctx.globalAlpha = Math.max(0, 0.5 * (1 - Math.max(0, prog - 0.03) / 0.97));
-        ctx.fillStyle = '#120c08';
-        ctx.beginPath();
-        ctx.ellipse(0, 4 * U, 70 * U, 6 * U, 0, 0, PIRATE_TAU);
-        ctx.fill();
-      }
+      const fr = 26 * U * (0.7 + 0.3 * fade);
+      const fg = ctx.createRadialGradient(0, 0, 0, 0, 0, fr);
+      fg.addColorStop(0, 'rgba(255,240,200,' + (0.5 * fade).toFixed(3) + ')');
+      fg.addColorStop(1, 'rgba(255,160,60,0)');
+      ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(0, 0, fr, 0, PIRATE_TAU); ctx.fill();
+      // One thin ring, opening fast and gone.
+      const e = pirateEo(Math.min(1, prog * 3));
+      ctx.strokeStyle = 'rgba(255,200,130,' + (0.4 * fade).toFixed(3) + ')';
+      ctx.lineWidth = 2 * U * fade + 0.5;
+      ctx.beginPath(); ctx.arc(0, 0, (6 + 34 * e) * U, 0, PIRATE_TAU); ctx.stroke();
       ctx.restore();
       ctx.restore();
     },
@@ -3160,6 +3080,656 @@ const KNIGHT_VFX = {
   },
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TREASURE EFFECTS (GA/vfx/treasure-dig-vfx.html + gold-orb-vfx.html)
+// 1:1 ports of the two toon-style demos, same contract as every other set
+// here: pure functions of v.progress, deterministic hashes instead of
+// Math.random(), rotation in degrees, v.scale, v.mirrorX. Demo stage clocks
+// are re-based onto progress (t = prog * TD_TOTAL for the one-shot dig;
+// looping cycle counts of progress for the persistent aura), so relative
+// beats, easing and layering match the standalone versions; only the
+// absolute duration is the spawn's own lifetime.
+//
+//   treasureDig — the dig discovery: dirt beats, golden flash, chest rise,
+//                beam + shockwaves, coin fountain. One-shot, pinned at the
+//                X marker. Authored in demo units; spawn at scale ~0.55 so
+//                the chest reads against a fighter body.
+  //   goldOrbAura — the Golden Orb buff: breathing banded glow, rotating rays,
+  //                orbiting crescents, 3D-ish orbiting coins, sparkle shimmer.
+  //                Loops (integer cycle counts of progress + a fade envelope),
+  //                painted BEHIND the body by drawGoldOrbUnder (combat.js) with
+  //                the core sized to ~0.44x the body, so the outer halo hugs
+  //                just past the skin. params.dim scales the glow discs.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Demo timeline, in demo t-units (update multiplies dt by SPEED, so real
+// seconds = t-units / SPEED; the game maps progress onto t-units directly).
+// Stage starts: dig .9 ×3, flash .8, chest-rise 1.1, reward 2.8 → TOTAL 7.4.
+const TD_TOTAL = 7.4;
+const TD_S = [0, 0.9, 1.8, 2.7, 3.5];
+const TD_REWARD_T = 4.9; // S[5].t0 + .3 — the reward one-shot moment
+const TD_LID_T = 4.7;    // S[5].t0 + .1 — the lid starts opening
+const TD_OUT = '#2a1206', TD_GOLD = '#ffc928', TD_GOLD_HI = '#fff09a', TD_GOLD_DK = '#7a3f06';
+const TD_ROCK_TONES = [[107, 63, 34], [138, 86, 48], [168, 112, 63]];
+const TD_CW = 120, TD_CB = 56, TD_CL = 38;
+
+function tdEo(p) { const q = p < 0 ? 0 : p > 1 ? 1 : p; return 1 - (1 - q) * (1 - q) * (1 - q); }
+function tdEiO(p) { const q = p < 0 ? 0 : p > 1 ? 1 : p; return q < 0.5 ? 4 * q * q * q : 1 - Math.pow(-2 * q + 2, 3) / 2; }
+function tdEBack(p) { const q = p < 0 ? 0 : p > 1 ? 1 : p; return 1 + 2.9 * Math.pow(q - 1, 3) + 1.9 * Math.pow(q - 1, 2); }
+function tdClamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function tdLerp(a, b, t) { return a + (b - a) * t; }
+
+// THE toon particle: solid circle + black outline. Verbatim styling.
+function tdDot(ctx, x, y, r, fill, lw) {
+  if (r <= 0.4) return;
+  ctx.beginPath(); ctx.ellipse(x, y, r, r, 0, 0, PIRATE_TAU);
+  ctx.fillStyle = fill; ctx.fill();
+  ctx.lineWidth = lw == null ? Math.max(2.5, r * 0.3) : lw;
+  ctx.strokeStyle = '#000'; ctx.stroke();
+}
+// Banded (stepped) glow: hard-edged flat discs, never a smooth gradient.
+function tdGlow(ctx, x, y, r, a, k) {
+  a = tdClamp(a, 0, 1);
+  const kk = k == null ? 1 : k;
+  const cols = ['255,150,20', '255,205,60', '255,246,190'], al = [0.16, 0.26, 0.5], ss = [1, 0.62, 0.3];
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = 'rgba(' + cols[i] + ',' + (a * al[i]).toFixed(3) + ')';
+    ctx.beginPath(); ctx.ellipse(x, y, r * ss[i], r * ss[i] * kk, 0, 0, PIRATE_TAU); ctx.fill();
+  }
+}
+function tdRockFill(shade, light) {
+  const b = TD_ROCK_TONES[Math.min(2, (shade * 3) | 0)], m = Math.min(1, light * 0.6);
+  return 'rgb(' + ((b[0] + (255 - b[0]) * m * 0.6) | 0) + ',' + ((b[1] + (190 - b[1]) * m) | 0) + ',' + ((b[2] + (70 - b[2]) * m) | 0) + ')';
+}
+// Mound rock: filled blob + clipped cel shade + highlight + dark outline.
+function tdDrawRock(ctx, pts, x, y, r, rot, fill) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  const path = () => {
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) { const q = pts[i]; if (i) ctx.lineTo(q[0] * r, q[1] * r); else ctx.moveTo(q[0] * r, q[1] * r); }
+    ctx.closePath();
+  };
+  path(); ctx.fillStyle = fill; ctx.fill();
+  ctx.save(); ctx.clip();
+  ctx.fillStyle = 'rgba(40,15,5,.32)';
+  ctx.beginPath(); ctx.rect(-2 * r, -2 * r, 4 * r, 4 * r);
+  ctx.moveTo(-0.4 * r + 1.05 * r, -0.45 * r); ctx.arc(-0.4 * r, -0.45 * r, 1.05 * r, 0, PIRATE_TAU);
+  ctx.fill('evenodd');
+  ctx.fillStyle = 'rgba(255,232,185,.55)';
+  ctx.beginPath(); ctx.ellipse(-r * 0.38, -r * 0.42, r * 0.26, r * 0.16, 0, 0, PIRATE_TAU); ctx.fill();
+  ctx.restore();
+  path(); ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(2, r * 0.22); ctx.strokeStyle = TD_OUT; ctx.stroke();
+  ctx.restore();
+}
+function tdLidPath(ctx, W, L) {
+  ctx.beginPath(); ctx.moveTo(-W / 2, 0); ctx.lineTo(-W / 2, -L * 0.45);
+  ctx.quadraticCurveTo(-W / 2, -L, 0, -L); ctx.quadraticCurveTo(W / 2, -L, W / 2, -L * 0.45);
+  ctx.lineTo(W / 2, 0); ctx.closePath();
+}
+function tdRR(ctx, x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+// Demo light level + pit openness + chest rig, verbatim piecewise curves.
+function tdLight(t) {
+  if (t < TD_S[1]) { const p = tdClamp(t / 0.9); return tdLerp(0.04, 0.15, p); }
+  if (t < TD_S[2]) { const p = tdClamp((t - 0.9) / 0.9); return tdLerp(0.2, 0.45, p); }
+  if (t < TD_S[3]) { const p = tdClamp((t - 1.8) / 0.9); return tdLerp(0.5, 0.85, p); }
+  return 1;
+}
+function tdOpen(t) { return tdEiO((t - TD_S[3]) / (0.8 + 1.1 * 0.6)); }
+function tdChestY(t) { return t < TD_S[4] ? 100 : tdLerp(100, -8, tdEBack((t - TD_S[4]) / 1.1)); }
+function tdMouthY(t) { return Math.min(0, tdChestY(t) - TD_CB); }
+function tdLid(t) { return tdEBack((t - TD_LID_T) / 0.45); }
+// Dig-beat table (stage → beat times + shake amps), matching update()'s
+// rhythmic beats exactly (beat starts armed → immediate beat on stage entry).
+const _TD_BEATS = [0, 0.42, 0.84, 0.9, 1.2, 1.5, 1.8, 2.0, 2.2, 2.4, 2.6];
+const _TD_BEAT_AMP = [1.5, 1.5, 1.5, 2.5, 2.5, 2.5, 4, 4, 4, 4, 4];
+function tdShake(t) {
+  let sh = 0;
+  if (t >= TD_S[3]) sh += 10 * Math.exp(-9 * (t - TD_S[3]));
+  if (t >= TD_S[4]) sh += 4 * Math.exp(-9 * (t - TD_S[4]));
+  if (t >= TD_REWARD_T) sh += 5 * Math.exp(-9 * (t - TD_REWARD_T));
+  for (let i = 0; i < _TD_BEATS.length; i++) {
+    if (t >= _TD_BEATS[i]) sh += _TD_BEAT_AMP[i] * Math.exp(-9 * (t - _TD_BEATS[i]));
+  }
+  return sh;
+}
+function tdFlash(t) {
+  let f = 0;
+  if (t >= TD_S[3]) f += Math.exp(-5 * (t - TD_S[3]));
+  if (t >= TD_REWARD_T) f += 0.6 * Math.exp(-5 * (t - TD_REWARD_T));
+  return f;
+}
+// Static mound rocks (20, sorted back-to-front) + beam rays (13), hashed once
+// at load: identical scenery on every replay, zero per-frame random.
+const _TD_ROCKS = [];
+const _TD_RAYS = [];
+(function _tdBakeStatic() {
+  for (let i = 0; i < 20; i++) {
+    const ox = (pirateHash01c(i, 201) * 2 - 1) * 74;
+    const h = (1 - Math.abs(ox) / 84) * 30;
+    const oy = -pirateHash01c(i, 202) * h + (pirateHash01c(i, 203) * 2 - 1) * 3 - 1;
+    const pts = [];
+    for (let j = 0; j < 5; j++) {
+      const a = (j / 5) * PIRATE_TAU + (pirateHash01c(i * 5 + j, 204) - 0.5) * 0.5;
+      pts.push([Math.cos(a) * (0.75 + pirateHash01c(i * 5 + j, 205) * 0.35), Math.sin(a) * (0.65 + pirateHash01c(i * 5 + j, 206) * 0.35)]);
+    }
+    _TD_ROCKS.push({
+      ox, oy, r: (10 + pirateHash01c(i, 207) * 10) * (1 - Math.abs(ox) / 190),
+      rot: pirateHash01c(i, 208) * PIRATE_TAU, shade: pirateHash01c(i, 209), pts,
+      back: oy < -12 && Math.abs(ox) < 44,
+    });
+  }
+  _TD_ROCKS.sort((a, b) => a.oy - b.oy);
+  for (let i = 0; i < 13; i++) {
+    _TD_RAYS.push({
+      a: (i / 12 - 0.5) * 2.7 + (pirateHash01c(i, 210) - 0.5) * 0.16,
+      w: 10 + pirateHash01c(i, 211) * 16, l: 0.4 + pirateHash01c(i, 212) * 0.6,
+      ph: pirateHash01c(i, 213) * PIRATE_TAU,
+    });
+  }
+})();
+// Spawned-particle table (fixed budgets, hashed spawn state). Beat debris
+// follows the demo's per-beat counts ([2,3,4] × beats); one-shots, dust,
+// coins and the sparkle shimmer fill the rest. Each record carries its spawn
+// time so any moment reconstructs exactly.
+const _TD_SPAWN = [];
+(function _tdBakeSpawns() {
+  const H = pirateHash01c;
+  // dig-beat debris: stages 1-3, counts [2,3,4] per beat
+  const beatStages = [
+    { t0: 0, beats: [0, 0.42, 0.84], n: 2, st: 0 },
+    { t0: 0.9, beats: [0, 0.3, 0.6], n: 3, st: 1 },
+    { t0: 1.8, beats: [0, 0.2, 0.4, 0.6, 0.8], n: 4, st: 2 },
+  ];
+  let di = 0;
+  for (const bs of beatStages) {
+    const k = 1 + bs.st * 0.25;
+    for (const b of bs.beats) {
+      for (let j = 0; j < bs.n; j++, di++) {
+        _TD_SPAWN.push({
+          kind: 0, bt: bs.t0 + b,
+          x0: -38 + H(di, 214) * 76, y0: -10 + H(di, 215) * 8,
+          vx: (H(di, 216) * 2 - 1) * 140 * k, vy: -(320 + H(di, 217) * 320) * k,
+          r: 4 + H(di, 218) * (4 + bs.st), shade: H(di, 219),
+        });
+      }
+      // one dust per dig beat
+      _TD_SPAWN.push({
+        kind: 2, bt: bs.t0 + b,
+        x0: (H(di, 220) * 2 - 1) * 45, y0: -8 + H(di, 221) * 8,
+        vx: (H(di, 222) * 2 - 1) * 30, vy: -(20 + H(di, 223) * 30),
+        r: 9 + H(di, 224) * 6, life: 0.5 + H(di, 225) * 0.3,
+      });
+      di++;
+      // dig sparks from stage 2 on (st*2 per beat)
+      for (let j = 0; j < bs.st * 2; j++, di++) {
+        _TD_SPAWN.push({
+          kind: 1, bt: bs.t0 + b,
+          x0: (H(di, 226) * 2 - 1) * 30, y0: -10 + H(di, 227) * 10,
+          vx: (H(di, 228) * 2 - 1) * 200 * 0.8, vy: -(200 + H(di, 229) * 400) * 0.8,
+          r: 3 + H(di, 230) * 2, life: 0.4 + H(di, 231) * 0.5,
+        });
+      }
+    }
+  }
+  // flash one-shots at t=2.7: 24 sparks, 7 debris, 2 dust
+  for (let j = 0; j < 24; j++, di++) {
+    _TD_SPAWN.push({
+      kind: 1, bt: TD_S[3],
+      x0: (H(di, 232) * 2 - 1) * 30, y0: -10 + H(di, 233) * 10,
+      vx: (H(di, 234) * 2 - 1) * 200 * 1.3, vy: -(200 + H(di, 235) * 400) * 1.3,
+      r: 3 + H(di, 236) * 2, life: 0.4 + H(di, 237) * 0.5,
+    });
+  }
+  for (let j = 0; j < 7; j++, di++) {
+    _TD_SPAWN.push({
+      kind: 0, bt: TD_S[3],
+      x0: -38 + H(di, 238) * 76, y0: -10 + H(di, 239) * 8,
+      vx: (H(di, 240) * 2 - 1) * 140 * 1.5, vy: -(320 + H(di, 241) * 320) * 1.5,
+      r: 4 + H(di, 242) * 6, shade: H(di, 243),
+    });
+  }
+  for (let j = 0; j < 2; j++, di++) {
+    _TD_SPAWN.push({
+      kind: 2, bt: TD_S[3],
+      x0: (H(di, 244) * 2 - 1) * 45, y0: -10 + H(di, 245) * 8,
+      vx: (H(di, 246) * 2 - 1) * 30, vy: -(20 + H(di, 247) * 30),
+      r: 14 + H(di, 248) * 6, life: 0.5 + H(di, 249) * 0.3,
+    });
+  }
+  // chest one-shots at t=3.5: 6 debris, 2 dust
+  for (let j = 0; j < 6; j++, di++) {
+    _TD_SPAWN.push({
+      kind: 0, bt: TD_S[4],
+      x0: -38 + H(di, 250) * 76, y0: -10 + H(di, 251) * 8,
+      vx: (H(di, 252) * 2 - 1) * 140 * 1.5, vy: -(320 + H(di, 253) * 320) * 1.5,
+      r: 4 + H(di, 254) * 6, shade: H(di, 255),
+    });
+  }
+  for (let j = 0; j < 2; j++, di++) {
+    _TD_SPAWN.push({
+      kind: 2, bt: TD_S[4],
+      x0: (H(di, 256) * 2 - 1) * 45, y0: -10 + H(di, 257) * 8,
+      vx: (H(di, 258) * 2 - 1) * 30, vy: -(20 + H(di, 259) * 30),
+      r: 12 + H(di, 260) * 6, life: 0.5 + H(di, 261) * 0.3,
+    });
+  }
+  // reward coin fountain at t=4.9: 18 boosted coins + 12 sparks
+  for (let j = 0; j < 18; j++, di++) {
+    const a = (H(di, 262) * 2 - 1), sp = (380 + H(di, 263) * 380) * 1.15;
+    _TD_SPAWN.push({
+      kind: 3, bt: TD_REWARD_T,
+      x0: (H(di, 264) * 2 - 1) * 28, mo: 4,
+      vx: Math.sin(a) * sp * 0.7, vy: -Math.cos(a) * sp,
+      ph: H(di, 265) * PIRATE_TAU, spn: 7 + H(di, 266) * 9,
+      r: 8 + H(di, 267) * 3, life: 2.2 + H(di, 268) * 1.0,
+    });
+  }
+  for (let j = 0; j < 12; j++, di++) {
+    _TD_SPAWN.push({
+      kind: 1, bt: TD_REWARD_T,
+      x0: (H(di, 282) * 2 - 1) * 30, y0: -10 + H(di, 283) * 10,
+      vx: (H(di, 284) * 2 - 1) * 200, vy: -(200 + H(di, 285) * 400),
+      r: 3 + H(di, 286) * 2, life: 0.4 + H(di, 287) * 0.5,
+    });
+  }
+  // coin trickle: 5 across [3.8,4.6), 14 across [4.6,6.4)
+  const trickle = [[3.8, 4.6, 5], [4.6, 6.4, 14]];
+  for (const [w0, w1, n] of trickle) {
+    for (let j = 0; j < n; j++, di++) {
+      const bt = w0 + ((j + H(di, 269) * 0.8) / n) * (w1 - w0);
+      const a = (H(di, 270) * 2 - 1), sp = (380 + H(di, 271) * 380) * 0.7;
+      _TD_SPAWN.push({
+        kind: 3, bt,
+        x0: (H(di, 272) * 2 - 1) * 28, mo: 4,
+        vx: Math.sin(a) * sp * 0.7, vy: -Math.cos(a) * sp,
+        ph: H(di, 273) * PIRATE_TAU, spn: 7 + H(di, 274) * 9,
+        r: 8 + H(di, 275) * 3, life: 2.2 + H(di, 276) * 1.0,
+      });
+    }
+  }
+  // sparkle shimmer: stage 4 (9), stage 5 (9), stage 6 tail (28)
+  const shimmer = [[2.7, 3.5, 9, 60, 380], [3.5, 4.6, 9, 140, 200], [4.6, 6.6, 28, 140, 200]];
+  for (const [w0, w1, n, wide, tall] of shimmer) {
+    for (let j = 0; j < n; j++, di++) {
+      const bt = w0 + ((j + H(di, 277) * 0.8) / n) * (w1 - w0);
+      _TD_SPAWN.push({
+        kind: 4, bt,
+        x0: (H(di, 278) * 2 - 1) * wide, mo: -10 + H(di, 279) * (tall + 10),
+        r: 4 + H(di, 280) * 4, life: 0.5 + H(di, 281) * 0.5,
+      });
+    }
+  }
+})();
+// Coin floor bounce, solved analytically (≤2 bounces, then rest): bounded,
+// deterministic, no stepping. Returns [x, y, bounces, restT].
+function tdCoinAt(x0, y0, vx, vy, age) {
+  let x = x0, y = y0, t = age, b = 0, rest = -1;
+  for (let s = 0; s < 3; s++) {
+    const disc = vy * vy - 2200 * (y - 8);
+    if (disc < 0) { x += vx * t; y += vy * t + 550 * t * t; break; }
+    const th = (-vy + Math.sqrt(disc)) / 1100;
+    if (th < 0 || th > t || b >= 2) {
+      x += vx * t; y += vy * t + 550 * t * t;
+      if (b >= 2 && y > 8) y = 8;
+      break;
+    }
+    x += vx * th; y = 8; t -= th;
+    vy = vy + 1100 * th; vy *= -0.38; vx *= 0.7; b++;
+    if (b >= 2) { rest = age - t; break; }
+  }
+  return [x, y, b, rest];
+}
+
+const TREASURE_VFX = {
+  // ── Treasure Dig (discovery burst) ────────────────────────────────────
+  // 1:1 port of GA/vfx/treasure-dig-vfx.html: prog maps onto the demo's own
+  // 7.4 t-units (dig beats → golden flash → chest rise → reward), so every
+  // stage, beat interval, easing curve and layer order matches. One-shot,
+  // pinned at the X marker. Authored in demo units — spawn at scale ~0.55.
+  treasureDig: {
+    name: 'Treasure Dig',
+    color: '#ffc928',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      const prog = v.progress == null ? 0 : v.progress;
+      if (prog < 0 || prog >= 1) { ctx.restore(); return; }
+      // Dud holes (params.chest === 0) play only the dig-beat portion: dirt
+      // flies, a small flash lands, nothing rises. params.cs scales the chest
+      // rig + beam (spawn passes 0.6); the dig site itself stays full-size.
+      const PR = v.params || {};
+      const cs = PR.cs || 1;
+      const t = prog * (PR.chest === 0 ? 2.75 : TD_TOTAL);
+      const g = tdLight(t), o = tdOpen(t), sh = tdShake(t);
+      const jx = Math.sin(t * 127.1 + 0.7) * sh, jy = Math.sin(t * 311.7 + 1.3) * sh;
+      ctx.translate(jx, jy);
+      ctx.lineJoin = 'round';
+      // ground shadow + dirt mound + pit
+      ctx.fillStyle = 'rgba(15,7,3,.55)';
+      ctx.beginPath(); ctx.ellipse(0, 8, 125, 22, 0, 0, PIRATE_TAU); ctx.fill();
+      ctx.fillStyle = '#6a4226';
+      ctx.beginPath(); ctx.ellipse(0, 2, 94, 17, 0, 0, PIRATE_TAU); ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = TD_OUT; ctx.stroke();
+      const prx = tdLerp(34, 62, o), pry = tdLerp(7, 12, o);
+      ctx.fillStyle = '#1a0c05';
+      ctx.beginPath(); ctx.ellipse(0, 0, prx, pry, 0, 0, PIRATE_TAU); ctx.fill();
+      tdGlow(ctx, 0, -4, 70 + g * 110, g * 0.9, 0.55);
+      ctx.save(); ctx.globalAlpha = g * 0.8; ctx.strokeStyle = '#ffc43a'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(0, 0, prx, pry, 0, 0, PIRATE_TAU); ctx.stroke(); ctx.restore();
+      // back mound rocks (dig pulse lifts them, the opening spreads them)
+      const dg = tdClamp(t / TD_S[3]);
+      let pulse = 0;
+      for (let i = 0; i < _TD_BEATS.length; i++) {
+        if (t >= _TD_BEATS[i]) pulse += Math.exp(-12 * (t - _TD_BEATS[i]));
+      }
+      for (let pass = 0; pass < 2; pass++) {
+        const wantBack = pass === 0;
+        // beam + shock + chest paint between the rock layers
+        if (pass === 1) {
+          // light beam (stages 4-6)
+          if (t >= TD_S[3]) {
+            let ba, bh;
+            const fade = 1 - tdClamp((t - (TD_TOTAL - 0.7)) / 0.7);
+            if (t < TD_S[4]) { const q = tdClamp((t - TD_S[3]) / 0.8); ba = tdEo(q * 3); bh = 560 * tdEo(q * 2.2) * cs; }
+            else if (t < 4.6) { const q = tdClamp((t - TD_S[4]) / 1.1); ba = tdLerp(1, 0.75, q); bh = tdLerp(560, 400, q) * cs; }
+            else { const q = tdClamp((t - 4.6) / 2.8); ba = tdLerp(0.75, 0.55, q) * (0.9 + 0.1 * Math.sin(t * 9)); bh = tdLerp(400, 320, q) * cs; }
+            ba *= fade;
+            if (ba > 0.01) {
+              ctx.save(); ctx.translate(0, cs * tdMouthY(t));
+              const fl = 0.9 + 0.1 * Math.sin(t * 37) * Math.sin(t * 23), w = tdLerp(26, 64, ba) * cs;
+              for (const r of _TD_RAYS) {
+                const L = bh * r.l * (1 - 0.55 * Math.abs(r.a) / 1.35) * (0.8 + 0.2 * Math.sin(t * 9 + r.ph));
+                const rw = r.w * cs;
+                ctx.save(); ctx.rotate(r.a);
+                ctx.fillStyle = 'rgba(255,214,70,' + (0.5 * ba).toFixed(3) + ')';
+                ctx.beginPath(); ctx.moveTo(-rw / 2, 0); ctx.lineTo(0, -L); ctx.lineTo(rw / 2, 0); ctx.closePath(); ctx.fill();
+                ctx.fillStyle = 'rgba(255,247,190,' + (0.8 * ba).toFixed(3) + ')';
+                ctx.beginPath(); ctx.moveTo(-rw * 0.225, 0); ctx.lineTo(0, -L * 0.8); ctx.lineTo(rw * 0.225, 0); ctx.closePath(); ctx.fill();
+                ctx.restore();
+              }
+              const spike = (ww, hh, col) => {
+                ctx.fillStyle = col; ctx.beginPath();
+                ctx.moveTo(-ww, 0); ctx.lineTo(-ww * 0.12, -hh); ctx.lineTo(ww * 0.12, -hh); ctx.lineTo(ww, 0);
+                ctx.closePath(); ctx.fill();
+              };
+              spike(w, bh, 'rgba(255,200,40,' + (0.5 * ba * fl).toFixed(3) + ')');
+              spike(w * 0.62, bh * 0.92, 'rgba(255,235,120,' + (0.7 * ba * fl).toFixed(3) + ')');
+              spike(w * 0.3, bh * 0.8, 'rgba(255,255,235,' + (0.95 * ba).toFixed(3) + ')');
+              tdGlow(ctx, 0, -6, (90 + 160 * ba) * cs, ba, 1);
+              ctx.fillStyle = 'rgba(255,214,70,' + (0.4 * ba).toFixed(3) + ')';
+              ctx.beginPath(); ctx.ellipse(0, -6, (150 * ba + 40) * cs, (14 * ba + 6) * cs, 0, 0, PIRATE_TAU); ctx.fill();
+              ctx.fillStyle = 'rgba(255,250,210,' + (0.9 * ba).toFixed(3) + ')';
+              ctx.beginPath(); ctx.ellipse(0, -6, (90 * ba + 20) * cs, (7 * ba + 3) * cs, 0, 0, PIRATE_TAU); ctx.fill();
+              ctx.restore();
+            }
+          }
+          // shock rings (flash + reward)
+          const shocks = [[TD_S[3], 250], [TD_REWARD_T, 200]];
+          for (let si = 0; si < shocks.length; si++) {
+            const u = (t - shocks[si][0]) / 0.6;
+            if (u < 0 || u > 1) continue;
+            const rx = tdLerp(20, shocks[si][1], tdEo(u));
+            ctx.save(); ctx.globalAlpha = 1 - u * u;
+            ctx.strokeStyle = '#c4600a'; ctx.lineWidth = 9 * (1 - u) + 3;
+            ctx.beginPath(); ctx.ellipse(0, 2, rx, rx * 0.2, 0, 0, PIRATE_TAU); ctx.stroke();
+            ctx.strokeStyle = '#fff2a0'; ctx.lineWidth = 4.5 * (1 - u) + 1.5; ctx.stroke(); ctx.restore();
+          }
+          // chest (uniformly scaled rig: geometry scales about its own origin,
+          // so straps, lock, coins and glows keep exact proportions)
+          const cy = tdChestY(t);
+          if (cy < 98) {
+            const lid = tdLid(t), f = Math.min(lid, 1);
+            const rise = tdClamp((t - TD_S[4]) / 1.1);
+            const sy = (f < 0.5 ? 1 - 1.4 * f : 0.3 + 1.4 * (f - 0.5)) * Math.max(1, lid);
+            const W = TD_CW, B = TD_CB, L = TD_CL;
+            ctx.save();
+            ctx.beginPath(); ctx.rect(-500, -1500, 1000, 1504); ctx.clip();
+            ctx.translate(0, cy); ctx.scale(cs, cs);
+            if (t < 4.6) ctx.rotate(Math.sin(t * 16) * 0.04 * (1 - rise));
+            ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = TD_OUT;
+            const bands = [-W / 2 + 12, W / 2 - 26];
+            const band = (bx, y0, h) => {
+              ctx.fillStyle = TD_GOLD; ctx.fillRect(bx, y0, 14, h);
+              ctx.fillStyle = TD_GOLD_HI; ctx.fillRect(bx + 2, y0, 4, h);
+              ctx.strokeStyle = TD_OUT; ctx.lineWidth = 2; ctx.strokeRect(bx, y0, 14, h);
+            };
+            const lidDraw = () => {
+              ctx.save(); ctx.translate(0, -B); ctx.scale(1, sy); tdLidPath(ctx, W, L);
+              if (f < 0.5) {
+                ctx.fillStyle = '#a9622c'; ctx.fill();
+                ctx.save(); ctx.clip();
+                ctx.fillStyle = '#c98446'; ctx.fillRect(-W / 2, -L, W, L * 0.3);
+                ctx.fillStyle = '#7e4420'; ctx.fillRect(-W / 2, -L * 0.3, W, L * 0.3);
+                for (const bx of bands) band(bx, -L, L);
+                ctx.fillStyle = TD_GOLD; ctx.fillRect(-W / 2, -7, W, 7); ctx.restore();
+                tdLidPath(ctx, W, L); ctx.lineWidth = 3; ctx.stroke();
+                tdRR(ctx, -9, -10, 18, 12, 3); ctx.fillStyle = TD_GOLD; ctx.fill(); ctx.stroke();
+              } else {
+                ctx.fillStyle = '#a52c1c'; ctx.fill();
+                ctx.save(); ctx.clip();
+                ctx.fillStyle = '#c23a26'; ctx.fillRect(-W / 2, -L, W, L * 0.25);
+                ctx.fillStyle = '#7a1d12'; ctx.fillRect(-W / 2, -L * 0.4, W, L * 0.4); ctx.restore();
+                tdLidPath(ctx, W, L); ctx.lineWidth = 3; ctx.stroke();
+                ctx.save(); ctx.translate(0, -3); ctx.scale(0.86, 0.8);
+                tdLidPath(ctx, W, L); ctx.strokeStyle = TD_GOLD; ctx.lineWidth = 3.5; ctx.stroke(); ctx.restore();
+              }
+              ctx.restore();
+            };
+            if (f >= 0.5) lidDraw();
+            tdRR(ctx, -W / 2, -B, W, B, 7); ctx.fillStyle = '#8c5028'; ctx.fill();
+            ctx.save(); ctx.clip();
+            ctx.fillStyle = '#a8693a'; ctx.fillRect(-W / 2, -B, W, 9);
+            ctx.fillStyle = '#6e3b1b'; ctx.fillRect(-W / 2, -B * 0.38, W, B * 0.38);
+            ctx.strokeStyle = 'rgba(25,10,3,.5)'; ctx.lineWidth = 2;
+            for (const yy of [-B * 0.66, -B * 0.33]) { ctx.beginPath(); ctx.moveTo(-W / 2, yy); ctx.lineTo(W / 2, yy); ctx.stroke(); }
+            for (const bx of bands) band(bx, -B, B);
+            ctx.fillStyle = '#3a1b0a'; ctx.fillRect(-W / 2, -9, W, 9); ctx.restore();
+            tdRR(ctx, -W / 2, -B, W, B, 7); ctx.strokeStyle = TD_OUT; ctx.lineWidth = 3; ctx.stroke();
+            if (f > 0.05) {
+              ctx.save(); ctx.translate(0, -B);
+              ctx.fillStyle = '#ffe36a';
+              ctx.beginPath(); ctx.ellipse(0, 0, W / 2 - 7, 10, 0, Math.PI, PIRATE_TAU); ctx.fill();
+              ctx.fillStyle = '#fffbd0';
+              ctx.beginPath(); ctx.ellipse(0, 0, W / 2 - 20, 6, 0, Math.PI, PIRATE_TAU); ctx.fill();
+              if (f > 0.3) {
+                for (let i = -3; i <= 3; i++) {
+                  ctx.beginPath(); ctx.arc(i * 14, -3 - (3 - Math.abs(i)) * 1.6 + (1 - f) * 10, 8, Math.PI, PIRATE_TAU);
+                  ctx.fillStyle = TD_GOLD; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = TD_GOLD_DK; ctx.stroke();
+                }
+              }
+              ctx.restore();
+            }
+            if (f < 0.5) lidDraw();
+            ctx.strokeStyle = TD_OUT; ctx.lineWidth = 3;
+            tdRR(ctx, -11, -B + 3, 22, 26, 4); ctx.fillStyle = TD_GOLD; ctx.fill(); ctx.stroke();
+            ctx.fillStyle = TD_OUT;
+            ctx.beginPath(); ctx.arc(0, -B + 13, 3.2, 0, PIRATE_TAU); ctx.fill();
+            ctx.fillRect(-1.5, -B + 13, 3, 7);
+            if (f > 0.05) tdGlow(ctx, 0, -B - 4, 70 * f + 20, 0.55 * f, 0.7);
+            ctx.restore();
+          }
+        }
+        // mound rocks for this layer
+        for (const k of _TD_ROCKS) {
+          if (k.back !== wantBack) continue;
+          const sd = (k.ox < 0 ? -1 : 1), near = Math.abs(k.ox) < 40;
+          const x = k.ox * (1 + 0.25 * o) + sd * o * (near ? 30 : 12);
+          const y = k.oy * (1 - 0.35 * o) * (1 - 0.25 * dg) - pulse * 6 * (1 - Math.abs(k.ox) / 90);
+          tdDrawRock(ctx, k.pts, x, y, k.r * (1 - 0.12 * o), k.rot,
+            tdRockFill(k.shade, g * tdClamp(1 - Math.abs(k.ox) / 90) * 0.7));
+        }
+      }
+      // spawned particles
+      for (const q of _TD_SPAWN) {
+        const age = t - q.bt;
+        if (age < 0) continue;
+        if (q.kind === 0) {
+          const x = q.x0 + q.vx * age, y = q.y0 + q.vy * age + 650 * age * age;
+          if (y > 6) continue;
+          tdDot(ctx, x, y, q.r, tdRockFill(q.shade, g * 0.6));
+        } else if (q.kind === 1) {
+          if (age >= q.life) continue;
+          const u = age / q.life;
+          tdDot(ctx, q.x0 + q.vx * age, q.y0 + q.vy * age + 300 * age * age, q.r * (1 - u * u), '#fff27a', 2);
+        } else if (q.kind === 2) {
+          if (age >= q.life) continue;
+          const u = age / q.life;
+          tdDot(ctx, q.x0 + q.vx * age, q.y0 + q.vy * age,
+            q.r * tdEBack(u / 0.3) * (1 - tdClamp((u - 0.45) / 0.55)), '#ecd2a8');
+        } else if (q.kind === 3) {
+          const cy0 = cs * tdMouthY(q.bt) - q.mo;
+          const cc = tdCoinAt(q.x0, cy0, q.vx, q.vy, age);
+          const rest = cc[3];
+          const effLife = rest >= 0 ? Math.min(q.life, rest + 0.4) : q.life;
+          if (age >= effLife) continue;
+          const a = tdClamp((effLife - age) / 0.3);
+          const r = q.r * tdEBack(age / 0.15), sx = Math.max(0.14, Math.abs(Math.cos(q.ph + q.spn * age)));
+          ctx.save(); ctx.translate(cc[0], cc[1]); ctx.globalAlpha = a; ctx.scale(sx, 1);
+          tdDot(ctx, 0, 0, r, TD_GOLD, 3); ctx.restore();
+        } else {
+          if (age >= q.life) continue;
+          const u = age / q.life, sc = u < 0.3 ? tdEBack(u / 0.3) : 1 - (u - 0.3) / 0.7;
+          tdDot(ctx, q.x0, cs * tdMouthY(q.bt) - q.mo, q.r * sc, '#fffbe0');
+        }
+      }
+      // golden flash wash (world-space radial — the demo's fullscreen flash,
+      // adapted so it never hijacks the frame)
+      const fl = tdFlash(t);
+      if (fl > 0.01) {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        const fg = ctx.createRadialGradient(0, -10, 0, 0, -10, 260);
+        fg.addColorStop(0, 'rgba(255,238,190,' + (fl * 0.55).toFixed(3) + ')');
+        fg.addColorStop(1, 'rgba(255,238,190,0)');
+        ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(0, -10, 260, 0, PIRATE_TAU); ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
+    },
+  },
+
+  // ── Golden Orb aura (persistent buff) ─────────────────────────────────
+  // 1:1 port of GA/vfx/gold-orb-vfx.html. The demo loops on its own clock;
+  // here every periodic motion runs an INTEGER cycle count of progress with
+  // a fade envelope, so the aura loops seamlessly for the buff's whole life
+  // and fades in fast / out at expiry. Coins, rays, crescents, glow discs,
+  // sparkle shimmer and the orb core are all verbatim (counts, colors,
+  // layering, front/back coin split). Rides the fighter center. Spawn scale
+  // ~0.5 so the R=26 core sits on the body while rings/coins orbit it.
+  goldOrbAura: {
+    name: 'Golden Orb Aura',
+    color: '#ffc928',
+    draw(ctx, v, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const s = v.scale || 1;
+      const mx = v.mirrorX == null ? 1 : v.mirrorX;
+      if (s !== 1 || mx !== 1) ctx.scale(s * mx, s);
+      if (v.rotation) ctx.rotate((v.rotation * Math.PI) / 180);
+      const prog = v.progress == null ? 0 : v.progress;
+      if (prog < 0 || prog >= 1) { ctx.restore(); return; }
+      // Aura intensity: fast fade-in, full hold, fade-out at expiry.
+      const k = Math.min(1, prog / 0.04) * (1 - tdClamp((prog - 0.9) / 0.1));
+      if (k <= 0.01) { ctx.restore(); return; }
+      // params.dim scales the banded glow discs only (rays, crescents, coins
+      // keep full body) — the game spawns the buff halo dimmed 80%.
+      const dim = (v.params && v.params.dim) || 1;
+      const R = 26, TAU2 = PIRATE_TAU;
+      const bob = Math.sin(prog * TAU2 * 3) * 3;
+      ctx.translate(0, bob);
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      // breathing banded glow (4 discs, out of phase)
+      const br = R * tdLerp(1.2, 2.6, k) * (1 + 0.04 * Math.sin(prog * TAU2 * 3));
+      const cols = ['255,150,20', '255,185,40', '255,215,80', '255,246,180'], al = [0.22, 0.32, 0.45, 0.7], ss = [1, 0.78, 0.56, 0.34];
+      for (let i = 0; i < 4; i++) {
+        const rad = br * ss[i] * (1 + 0.05 * Math.sin(prog * TAU2 * 3.4 + i * 1.1));
+        ctx.fillStyle = 'rgba(' + cols[i] + ',' + (k * al[i] * dim).toFixed(3) + ')';
+        ctx.beginPath(); ctx.ellipse(0, 0, rad, rad, 0, 0, TAU2); ctx.fill();
+      }
+      // slow rotating flat rays (14, alternating long/short)
+      for (let i = 0; i < 14; i++) {
+        const long = i % 2 === 0;
+        const wq = 0.8 + pirateHash01c(i, 301) * 0.3, ph = pirateHash01c(i, 302) * PIRATE_TAU;
+        const a0 = (i / 14) * TAU2 + (pirateHash01c(i, 303) - 0.5) * 0.2;
+        const L = R * (long ? 3.5 : 2.5) * k * (0.9 + 0.1 * Math.sin(prog * TAU2 * 2 + ph));
+        const w = (long ? 15 : 9) * wq;
+        ctx.save(); ctx.rotate(a0 + prog * TAU2 * 2);
+        ctx.fillStyle = 'rgba(255,205,60,' + (0.5 * k).toFixed(3) + ')';
+        ctx.beginPath(); ctx.moveTo(-w / 2, 0); ctx.lineTo(0, -L); ctx.lineTo(w / 2, 0); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(255,245,180,' + (0.85 * k).toFixed(3) + ')';
+        ctx.beginPath(); ctx.moveTo(-w * 0.22, 0); ctx.lineTo(0, -L * 0.8); ctx.lineTo(w * 0.22, 0); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      // two golden crescents orbiting opposite ways
+      ctx.save(); ctx.globalAlpha = k;
+      const c0 = prog * TAU2 * 3, c1 = -prog * TAU2 * 2 + Math.PI;
+      ctx.beginPath(); ctx.arc(0, 0, R * 1.75, c0, c0 + 1.3 * Math.PI);
+      ctx.strokeStyle = '#e8940c'; ctx.lineWidth = 12; ctx.stroke();
+      ctx.strokeStyle = '#ffe566'; ctx.lineWidth = 7; ctx.stroke();
+      ctx.strokeStyle = '#fffbe0'; ctx.lineWidth = 2.5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, R * 2.05, c1, c1 + 0.7 * Math.PI);
+      ctx.strokeStyle = '#e8940c'; ctx.lineWidth = 12; ctx.stroke();
+      ctx.strokeStyle = '#ffe566'; ctx.lineWidth = 7; ctx.stroke();
+      ctx.strokeStyle = '#fffbe0'; ctx.lineWidth = 2.5; ctx.stroke();
+      ctx.restore();
+      // orbiting coins, 3D-ish: behind pass, orb core, front pass
+      for (let pass = 0; pass < 2; pass++) {
+        for (let i = 0; i < 4; i++) {
+          const base = (i / 4) * TAU2 + (pirateHash01c(i, 304) - 0.5) * 0.6;
+          const cdir = i % 2 ? -1 : 1, wob = 0.9 + pirateHash01c(i, 305) * 0.5;
+          const rho = R * (1.9 + pirateHash01c(i, 306) * 0.5);
+          const a = base + cdir * prog * TAU2 * (1 + wob * 0.5);
+          const sn = Math.sin(a), behind = sn < 0;
+          if ((pass === 0) !== behind) continue;
+          const cx = Math.cos(a) * rho, cy2 = sn * rho * 0.5 + Math.cos(a) * rho * 0.12;
+          const cr = (8 + pirateHash01c(i, 307) * 2) * (1 + 0.18 * sn) * tdEo(k);
+          const csx = Math.max(0.14, Math.abs(Math.cos(pirateHash01c(i, 308) * PIRATE_TAU + prog * TAU2 * 3)));
+          ctx.save(); ctx.translate(cx, cy2); ctx.scale(csx, 1);
+          tdDot(ctx, 0, 0, cr, TD_GOLD, 3); ctx.restore();
+        }
+        if (pass === 0) {
+          // orb core: dark ball + cel shadow + gold rim + highlight + outline
+          const bsc = 1 + 0.02 * Math.sin(prog * TAU2 * 4);
+          ctx.save(); ctx.scale(bsc, bsc);
+          ctx.beginPath(); ctx.ellipse(0, 0, R, R, 0, 0, TAU2);
+          ctx.fillStyle = 'rgb(43,46,58)'; ctx.fill();
+          ctx.save(); ctx.clip();
+          ctx.fillStyle = 'rgba(0,0,0,.4)';
+          ctx.beginPath(); ctx.rect(-2 * R, -2 * R, 4 * R, 4 * R);
+          ctx.moveTo(-0.35 * R + 1.1 * R, -0.4 * R); ctx.arc(-0.35 * R, -0.4 * R, 1.1 * R, 0, TAU2);
+          ctx.fill('evenodd');
+          ctx.strokeStyle = 'rgba(255,214,80,' + (0.8 * k).toFixed(3) + ')'; ctx.lineWidth = 6;
+          ctx.beginPath(); ctx.arc(0, 0, R - 1, 0.15, 1.5); ctx.stroke();
+          ctx.fillStyle = 'rgba(185,196,228,.6)';
+          ctx.beginPath(); ctx.ellipse(-0.4 * R, -0.45 * R, 0.3 * R, 0.17 * R, -0.6, 0, TAU2); ctx.fill();
+          ctx.restore();
+          ctx.beginPath(); ctx.ellipse(0, 0, R, R, 0, 0, TAU2);
+          ctx.lineWidth = 3.5; ctx.strokeStyle = '#000'; ctx.stroke();
+          ctx.restore();
+        }
+      }
+      // sparkle shimmer: fixed set cycling through pop windows
+      for (let i = 0; i < 14; i++) {
+        const u = (prog * 3 + i / 14) % 1;
+        if (u > 0.35) continue;
+        const uu = u / 0.35;
+        const a = pirateHash01c(i, 309) * TAU2, d = R * (1.5 + pirateHash01c(i, 310) * 1.5);
+        const sx = Math.cos(a) * d + Math.cos(a) * 14 * uu, sy = Math.sin(a) * d + (Math.sin(a) * 14 - 10) * uu;
+        const sc = uu < 0.3 ? tdEBack(uu / 0.3) : 1 - (uu - 0.3) / 0.7;
+        tdDot(ctx, sx, sy, (3 + pirateHash01c(i, 311) * 2.5) * sc, '#fff6b8', 2);
+      }
+      ctx.restore();
+    },
+  },
+};
+
 // The single effect registry, defined here as VFX_EFFECTS.
 export const VFX_EFFECTS = {
   ...COWBOY_AL_VFX,
@@ -3168,6 +3738,7 @@ export const VFX_EFFECTS = {
   ...BOXER_VFX,
   ...KNIGHT_VFX,
   ...PIRATE_VFX,
+  ...TREASURE_VFX,
 };
 
 

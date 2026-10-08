@@ -1,6 +1,6 @@
 import { AIController, AI_DIFFICULTIES } from './ai.js';
 import { attachAnimator } from './anim.js';
-import { ALL_FIGHTERS, resolveFighterSkin, stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resetCombat, setCombatStage, clearDeadeye, removeAttackerHitboxes, clearHitLocks, drawCombatDebug } from './combat.js';
+import { ALL_FIGHTERS, resolveFighterSkin, stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resetCombat, setCombatStage, clearDeadeye, removeAttackerHitboxes, clearHitLocks, drawCombatDebug, drawTreasures, drawGoldOrbUnder, drawDigShovel } from './combat.js';
 import { showModal } from './editors.js';
 import { drawFighterVfx, updateDamageIndicators, drawDamageIndicators, resetDamageIndicators, stepTimeDilation, resetTimeDilation, drawTimeDilationPost, timeDilationState, updateWorldFx, drawWorldFx, resetWorldFx } from './fx.js';
 import { createFighter, DESTRUCTIBLE_KINDS, destructibleKind, drawDestructibleHp, drawStage, PLATFORM_TYPES, platformType, BACKGROUND_PRESETS, backgroundPreset, defaultSandboxEnv, defaultSandboxObjects, loadSandboxEnv, saveSandboxEnv, loadSandboxDoc, saveSandboxDoc, invalidateSandboxBackground, countDestructibles, countEntities, MAX_SANDBOX_FIGHTERS, updatePlatforms, isInBlastZone, createSandboxStage, applySandboxObjects, sandboxBackground, stepDestructibles, clearDestructibles, drawDestructibles, destructibleCount } from './physics.js';
@@ -1569,7 +1569,14 @@ export function renderSandboxSession(ctx, time) {
   // which is why drawStage skips the records flagged `destructible`.
   drawStage(ctx, stage, time, sesEnv.platformColor);
   drawDestructibles(ctx);
+  try { drawTreasures(ctx, time); } catch (_) {}
   if (debug) drawCombatDebug(ctx, fighters);
+  // Golden Orb halos sit BEHIND the bodies (same slot as the match render).
+  for (let i = 0; i < fighters.length; i++) {
+    const f = fighters[i];
+    if (!f) continue;
+    try { drawGoldOrbUnder(ctx, f); } catch (_) {}
+  }
 
   let anyFront = false;
   for (let i = 0; i < fighters.length; i++) {
@@ -1590,6 +1597,7 @@ export function renderSandboxSession(ctx, time) {
       try { drawFighter(ctx, f, time); } catch (_) {}
       try { drawFighterVfx(ctx, f); } catch (_) {}
       try { drawAbilityFx(ctx, f, time); } catch (_) {}
+      try { drawDigShovel(ctx, f, time); } catch (_) {}
     }
   }
   ctx.restore();

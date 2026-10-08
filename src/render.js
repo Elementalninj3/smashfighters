@@ -2955,10 +2955,22 @@ function drawBody(ctx, fighter, skin, vr) {
     const spr = _bodySprite(skin.img, radius, ss, ccx, ccy);
     // Blit to the clip CIRCLE's bounding box, not the image size — the circle
     // is what the outline below strokes, so the two must match exactly.
+    // Faces the fighter: mirrored when heading left. The bake stays canonical
+    // (no second cache entry — the flip is one transform on the blit), and the
+    // baked centre offset mirrors with it, so art drawn toward the front stays
+    // toward the front in both facings.
     const d = radius * 2;
     const prevQuality = ctx.imageSmoothingQuality;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(spr, x - radius, y - radius, d, d);
+    if (!fighter.facingRight) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(-1, 1);
+      ctx.drawImage(spr, -radius, -radius, d, d);
+      ctx.restore();
+    } else {
+      ctx.drawImage(spr, x - radius, y - radius, d, d);
+    }
     if (prevQuality) ctx.imageSmoothingQuality = prevQuality;
   }
 
@@ -3425,8 +3437,18 @@ export function drawFighter(ctx, fighter, time) {
   ctx.save();
 
   // Squish effect (jump/landing stretch)
-  const sx = fighter.squishX || 1;
-  const sy = fighter.squishY || 1;
+  let sx = fighter.squishX || 1;
+  let sy = fighter.squishY || 1;
+  // Digging heave (pirate Treasure Hunt): a rhythmic crouch-pump while the
+  // dig is live — the body visibly works the spot ( dust + progress ring
+  // sell the rest). Purely cosmetic, driven by wall time so it reads the
+  // same in match, sandbox and the animator.
+  if (fighter._dig) {
+    const ph = time * 0.02;
+    const heave = Math.sin(ph);
+    sx = 1 + 0.07 * heave;
+    sy = 1 - 0.07 * heave;
+  }
   if (sx !== 1 || sy !== 1) {
     ctx.translate(x, y);
     ctx.scale(sx, sy);

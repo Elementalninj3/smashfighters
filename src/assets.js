@@ -145,13 +145,23 @@ const VOICE = {
   chargedSword: '/GA/audio/chargedsword.mp3', // knight Side Smash (Charged Sword Strike)
   shieldBash: '/GA/audio/shieldbash.mp3', // knight Down Light (Shield Bash)
   shieldCounter: '/GA/audio/shieldcounter.mp3', // knight Neutral Heavy (Shield Counter)
+  cannon: '/GA/audio/cannonshot.mp3', // pirate Cannon Blast + Broadside Burst
+  flintKnock: '/GA/audio/flintknock.mp3', // pirate Cutlass Lunge
+  ropeSwing: '/GA/audio/ropeswing.mp3', // pirate Rope Swing
+  anchorDrop: '/GA/audio/anchor.mp3', // pirate Anchor Drop
+  plundered: '/GA/audio/plundered.mp3', // pirate Treasure Hunt reward shout
+  treasureDigging: '/GA/audio/treasuredigging.mp3', // pirate digging loop
+  treasureChest: '/GA/audio/treasure.mp3', // pirate chest unearth
 };
 
 // Play a recorded voice, synthesizing `synthFn` only when the recording cannot
 // play. The fallback is a callback, never an SFX method name: a name would let a
-// voice name itself as its own fallback and recurse forever.
+// voice name itself as its own fallback and recurse forever. The fallback runs
+// both when playback cannot even start (missing/broken path) AND when the
+// play() itself rejects (404 on first touch, blocked autoplay) — otherwise a
+// first-play failure degrades to silence instead of to the sound it replaced.
 function playVoice(path, synthFn, volume) {
-  if (playSfxFromPath(path, volume == null ? 0.7 : volume)) return true;
+  if (playSfxFromPath(path, volume == null ? 0.7 : volume, { onFail: synthFn })) return true;
   if (typeof synthFn === 'function') synthFn();
   return false;
 }
@@ -219,6 +229,63 @@ export const SFX = {
   buff() {
     playTone(520, { duration: 0.09, type: 'triangle', volume: 0.18, sweepTo: 780 });
     playNoiseBurst({ duration: 0.06, volume: 0.06, filterFreq: 4000, filterType: 'highpass' });
+  },
+  // Treasure Hunt (pirate passive): dirt thump for an empty hole, wooden
+  // knock + gold shimmer when a chest comes up, warm major rise when the
+  // Golden Orb is granted. All synthesized like the rest of the catalogue.
+  digThud() {
+    playTone(120, { duration: 0.12, type: 'triangle', volume: 0.20, sweepTo: 60 });
+    playNoiseBurst({ duration: 0.10, volume: 0.12, filterFreq: 400, filterType: 'lowpass', filterSweepTo: 120 });
+  },
+  chestUnearth() {
+    playTone(180, { duration: 0.10, type: 'triangle', volume: 0.22, sweepTo: 90 });
+    playNoiseBurst({ duration: 0.08, volume: 0.10, filterFreq: 900, filterType: 'lowpass', filterSweepTo: 300 });
+    [880, 1174, 1568].forEach((f, i) => {
+      playTone(f, { duration: 0.12, type: 'triangle', volume: 0.14, delay: 0.08 + i * 0.07 });
+    });
+    playNoiseBurst({ duration: 0.20, volume: 0.05, filterFreq: 6000, filterType: 'highpass' });
+  },
+  goldOrb() {
+    [523, 659, 784, 1046].forEach((f, i) => {
+      playTone(f, { duration: 0.16, type: 'sine', volume: 0.14, delay: i * 0.07 });
+    });
+    playNoiseBurst({ duration: 0.25, volume: 0.04, filterFreq: 7000, filterType: 'highpass' });
+  },
+  // ── The pirate's recorded treasure kit ───────────────────────────────
+  // Real recordings layered over the synth fallbacks above (same playVoice
+  // pattern as the rest of the catalogue): the cannon's own report rather
+  // than the cowboy's rifle, the reward shout, the digging and the chest.
+  // Fallbacks name the pure-synth methods, never a playVoice method, so a
+  // missing file degrades to the same timing rather than recursing.
+  cannonShot(volume = 0.7) {
+    playVoice(VOICE.cannon, () => {
+      playTone(120, { duration: 0.20, type: 'sawtooth', volume: 0.25, sweepTo: 50 });
+      playNoiseBurst({ duration: 0.22, volume: 0.30, filterFreq: 900, filterType: 'lowpass', filterSweepTo: 90 });
+    }, volume);
+  },
+  // Cutlass Lunge (pirate Forward Light): the recorded flintknock, falling
+  // back to the plain slash synthesis it replaces.
+  flintKnock(volume = 0.6) {
+    playVoice(VOICE.flintKnock, slashFallback, volume);
+  },
+  // Rope Swing (pirate Down Light): the recorded swing, falling back to the
+  // plain slash synthesis it replaces.
+  ropeSwing(volume = 0.6) {
+    playVoice(VOICE.ropeSwing, slashFallback, volume);
+  },
+  // Anchor Drop (pirate Down Heavy): the recorded slam, falling back to the
+  // punch thump it replaces.
+  anchorDrop(volume = 0.7) {
+    playVoice(VOICE.anchorDrop, () => SFX.punch(), volume);
+  },
+  plundered(volume = 0.7) {
+    playVoice(VOICE.plundered, () => SFX.goldOrb(), volume);
+  },
+  treasureDigging(volume = 0.7) {
+    playVoice(VOICE.treasureDigging, () => SFX.digThud(), volume);
+  },
+  treasureChest(volume = 0.7) {
+    playVoice(VOICE.treasureChest, () => SFX.chestUnearth(), volume);
   },
   // Slow-mo break (cowboy Down Light): a deep sawtooth sub-drop for the "time
   // stops" sting plus a faint high shimmer. Synthesized — no asset required.
@@ -406,10 +473,16 @@ export function playSfx(path, { volume = 1, cooldownMs = 0 } = {}) {
   eventBus.emit('sfxPlay', { path });
 }
 
-// Plays an MP3 from a path; returns the node if played, false if the path was
-// null/broken (so the caller can fall back to SFX.*).
+// Plays an MP3 from a path; returns the node if playback started, false if the
+// path was null/broken (so the caller can fall back to SFX.*).
 // opts.force lets a caller play even while muted (e.g. a cutscene's own
 // theme); force-played nodes are exempt from being paused by setSfxMuted.
+// opts.onFail fires if the async play() rejects (missing file on first touch,
+// blocked autoplay): the caller (playVoice) uses it to run its synth fallback,
+// so a rejected play degrades to the replaced sound rather than to silence.
+// The path is NOT marked broken here — a rejection can be transient (autoplay
+// block), and a genuinely missing file still trips the pool's error listener,
+// which marks it for next time.
 export function playSfxFromPath(path, volume = 0.7, opts = {}) {
   if (!path || _audioBrokenPaths.has(path) || (!opts.force && _sfxMuted)) return false;
   try {
@@ -426,7 +499,9 @@ export function playSfxFromPath(path, volume = 0.7, opts = {}) {
     node.volume = volume;
     node._muteImmune = !!opts.force;
     const p = node.play();
-    if (p && typeof p.catch === 'function') p.catch(() => {});
+    if (p && typeof p.catch === 'function') p.catch(() => {
+      try { if (typeof opts.onFail === 'function') opts.onFail(); } catch (e) {}
+    });
     eventBus.emit('sfxPlay', { path });
     return node;
   } catch (e) {

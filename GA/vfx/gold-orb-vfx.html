@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gold Orb Aura</title>
+<style>html,body{margin:0;height:100%;background:#2c374d;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+/* GOLD ORB AURA (toon style) - vanilla JS + Canvas2D
+   A constant, looping aura: breathing banded glow, slow rotating rays, orbiting crescents,
+   coins orbiting in 3D-ish (behind / in front of the orb) and a steady trickle of sparkles.
+   Drop-in: const fx = new GoldOrb(); fx.update(dt); fx.draw(ctx, orbX, orbY, scale);
+   fx.setActive(false/true) fades the aura out / in. fx.reset() restarts with a fade-in.
+   Particles (coins, sparkles) are solid circles with a black outline, drawn by dot(). */
+
+const SPEED=1.2;
+const TAU=Math.PI*2,rnd=(a,b)=>a+Math.random()*(b-a),clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v)),lerp=(a,b,t)=>a+(b-a)*t;
+const easeOut=t=>1-Math.pow(1-clamp(t),3);
+const easeBack=t=>{t=clamp(t);return 1+2.9*Math.pow(t-1,3)+1.9*Math.pow(t-1,2)};
+const R=26,GOLD='#ffc928'; // R = orb radius in effect units
+
+/* ---------- helpers ---------- */
+const ell=(c,x,y,rx,ry)=>{c.beginPath();c.ellipse(x,y,rx,ry,0,0,TAU)};
+// THE particle: solid circle + black toon outline
+const dot=(c,x,y,r,fill,lw=Math.max(2.5,r*.3))=>{if(r<=.4)return;ell(c,x,y,r,r);c.fillStyle=fill;c.fill();c.lineWidth=lw;c.strokeStyle='#000';c.stroke()};
+
+/* ---------- the effect ---------- */
+class GoldOrb{
+  constructor(){this.reset()}
+  reset(){
+    this.t=0;this.k=0;this.on=true;this.acc=0;this.sparks=[];
+    this.rays=Array.from({length:14},(_,i)=>({a:i/14*TAU,long:i%2===0,w:rnd(.8,1.1),ph:rnd(0,TAU)}));
+    this.coins=Array.from({length:4},(_,i)=>({a:i/4*TAU+rnd(-.3,.3),w:(i%2?-1:1)*rnd(.9,1.4),rho:R*rnd(1.9,2.4),ph:rnd(0,TAU),sp:rnd(4,8),r:rnd(8,10)}));
+  }
+  setActive(v){this.on=!!v}
+
+  update(dt){
+    dt*=SPEED;this.t+=dt;
+    this.k+=((this.on?1:0)-this.k)*Math.min(1,dt*3.5); // aura intensity 0..1, eased
+    for(const c of this.coins){c.a+=c.w*dt;c.ph+=c.sp*dt}
+    // steady sparkle trickle
+    this.acc+=5*this.k*dt;
+    while(this.acc>=1){this.acc--;const a=rnd(0,TAU),d=R*rnd(1.5,3);this.sparks.push({x:Math.cos(a)*d,y:Math.sin(a)*d,vx:Math.cos(a)*14,vy:Math.sin(a)*14-10,r:rnd(3,5.5),age:0,life:rnd(.6,1)})}
+    for(const p of this.sparks){p.x+=p.vx*dt;p.y+=p.vy*dt;p.age+=dt}
+    this.sparks=this.sparks.filter(p=>p.age<p.life);
+  }
+
+  /* ---------- drawing ---------- */
+  draw(c,x,y,s=1){
+    const t=this.t,bob=Math.sin(t*2.2)*3;
+    c.save();c.translate(x,y+bob*s);c.scale(s,s);c.lineJoin='round';c.lineCap='round';
+    if(this.k>.01){this.drawGlow(c);this.drawRays(c);this.drawCrescents(c)}
+    for(const k of this.coins)if(Math.sin(k.a)<0)this.drawCoin(c,k); // behind the orb
+    this.drawOrb(c);
+    for(const k of this.coins)if(Math.sin(k.a)>=0)this.drawCoin(c,k); // in front of the orb
+    // sparkle dots: pale circles that pop in, shrink out
+    for(const p of this.sparks){const u=p.age/p.life,sc=u<.3?easeBack(u/.3):1-(u-.3)/.7;dot(c,p.x,p.y,p.r*sc,'#fff6b8',2)}
+    c.restore();
+  }
+  drawGlow(c){ // 4 flat hard-edged discs that breathe out of phase
+    const t=this.t,k=this.k,br=R*lerp(1.2,2.6,k)*(1+.04*Math.sin(t*3));
+    const cols=['255,150,20','255,185,40','255,215,80','255,246,180'],al=[.22,.32,.45,.7];
+    for(let i=0;i<4;i++){
+      const rad=br*[1,.78,.56,.34][i]*(1+.05*Math.sin(t*3.4+i*1.1));
+      c.fillStyle=`rgba(${cols[i]},${k*al[i]})`;ell(c,0,0,rad,rad);c.fill();
+    }
+  }
+  drawRays(c){ // slow rotating flat rays, length gently pulsing
+    const t=this.t,k=this.k;
+    for(const r of this.rays){
+      const L=R*(r.long?3.5:2.5)*k*(.9+.1*Math.sin(t*2.6+r.ph)),w=(r.long?15:9)*r.w;
+      c.save();c.rotate(r.a+t*.35);
+      c.fillStyle=`rgba(255,205,60,${.5*k})`;c.beginPath();c.moveTo(-w/2,0);c.lineTo(0,-L);c.lineTo(w/2,0);c.closePath();c.fill();
+      c.fillStyle=`rgba(255,245,180,${.85*k})`;c.beginPath();c.moveTo(-w*.22,0);c.lineTo(0,-L*.8);c.lineTo(w*.22,0);c.closePath();c.fill();
+      c.restore();
+    }
+  }
+  drawCrescents(c){ // two golden crescents orbiting in opposite directions
+    const t=this.t,k=this.k;
+    c.save();c.globalAlpha=k;
+    for(const[a0,sp,rd]of[[t*1.4,1.3*Math.PI,R*1.75],[-t*1.0+Math.PI,.7*Math.PI,R*2.05]]){
+      c.beginPath();c.arc(0,0,rd,a0,a0+sp);
+      c.strokeStyle='#e8940c';c.lineWidth=12;c.stroke();
+      c.strokeStyle='#ffe566';c.lineWidth=7;c.stroke();
+      c.strokeStyle='#fffbe0';c.lineWidth=2.5;c.stroke();
+    }
+    c.restore();
+  }
+  drawCoin(c,k0){ // solid gold circle on a tilted orbit; spins by squashing sideways
+    const sn=Math.sin(k0.a),x=Math.cos(k0.a)*k0.rho,y=sn*k0.rho*.5+Math.cos(k0.a)*k0.rho*.12;
+    const r=k0.r*(1+.18*sn)*easeOut(this.k),sx=Math.max(.14,Math.abs(Math.cos(k0.ph)));
+    c.save();c.translate(x,y);c.scale(sx,1);dot(c,0,0,r,GOLD,3);c.restore();
+  }
+  drawOrb(c){
+    const t=this.t,k=this.k,sc=1+.02*Math.sin(t*3);
+    c.save();c.scale(sc,sc);
+    ell(c,0,0,R,R);c.fillStyle='rgb(43,46,58)';c.fill();
+    c.save();c.clip();
+    c.fillStyle='rgba(0,0,0,.4)';c.beginPath();c.rect(-2*R,-2*R,4*R,4*R);c.moveTo(-.35*R+1.1*R,-.4*R);c.arc(-.35*R,-.4*R,1.1*R,0,TAU);c.fill('evenodd'); // cel shadow
+    c.strokeStyle=`rgba(255,214,80,${.8*k})`;c.lineWidth=6;c.beginPath();c.arc(0,0,R-1,.15,1.5);c.stroke(); // gold rim light
+    c.fillStyle='rgba(185,196,228,.6)';c.beginPath();c.ellipse(-.4*R,-.45*R,.3*R,.17*R,-.6,0,TAU);c.fill(); // highlight
+    c.restore();
+    ell(c,0,0,R,R);c.lineWidth=3.5;c.strokeStyle='#000';c.stroke();
+    c.restore();
+  }
+}
+
+/* ---------- demo harness ---------- */
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),fx=new GoldOrb();
+let W,H,DPR,last=performance.now();
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR}
+addEventListener('resize',resize);resize();
+const toggle=()=>fx.setActive(!fx.on);
+addEventListener('pointerdown',toggle);
+addEventListener('keydown',e=>{if(e.code==='Space'){toggle();e.preventDefault()}});
+function frame(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;
+  fx.update(dt);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#4b5d7e');g.addColorStop(1,'#2c374d');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  fx.draw(ctx,W/2,H*.47,Math.min(W,H)/260);
+  ctx.fillStyle='rgba(255,255,255,.5)';ctx.font='11px system-ui,sans-serif';ctx.textAlign='center';
+  ctx.fillText('click / space = aura on / off',W/2,H-16);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

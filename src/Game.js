@@ -1,7 +1,7 @@
 import { AIController, AI_DIFFICULTIES, configForDifficulty, createTrainer, evaluateModels, loadTrainedModel, listTrainedModels, listModels, getModel, getActiveModel, activateModel, renameModel, duplicateModel, deleteModel, exportModel, importModel, attachEval, listRunHistory, getRun, clearRunHistory, loadCheckpoint, computeFitnessBreakdown } from './ai.js';
 import { allWeapons, getWeapon, setAnimationLoader, updateAnimator, attachAnimator, getAnimation, setAnimLibChangeListener } from './anim.js';
 import { SFX } from './assets.js';
-import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resolveFighterSkin, drawCombatDebug, resetCombat, removeAttackerHitboxes, clearHitLocks, clearDeadeye, clearBoxerState, __debugHitboxes, startAttackForKey, resolveAttackDef, setCombatStage, ALL_FIGHTERS, setCustomHitboxes, clearCustomHitboxes } from './combat.js';
+import { stepRosterMovement, stepRosterCombat, stepRosterFinish, softResetFighter, inputForSlot, DUMMY_INPUT, resolveFighterSkin, drawCombatDebug, resetCombat, removeAttackerHitboxes, clearHitLocks, clearDeadeye, clearBoxerState, __debugHitboxes, startAttackForKey, resolveAttackDef, setCombatStage, ALL_FIGHTERS, setCustomHitboxes, clearCustomHitboxes, drawTreasures, drawGoldOrbUnder, drawDigShovel } from './combat.js';
 import { openEditor, closeEditor, updateEditor, renderEditor, setEditorCloseHandler, openHitboxCustomizer, closeHitboxCustomizer, updateHitboxCustomizer, renderHitboxCustomizer, setHitboxCustomizerCloseHandler, setCustomizerMove, setWorkingBoxValue, saveCustomizer, resetCustomizerMove, getWorkingBoxes, isHitboxCustomizerOpen, hitboxCustomizerHits } from './editors.js';
 import { drawFighterVfx, setVfxViewBounds, warmEffectSprites, stepTimeDilation, timeDilationState, peekTimeDilation, resetTimeDilation, drawTimeDilationPost, updateDamageIndicators, drawDamageIndicators, resetDamageIndicators, updateWorldFx, drawWorldFx, resetWorldFx, setWorldFxViewBounds, setFxQuality, setParticleDetail, setPostDetail, setWorldFxBatch, setDamageTextCache, worldFxState } from './fx.js';
 import { initInput, flushInput, isJustPressed, createFighter, createDefaultStage, drawStage, updatePlatforms, isInBlastZone, onLoopQualityChange, setDestructibleViewBounds, clearDestructibleViewBounds, sanitizeDeathZone, applyDeathZoneToStage, blastRectFor, DEFAULT_DEATH_MARGINS, DEATHZONE_MIN, DEATHZONE_MAX, DEATHZONE_STEP } from './physics.js';
@@ -5336,6 +5336,10 @@ export function render(now) {
   // the fighters, their horses, VFX and the HUD all paint over it.
   drawMatchupText(ctx);
 
+  // Treasure Hunt X markers (pirate passive): world objects on the ground,
+  // under the fighters and their VFX.
+  try { drawTreasures(ctx, time); } catch (_) {}
+
   // Fighter layering: after a successful hit the ATTACKER draws in front of
   // the fighter taking damage for the interaction window (set by combat.js on
   // applyHit, decayed in updateAttacks). Hands/weapons ride along with their
@@ -5346,6 +5350,9 @@ export function render(now) {
     // Buff auras sit BEHIND the bodies: paint before either fighter layer.
     try { drawBoxerRollUnder(ctx, fighter1, time); } catch (_) {}
     try { drawBoxerRollUnder(ctx, fighter2, time); } catch (_) {}
+    // Golden Orb halos (pirate Treasure Hunt): same behind-the-body slot.
+    try { drawGoldOrbUnder(ctx, fighter1); } catch (_) {}
+    try { drawGoldOrbUnder(ctx, fighter2); } catch (_) {}
     const aFront = (fighter1._hitRenderTimer || 0) > 0;
     const bFront = (fighter2._hitRenderTimer || 0) > 0;
     if (aFront && !bFront) {
@@ -5365,6 +5372,9 @@ export function render(now) {
     }
     drawAbilityFx(ctx, fighter1, time);
     drawAbilityFx(ctx, fighter2, time);
+    // Digging shovels read as held tools: over the bodies that grip them.
+    try { drawDigShovel(ctx, fighter1, time); } catch (_) {}
+    try { drawDigShovel(ctx, fighter2, time); } catch (_) {}
   }
 
   // Draw hitbox debug visualization (already inside the camera transform)

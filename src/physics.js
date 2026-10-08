@@ -1074,6 +1074,16 @@ _tempVfx: [],
     // running, otherwise { px, py, len, th0, th1, t, dur, dir }. combat.js
     // owns the arc; physics only clears it when the burst window ends.
     _ropeSwing: null,
+    // Treasure Hunt (pirate passive): _dig { id, t, puff } while a dig is
+    // live (movement input locks onto it, combat.js owns the progress);
+    // _digPending { t } while the discovery burst plays out; _goldOrb
+    // { timeLeft, duration, speedMul, dmgMul } while empowered (multipliers
+    // ride the record so physics reads them with no import back to combat);
+    // _goldDodgeBank holds the buff's one bonus dodge charge.
+    _dig: null,
+    _digPending: null,
+    _goldOrb: null,
+    _goldDodgeBank: 0,
     lastGroundedX: 0,
     // Aerial Light recovery assist: seconds remaining of the upward launch
     // buff (gravity reduction + boosted air control). Set by combat.js when an
@@ -1638,7 +1648,14 @@ export { applySoftPlayerSeparation };
 // cannot leak either.)
 export function moveSpeedScale(fighter) {
   const roll = fighter && fighter._boxerRoll;
-  return roll && roll.speedMul ? roll.speedMul : 1;
+  const rollMul = roll && roll.speedMul ? roll.speedMul : 1;
+  // Golden Orb (pirate Treasure Hunt): the buff record carries its own
+  // multiplier, read here with no import back to combat — same pattern as
+  // the roll above. Multiplies with any other speed buff instead of
+  // replacing it.
+  const gold = fighter && fighter._goldOrb;
+  const goldMul = gold && gold.timeLeft > 0 && gold.speedMul ? gold.speedMul : 1;
+  return rollMul * goldMul;
 }
 
 // ── Directional Influence ────────────────────────────────────────────────
@@ -1852,8 +1869,22 @@ export function handleFighterInput(fighter, stage, dt, inputFunctions = {}) {
   const rollDash = roll ? (roll.dashMul || 1) : 1;
   const rollIframes = roll ? (roll.dodgeIframes || 0.15) : 0.15;
   const rollDodgeTime = roll ? (roll.dodgeTime || 0.25) : 0.25;
+  // Golden Orb bonus dodge (pirate Treasure Hunt): one banked charge while
+  // empowered. Refilled only on solid ground with no dodge running and the
+  // cooldown clear — so at most two dodges per cooldown cycle, never a chain.
+  // Airborne bank use is allowed (the bank does not refill mid-air). Reads
+  // the fighter record only, like the roll above.
+  const gold = fighter._goldOrb && fighter._goldOrb.timeLeft > 0 ? fighter._goldOrb : null;
+  if (fighter.grounded && !fighter.dodging && fighter.dodgeCooldown <= 0) {
+    fighter._goldDodgeBank = gold ? 1 : 0;
+  }
+  const goldBank = gold && (fighter._goldDodgeBank || 0) > 0 && !fighter.dodging;
 
-  if (isJustPressed(p, 'dodge') && fighter.dodgeCooldown <= 0) {
+  if (isJustPressed(p, 'dodge') && (fighter.dodgeCooldown <= 0 || goldBank)) {
+    // Spending the bank during cooldown: the burst below re-stamps the
+    // cooldown (already running — harmless), and the refill gate above keeps
+    // it spent until the fighter is grounded with a clear cooldown again.
+    if (fighter.dodgeCooldown > 0) fighter._goldDodgeBank = 0;
     if (fighter.grounded) {
       // Ground dash-dodge
       fighter.dodging = true;
@@ -1960,8 +1991,13 @@ if (!fighter.grounded && !fighter.freeFall && fighter.launchTimer <= 0) {
   }
 }
   // === MOVEMENT ===
-  const left = isHeld(p, 'left');
-  const right = isHeld(p, 'right');
+  // Held movement keys. While a pirate is actively digging (_dig, owned by
+  // combat.js) directional input is ignored — the digging stance is rooted
+  // by commitment, not by friction. Jump still fires (leaving the ground
+  // cancels the dig on the combat side).
+  const digging = !!fighter._dig;
+  const left = isHeld(p, 'left') && !digging;
+  const right = isHeld(p, 'right') && !digging;
   const jumpHeld = isHeld(p, 'jump');
   const jumpJustPressed = isJustPressed(p, 'jump');
   const jumpJustReleased = isJustReleased(p, 'jump');

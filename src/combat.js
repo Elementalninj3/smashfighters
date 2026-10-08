@@ -1,6 +1,6 @@
 import { getAnimationRaw, requestAnimation, updateAnimator, stopAnimation } from './anim.js';
 import { SFX } from './assets.js';
-import { resolveWorldAnchor, playShadowStrikeVFX, playSmokePoofVFX, triggerTimeDilation, emitAbilityFx, emitFlash, emitImpactRing, emitSparks, emitDustPuff, emitStreak, emitGhost, fxStyleFor, spawnFloatingText, releaseTimeDilation, spawnDamageNumber } from './fx.js';
+import { resolveWorldAnchor, playShadowStrikeVFX, playSmokePoofVFX, triggerTimeDilation, emitAbilityFx, emitFlash, emitImpactRing, emitSparks, emitDustPuff, emitStreak, emitGhost, fxStyleFor, spawnFloatingText, releaseTimeDilation, spawnDamageNumber, getVfxEffect } from './fx.js';
 import { spawnTempVfx, isHeld, isJustPressed, clearGrid, insertObject, queryNearby, projectilePool, hitboxPool, damageNumberPool, scratchVec2, clearTempArray, tempArray32, freezeGame, destructibleList, damageDestructible, AERIAL_LIGHT_RECOVERY_FORCE, AERIAL_LIGHT_RECOVERY_DURATION, BLOCK_COOLDOWN, DI_MAX_ANGLE, DI_WINDOW, stampAbilityCooldown, handleFighterInput, stepFighterPhysics, updateFighterState, resetAbilityCooldowns, applySoftPlayerSeparation, resolvePlatformCollision } from './physics.js';
 import { notifyCinematicHit, getSkinImage, updateHandOrbit, syncHeldRotSnap } from './render.js';
 
@@ -1530,7 +1530,7 @@ export const ABILITIES = {
       atk.fxX = fighter.x + dir * r * 1.2;
       atk.fxY = fighter.y - 4;
       emitAbilityFx(fighter, atk, 'rope');
-      try { SFX.slash(0.16 * WHIFF_VOLUME_MULT); } catch (_) {}
+      try { SFX.ropeSwing(0.6 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
 
@@ -1571,7 +1571,7 @@ export const ABILITIES = {
       atk.fxX = x;
       atk.fxY = y;
       emitAbilityFx(fighter, atk, 'cutlass');
-      try { SFX.slash(0.16 * WHIFF_VOLUME_MULT); } catch (_) {}
+      try { SFX.flintKnock(0.6 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
 
@@ -1607,13 +1607,13 @@ export const ABILITIES = {
           pinnedX: fighter.x + ox,
           pinnedY: fighter.y + oy,
           mirrorX: dir,
-          params: { unit: (r / 22) * 0.7 },
+          params: { unit: (r / 22) * 0.5 },
         });
       } catch (_) {}
       atk.fxX = fighter.x + ox;
       atk.fxY = fighter.y + oy;
       emitAbilityFx(fighter, atk, 'anchor');
-      try { SFX.punch(); } catch (_) {}
+      try { SFX.anchorDrop(0.7 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
 
@@ -1683,7 +1683,7 @@ export const ABILITIES = {
         });
       } catch (_) {}
       emitAbilityFx(fighter, atk, 'cannon');
-      try { SFX.rifleShot(0.7 * WHIFF_VOLUME_MULT); } catch (_) {}
+      try { SFX.cannonShot(0.7 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
 
@@ -1737,11 +1737,10 @@ export const ABILITIES = {
         },
         muzzleDone: false,
       });
-      atk.fxX = pos.x;
-      atk.fxY = pos.y;
-      atk.fxProjR = rr;
-      emitAbilityFx(fighter, atk, 'cannon');
-      try { SFX.rifleShot(0.7 * WHIFF_VOLUME_MULT); } catch (_) {}
+      // No shared firearm muzzle pop here: the gunshot flash lives only on the
+      // Cutlass Lunge's flintknock and the Cannon Blast. The Burst's own
+      // wide-cone art (the pirateWide trail on the round above) is its visual.
+      try { SFX.cannonShot(0.7 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
 };
@@ -2147,6 +2146,384 @@ export const PLUNDER_MAX = 5;
 export const PLUNDER_TIER_KNOCKBACK = 3;
 export function plunderOf(f) { return 0; }
 export function updatePlunder(fighters, dt) {}
+
+// ── Pirate: Treasure Hunt ───────────────────────────────────────────────
+// A pirate-only passive. "X" treasure markers appear at valid ground spots;
+// the pirate holds Block beside one to dig it up (a committed hold, not an
+// instant grab). Finishing the dig plays the treasure-dig burst, then grants
+// the Golden Orb buff (faster, harder-hitting, one bonus dodge) with its
+// riding aura. All state lives in one place here — combat, physics (which
+// only reads fighter records, never imports back) and the HUD all see the
+// same objects, so markers, digging, buff, modifiers and VFX stay in sync.
+//
+// Config lives here, applied at the single points that own each axis —
+// movement reads the record's own multipliers (physics.js moveSpeedScale),
+// damage resolves through deliverHit's row copy (knight-parry precedent),
+// dodges spend a record-carried bank through the existing dodge path.
+const TREASURE_MAX = 1;          // simultaneous X markers: exactly one at a time
+const TREASURE_DIG_RANGE = 78;   // world px, fighter-center to marker
+const TREASURE_DIG_TIME = 1.0;   // seconds of held Block to finish a dig
+const TREASURE_SPAWN_DELAY = 2.0;// seconds after (re)start before the first X appears
+const TREASURE_RESPAWN_DELAY = 4;// seconds before a collected X is replaced
+const TREASURE_CHEST_CHANCE = 0.5; // dug X actually holds a chest (else dirt)
+const TREASURE_DIG_VFX_LIFE = 2.6; // discovery burst play time (full 7.4-unit demo)
+const TREASURE_DUD_VFX_LIFE = 1.4; // empty-hole burst (dig beats only, no chest)
+const DIG_CHEST_SCALE = 0.6;     // chest + beam size inside the dig burst
+const GOLD_DURATION = 30;        // seconds the Golden Orb lasts (refreshed, never stacked)
+const GOLD_SPEED_MUL = 1.25;     // movement multiplier while empowered
+const GOLD_DMG_MUL = 1.25;       // damage multiplier while empowered
+const GOLD_GLOW_DIM = 0.2;       // aura glow discs dimmed 80% (rays/coins stay crisp)
+const GOLD_AURA_R = 0.176;      // orb-core radius as a fraction of body radius
+                                 // (0.44 base × 0.4 — shrunk 60% on request; behind
+                                 // the body this leaves only a faint edge shimmer)
+
+function isPirate(f) { return !!f && !!f._fighterDef && f._fighterDef.id === 'pirate'; }
+function goldActive(f) { return !!(f && f._goldOrb && f._goldOrb.timeLeft > 0); }
+
+// World markers. Match-scoped (resetTreasures, called from resetCombat): each
+// is a real world location { id, x, y } with a dig-progress display value.
+// `timer` staggers replacements so a fresh X never pops the same frame one
+// is collected.
+let _treasures = [];
+let _treasureTimer = 0;
+let _treasureId = 1;
+export function resetTreasures() {
+  _treasures = [];
+  _treasureTimer = TREASURE_SPAWN_DELAY;
+  _treasureId = 1;
+}
+export function treasureList() { return _treasures; }
+
+// Pick a valid ground spot: a random point on a wide-enough platform top
+// (main ground or a floating platform), inset from the edges, away from other
+// markers. Everything derives from the live stage geometry — never hardcoded
+// screen points — so custom maps and different arena sizes just work. Null
+// when there is no usable geometry (no stage, all segments too narrow).
+function pickTreasureSpot() {
+  const stage = _combatStage;
+  const plats = stage && stage.platforms;
+  if (!plats || !plats.length) return null;
+  const segs = [];
+  for (let i = 0; i < plats.length; i++) {
+    const p = plats[i];
+    if (!p || !(p.width >= 110) || typeof p.y !== 'number') continue;
+    const x0 = p.x + 22, x1 = p.x + p.width - 22;
+    if (x1 <= x0) continue;
+    segs.push({ x0, x1, y: p.y, w: x1 - x0 });
+  }
+  if (!segs.length) return null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    let total = 0;
+    for (let i = 0; i < segs.length; i++) total += segs[i].w;
+    let roll = Math.random() * total, seg = segs[0];
+    for (let i = 0; i < segs.length; i++) { roll -= segs[i].w; if (roll <= 0) { seg = segs[i]; break; } }
+    const x = seg.x0 + Math.random() * (seg.x1 - seg.x0);
+    let clear = true;
+    for (let i = 0; i < _treasures.length; i++) {
+      if (Math.abs(_treasures[i].x - x) < 120) { clear = false; break; }
+    }
+    if (clear) return { x, y: seg.y };
+  }
+  return null;
+}
+
+function spawnTreasure() {
+  if (_treasures.length >= TREASURE_MAX) return null;
+  const spot = pickTreasureSpot();
+  if (!spot) return null;
+  const m = { id: _treasureId++, x: spot.x, y: spot.y, prog: 0 };
+  _treasures.push(m);
+  return m;
+}
+
+// Grant (or refresh — never stack) the Golden Orb: one record, one aura,
+// one dodge bank refill. Called once per treasure, after the dig burst has
+// fully played (see updateTreasureHunt's pending step). The aura itself is
+// NOT a temp instance: drawGoldOrbUnder paints it behind the body straight
+// from this record every frame, so art and modifiers share one source of
+// truth and can never desync (no lifetime matching, nothing to purge).
+function grantGoldenOrb(f) {
+  if (!f || f.state === 'dead' || f.eliminated) return;
+  f._goldOrb = {
+    timeLeft: GOLD_DURATION, duration: GOLD_DURATION,
+    speedMul: GOLD_SPEED_MUL, dmgMul: GOLD_DMG_MUL,
+  };
+  f._goldDodgeBank = 1;
+  try {
+    const style = fxStyleFor(f);
+    emitFlash(f.x, f.y, { style, radius: (f.radius || 22) * 1.2, life: 0.14, alpha: 0.9, color: '#fff3c4' });
+    emitImpactRing(f.x, f.y, {
+      style, wave: true, radius: (f.radius || 22) * 0.6, growth: (f.radius || 22) * 2.6,
+      life: 0.4, alpha: 0.8, color: '#ffc928',
+    });
+    spawnFloatingText(f.x, f.y - (f.radius || 22) - 40, 'PLUNDERED!', '#ffd76a', { life: 1.1, size: 24 });
+  } catch (_) {}
+  try { SFX.plundered(); } catch (_) {}
+}
+
+// Golden Orb under-pass. Called inside the camera transform BEFORE the
+// fighter layer (Game.js match render, sandbox scene): the aura halo sits
+// behind the body while its rays, crescents and coins peek around the
+// silhouette. Progress derives from the buff record itself (elapsed share),
+// so the loop phase is exact no matter when the buff was granted.
+export function drawGoldOrbUnder(ctx, fighter) {
+  if (!fighter || fighter.state === 'dead' || fighter.eliminated) return;
+  const gb = fighter._goldOrb;
+  if (!gb || !(gb.timeLeft > 0) || !(gb.duration > 0)) return;
+  let eff = null;
+  try { eff = getVfxEffect('goldOrbAura'); } catch (_) { eff = null; }
+  if (!eff) return;
+  const prog = 1 - gb.timeLeft / gb.duration;
+  if (prog < 0 || prog >= 1) return;
+  ctx.save();
+  try {
+    eff.draw(ctx, {
+      progress: prog, scale: ((fighter.radius || 31) * GOLD_AURA_R) / 26,
+      mirrorX: fighter.facingRight ? 1 : -1, rotation: 0,
+      params: { dim: GOLD_GLOW_DIM },
+    }, { x: fighter.x, y: fighter.y });
+  } catch (_) {}
+  ctx.restore();
+}
+
+// Per-frame Treasure Hunt step. Called from the shared roster step so match,
+// sandbox and headless runs all meter it on the same clock. Owns: marker
+// upkeep, digging progress/cancel/complete, pending-reward timing, buff
+// decay. Decisions read live fighter state every frame — a dig interrupted
+// by anything (hit, dodge, jump, walk-off, release, death) simply stops
+// progressing, and completion is atomic (marker removed before VFX/buff).
+function updateTreasureHunt(fighters, dt) {
+  // Marker upkeep: keep one X stocked while at least one pirate is live and
+  // nobody is empowered — a golden pirate gets no new marks until the orb
+  // fades. (No pirate in play → nothing to interact, so nothing spawns.)
+  let pirateLive = false, goldLive = false;
+  for (let i = 0; i < fighters.length; i++) {
+    const f = fighters[i];
+    if (!f || f.state === 'dead' || f.eliminated) continue;
+    if (isPirate(f)) pirateLive = true;
+    if (goldActive(f)) goldLive = true;
+  }
+  if (pirateLive && !goldLive && _treasures.length < TREASURE_MAX) {
+    _treasureTimer -= dt;
+    if (_treasureTimer <= 0) {
+      if (spawnTreasure()) _treasureTimer = _treasures.length < TREASURE_MAX ? 1.0 : TREASURE_RESPAWN_DELAY;
+      else _treasureTimer = 1.0; // no valid geometry right now — retry shortly
+    }
+  }
+  for (let i = 0; i < fighters.length; i++) {
+    const f = fighters[i];
+    if (!f) continue;
+    // Buff decay (all fighters carry the record shape; only pirates arm it).
+    if (f._goldOrb) {
+      f._goldOrb.timeLeft -= dt;
+      if (f._goldOrb.timeLeft <= 0) { f._goldOrb = null; f._goldDodgeBank = 0; }
+    }
+    // Pending reward: the dig burst already played out; grant on schedule.
+    // Death/respawn clears the record, so a pirate that dies mid-cinematic
+    // never banks the buff posthumously.
+    if (f._digPending) {
+      f._digPending.t -= dt;
+      if (f._digPending.t <= 0) {
+        f._digPending = null;
+        grantGoldenOrb(f);
+      }
+    }
+    if (!isPirate(f) || f.state === 'dead' || f.eliminated) { f._dig = null; continue; }
+    // Nearest live marker in interaction range.
+    let mark = null, best = TREASURE_DIG_RANGE;
+    for (let j = 0; j < _treasures.length; j++) {
+      const m = _treasures[j];
+      const d = Math.hypot(f.x - m.x, f.y - m.y);
+      if (d < best) { best = d; mark = m; }
+    }
+    // Dig rules, all on existing state: grounded, idle (no attack/dodge/
+    // hitstun/lock), holding Block, in range. Anything else cancels (progress
+    // resets — the pirate must commit to a fresh hold).
+    const canDig = mark && f.grounded && !f.attack && !f.dodging
+      && !(f.hitstun > 0) && !(f._hitLock || (f._hitLockTimer || 0) > 0) && f.shielding;
+    if (!canDig) { f._dig = null; continue; }
+    let dig = f._dig;
+    if (!dig || dig.id !== mark.id) {
+      dig = f._dig = { id: mark.id, t: 0, puff: 0 };
+      // Digging audio starts with the dig (once per dig — the record is
+      // rebuilt on any cancel, so a fresh hold replays it; never per-frame).
+      try { SFX.treasureDigging(); } catch (_) {}
+    }
+    dig.t += dt;
+    mark.prog = Math.min(1, dig.t / TREASURE_DIG_TIME);
+    // Rooted digging stance (backstop: movement input is also gated on _dig
+    // in physics). Knockback can still displace — the range check above then
+    // cancels, which is exactly the walk-away rule.
+    f.vx = 0;
+    // Dig tick dust while working the spot.
+    dig.puff -= dt;
+    if (dig.puff <= 0) {
+      dig.puff = 0.14;
+      try {
+        emitDustPuff(f.x + (f.facingRight ? 14 : -14), f.y + (f.radius || 22) * 0.7, 2, {
+          style: fxStyleFor(f), spread: Math.PI, speed: 90, size: (f.radius || 22) * 0.12,
+          life: 0.3, gravity: 160, alpha: 0.5, color: '#a9763f', color2: '#7a4a22',
+        });
+      } catch (_) {}
+    }
+    if (dig.t >= TREASURE_DIG_TIME) {
+      // Complete exactly once: verify the marker is still there, then remove
+      // it BEFORE any VFX/buff, so a second digger (or a second frame) can
+      // never collect the same treasure twice.
+      let idx = -1;
+      for (let j = 0; j < _treasures.length; j++) {
+        if (_treasures[j].id === mark.id) { idx = j; break; }
+      }
+      f._dig = null;
+      if (idx < 0) continue;
+      const done = _treasures[idx];
+      _treasures.splice(idx, 1);
+      _treasureTimer = Math.min(_treasureTimer <= 0 ? TREASURE_RESPAWN_DELAY : _treasureTimer, TREASURE_RESPAWN_DELAY);
+      // Not every hole holds a chest: on a dud the dirt flies but nothing
+      // rises — no burst tail, no pending reward, no buff. The outcome is
+      // rolled here, once, at completion.
+      const chest = Math.random() < TREASURE_CHEST_CHANCE;
+      try {
+        const dir = f.facingRight ? 1 : -1;
+        if (chest) {
+          spawnTempVfx(f, 'treasureDig', TREASURE_DIG_VFX_LIFE, 0.55, 0, 0, 0, {
+            anchor: 'character', pinnedX: done.x, pinnedY: done.y, mirrorX: dir, force: true,
+            params: { chest: 1, cs: DIG_CHEST_SCALE },
+          });
+          try { SFX.treasureChest(); } catch (_) {}
+        } else {
+          spawnTempVfx(f, 'treasureDig', TREASURE_DUD_VFX_LIFE, 0.55, 0, 0, 0, {
+            anchor: 'character', pinnedX: done.x, pinnedY: done.y, mirrorX: dir, force: true,
+            params: { chest: 0, cs: DIG_CHEST_SCALE },
+          });
+          emitDustPuff(done.x, done.y - 4, 6, {
+            style: fxStyleFor(f), spread: Math.PI, speed: 150, size: (f.radius || 22) * 0.14,
+            life: 0.4, gravity: 200, alpha: 0.5, color: '#a9763f', color2: '#7a4a22',
+          });
+          spawnFloatingText(done.x, done.y - 56, 'NOTHING HERE...', '#c9bda8', { life: 1.0, size: 18 });
+          try { SFX.digThud(); } catch (_) {}
+        }
+      } catch (_) {}
+      // Reward lands when the burst has fully played (spec order: VFX first,
+      // then the orb). The pending record dies with the fighter.
+      if (chest) f._digPending = { t: TREASURE_DIG_VFX_LIFE };
+    }
+  }
+  // Clear stale per-marker progress displays (a digger that left without
+  // finishing leaves no ghost ring behind).
+  for (let i = 0; i < _treasures.length; i++) {
+    const m = _treasures[i];
+    let held = false;
+    for (let j = 0; j < fighters.length; j++) {
+      const f = fighters[j];
+      if (f && f._dig && f._dig.id === m.id) { held = true; break; }
+    }
+    if (!held) m.prog = 0;
+  }
+}
+
+// Digging shovel. Called in front of the fighter layer (after the body, so
+// the tool reads as held): a wooden handle + steel spade angled blade-down
+// into the spot, anchored to the digger's live front-hand position and
+// bobbing in sync with the digging heave (same wall-clock phase as the
+// render squash, so handle, body and dust strike together). Only pirates
+// mid-dig ever reach here — everyone else returns before touching canvas.
+export function drawDigShovel(ctx, fighter, time) {
+  if (!fighter || !fighter._dig || fighter.state === 'dead' || fighter.eliminated) return;
+  const hw = fighter._handWorld;
+  const hand = hw && hw[fighter.facingRight ? 'right' : 'left'];
+  const hx = hand ? hand.x : fighter.x + (fighter.facingRight ? 14 : -14);
+  const hy = hand ? hand.y : fighter.y;
+  const dir = fighter.facingRight ? 1 : -1;
+  const ph = (time || 0) * 0.02;
+  ctx.save();
+  ctx.translate(hx, hy + Math.sin(ph) * 2.5);
+  ctx.scale(dir, 1);
+  ctx.rotate(0.85 + Math.sin(ph) * 0.05);
+  ctx.lineJoin = 'round';
+  // handle (up) + knob
+  ctx.fillStyle = '#8a5a2e';
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(-3, -36, 6, 32, 3);
+  else ctx.rect(-3, -36, 6, 32);
+  ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = '#2a1206'; ctx.stroke();
+  ctx.fillStyle = '#6e3b1b';
+  ctx.beginPath(); ctx.arc(0, -37, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = '#2a1206'; ctx.stroke();
+  // steel spade (down, into the dirt)
+  ctx.beginPath();
+  ctx.moveTo(-3, -4); ctx.lineTo(3, -4); ctx.lineTo(9, 13); ctx.lineTo(-9, 13);
+  ctx.closePath();
+  ctx.fillStyle = '#9aa3b2'; ctx.fill();
+  ctx.lineWidth = 2.5; ctx.strokeStyle = '#2a1206'; ctx.stroke();
+  ctx.strokeStyle = 'rgba(230,238,248,.7)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(-4, 2); ctx.lineTo(4, 2); ctx.stroke();
+  ctx.restore();
+}
+
+// World-space treasure markers. Called inside the camera transform, after the
+// stage and before the fighters (an X on the ground sits under the action).
+// Toon styling matches the game: flat fills, dark outlines, a breathing gold
+// glow. The interaction ring is deliberately faint; the progress arc appears
+// only while a dig is live.
+export function drawTreasures(ctx, time) {
+  if (!_treasures.length) return;
+  const t = (time || 0) / 1000;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  for (let i = 0; i < _treasures.length; i++) {
+    const m = _treasures[i];
+    const pulse = 0.5 + 0.5 * Math.sin(t * 3 + m.id * 1.7);
+    // interaction range ring (faint)
+    ctx.save();
+    ctx.globalAlpha = 0.10 + 0.05 * pulse;
+    ctx.strokeStyle = '#ffc928';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 8]);
+    ctx.beginPath(); ctx.arc(m.x, m.y - 6, TREASURE_DIG_RANGE, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+    // breathing gold glow (banded discs)
+    const glows = [[30, 0.10], [19, 0.16], [10, 0.30]];
+    for (let gi = 0; gi < 3; gi++) {
+      ctx.fillStyle = 'rgba(255,205,60,' + ((glows[gi][1] * (0.7 + 0.3 * pulse)).toFixed(3)) + ')';
+      ctx.beginPath(); ctx.arc(m.x, m.y - 8, glows[gi][0] * (1 + 0.06 * pulse), 0, Math.PI * 2); ctx.fill();
+    }
+    // dirt mound
+    ctx.fillStyle = '#6a4226';
+    ctx.beginPath(); ctx.ellipse(m.x, m.y, 20, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#2a1206'; ctx.stroke();
+    // the X: two crossed planks
+    for (const rot of [0.66, -0.66]) {
+      ctx.save(); ctx.translate(m.x, m.y - 18); ctx.rotate(rot);
+      ctx.fillStyle = '#b33a2a';
+      ctx.beginPath();
+      const w = 36, h = 9;
+      if (ctx.roundRect) { ctx.roundRect(-w / 2, -h / 2, w, h, 3); }
+      else ctx.rect(-w / 2, -h / 2, w, h);
+      ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = '#2a1206'; ctx.stroke();
+      ctx.fillStyle = 'rgba(255,220,150,.5)';
+      ctx.fillRect(-w / 2 + 3, -h / 2 + 1.5, w - 6, 2);
+      ctx.restore();
+    }
+    // orbiting shimmer dots (deterministic spin)
+    for (let k = 0; k < 3; k++) {
+      const a = t * 0.8 + m.id + k * 2.1;
+      ctx.fillStyle = 'rgba(255,246,184,.85)';
+      ctx.beginPath(); ctx.arc(m.x + Math.cos(a) * 26, m.y - 10 + Math.sin(a) * 10, 2, 0, Math.PI * 2); ctx.fill();
+    }
+    // dig progress arc
+    if (m.prog > 0.01) {
+      ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.arc(m.x, m.y - 30, 13, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = '#ffc928'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(m.x, m.y - 30, 13, -Math.PI / 2, -Math.PI / 2 + m.prog * Math.PI * 2); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
 
 // ── Knight Shield Parry ──────────────────────────────────────────────────
 // The knight's signature: a precisely timed shield parry on the shield-press
@@ -2690,6 +3067,8 @@ export function resetCombat() {
   _attackPool.length = 0;
   _spawnedPool.length = 0;
   _recForcePool.length = 0;
+  // Treasure Hunt is match-scoped too: fresh markers next bout.
+  resetTreasures();
 }
 
 // Temporary diagnostic: live hitbox registry snapshot ({probe} tests).
@@ -2928,6 +3307,10 @@ function playSignatureVoice(fighter, volMult) {
     if (fighter._boxerRoll && fighter._boxerRoll.timeLeft > 0) SFX.usus(0.6 * volMult);
     else SFX.boxerM1s(0.42 * volMult);
   }
+  // The pirate fights with a cutlass, not a gun, so its basics take the plain
+  // sword swing — never the cowboy's recording (the old else-branch leaked
+  // cowboyM1s onto every pirate jab, aerial and hit confirm).
+  else if (def && def.id === 'pirate') SFX.slash(0.2 * volMult);
   else SFX.cowboyM1s(0.6 * volMult);
 }
 
@@ -2945,6 +3328,10 @@ function playLightAttackVoice(fighter, key) {
     if (def && def.id === 'knight') SFX.chargedSword(0.55 * WHIFF_VOLUME_MULT);
     return;
   }
+  // The pirate's Forward Light is the Cutlass Lunge: its flintknock voice plays
+  // on the ability's cast frame, so no generic swing here — the ability owns
+  // its sound, the same rule every other signature move follows.
+  if (def && def.id === 'pirate' && key === 'ftilt') return;
   if (!LIGHT_ATTACK_KEYS.has(key)) return;
   playSignatureVoice(fighter, WHIFF_VOLUME_MULT);
 }
@@ -4276,6 +4663,16 @@ function deliverHit(attacker, target, def, facing, key, skipConfirm) {
       });
     } catch (_) {}
   }
+  // Golden Orb (pirate Treasure Hunt reward): empowered attacks deal more
+  // damage while the buff is live. Same row-copy mechanism as the parry
+  // bonus above — the shared table and the global formula are untouched —
+  // but persistent instead of consumed, so it covers every blow (melee and
+  // cannon rounds alike, which all resolve through here) until the buff ends.
+  const gb = attacker && attacker._goldOrb;
+  if (gb && gb.timeLeft > 0 && gb.dmgMul && gb.dmgMul !== 1) {
+    const baseDmg = (effDef.dmg != null ? effDef.dmg : effDef.baseDamage) || 0;
+    effDef = { ...effDef, dmg: baseDmg * gb.dmgMul };
+  }
   const shielded = target.shielding && !target.dodging;
   // Royal Guard art: a knight's held block keeps the standard shield
   // reduction — this only paints the restrained shield-hit read.
@@ -5104,6 +5501,9 @@ export function stepRosterCombat(fighters, inputOverrides, dt) {
   // Ability projectiles: move, expire and resolve collisions the same way an
   // active hitbox would (same damage rules).
   updateProjectiles(fighters, dt);
+  // Treasure Hunt (pirate passive): markers, digging, pending rewards and
+  // Golden Orb decay — same clock, every mode.
+  updateTreasureHunt(fighters, dt);
   // Former Plunder hook: the pirate's meter is removed (see the stub above),
   // so this is a no-op kept on the shared roster step for import stability.
   updatePlunder(fighters, dt);
@@ -5273,4 +5673,11 @@ export function softResetFighter(f, stage) {
   // ...and no live counter stance either.
   f._knightCounter = 0;
   f._counterResolving = false;
+  // ...and no Treasure Hunt state either: a respawn never inherits a dig in
+  // progress, a pending reward, the Golden Orb or its banked bonus dodge.
+  // (Markers are world-level and persist across stocks by design.)
+  f._dig = null;
+  f._digPending = null;
+  f._goldOrb = null;
+  f._goldDodgeBank = 0;
 }

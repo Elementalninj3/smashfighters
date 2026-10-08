@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Treasure Dig VFX</title>
+<style>html,body{margin:0;height:100%;background:#120a06;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+/* TREASURE DIG VFX (toon style) - vanilla JS + Canvas2D
+   Drop-in: const fx = new TreasureDig(); fx.update(dt); fx.draw(ctx, groundX, groundY, scale);
+   fx.reset() replays. SPEED below = global playback speed (1 = slow original, 1.8 = snappy).
+   All particles are solid circles with a black outline, drawn by dot().
+   Stages: 1 dig start / 2 digging mid / 3 digging final / 4 golden flash / 5 chest rise / 6 reward */
+
+const SPEED=1.8;
+const TAU=Math.PI*2,rnd=(a,b)=>a+Math.random()*(b-a),clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v)),lerp=(a,b,t)=>a+(b-a)*t;
+const easeOut=t=>1-Math.pow(1-clamp(t),3);
+const easeInOut=t=>{t=clamp(t);return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2};
+const easeBack=t=>{t=clamp(t);return 1+2.9*Math.pow(t-1,3)+1.9*Math.pow(t-1,2)};
+
+const STAGES=[['1. DIG START',.9],['2. DIGGING (MID)',.9],['3. DIGGING (FINAL)',.9],['4. GOLDEN FLASH',.8],['5. CHEST RISE',1.1],['6. REWARD',2.8]].map(([name,d])=>({name,d}));
+let _a=0;STAGES.forEach(s=>{s.t0=_a;_a+=s.d});
+const TOTAL=_a,S=STAGES,CH={W:120,B:56,L:38};
+
+/* toon palette: flat fills + dark outline */
+const OUT='#2a1206',GOLD='#ffc928',GOLD_HI='#fff09a',GOLD_DK='#7a3f06';
+const ROCK=[[107,63,34],[138,86,48],[168,112,63]];
+
+/* ---------- helpers ---------- */
+const ell=(c,x,y,rx,ry)=>{c.beginPath();c.ellipse(x,y,rx,ry,0,0,TAU)};
+// THE particle: solid circle + black toon outline
+const dot=(c,x,y,r,fill,lw=Math.max(2.5,r*.3))=>{if(r<=.4)return;ell(c,x,y,r,r);c.fillStyle=fill;c.fill();c.lineWidth=lw;c.strokeStyle='#000';c.stroke()};
+// banded (stepped) glow instead of a smooth gradient: 3 hard-edged flat discs
+const glow=(c,x,y,r,a,k=1)=>{a=clamp(a);for(let i=0;i<3;i++){const s=[1,.62,.3][i];c.fillStyle=`rgba(${['255,150,20','255,205,60','255,246,190'][i]},${a*[.16,.26,.5][i]})`;ell(c,x,y,r*s,r*s*k);c.fill()}};
+const rr=(c,x,y,w,h,r)=>{c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath()};
+const rockPts=n=>Array.from({length:n},(_,i)=>{const a=i/n*TAU+rnd(-.25,.25);return[Math.cos(a)*rnd(.75,1.1),Math.sin(a)*rnd(.65,1)]});
+// 3 quantised rock tones, tinted gold when lit by the treasure
+const rockFill=(s,l)=>{const b=ROCK[Math.min(2,s*3|0)],m=Math.min(1,l*.6);return`rgb(${lerp(b[0],255,m*.6)|0},${lerp(b[1],190,m)|0},${lerp(b[2],70,m)|0})`};
+// mound rock (scenery, not a particle)
+function drawRock(c,pts,x,y,r,rot,fill){
+  c.save();c.translate(x,y);c.rotate(rot);
+  const path=()=>{c.beginPath();pts.forEach((p,i)=>c[i?'lineTo':'moveTo'](p[0]*r,p[1]*r));c.closePath()};
+  path();c.fillStyle=fill;c.fill();
+  c.save();c.clip();
+  c.fillStyle='rgba(40,15,5,.32)';c.beginPath();c.rect(-2*r,-2*r,4*r,4*r);c.moveTo(-.4*r+1.05*r,-.45*r);c.arc(-.4*r,-.45*r,1.05*r,0,TAU);c.fill('evenodd');
+  c.fillStyle='rgba(255,232,185,.55)';ell(c,-r*.38,-r*.42,r*.26,r*.16);c.fill();
+  c.restore();
+  path();c.lineJoin='round';c.lineWidth=Math.max(2,r*.22);c.strokeStyle=OUT;c.stroke();
+  c.restore();
+}
+function lidPath(c,W,L){c.beginPath();c.moveTo(-W/2,0);c.lineTo(-W/2,-L*.45);c.quadraticCurveTo(-W/2,-L,0,-L);c.quadraticCurveTo(W/2,-L,W/2,-L*.45);c.lineTo(W/2,0);c.closePath()}
+
+/* ---------- the effect ---------- */
+class TreasureDig{
+  constructor(){this.reset()}
+  reset(){
+    this.t=0;this.parts=[];this.sparks=[];this.dust=[];this.coins=[];this.stars=[];
+    this.beat=0;this.pulse=0;this.flash=0;this.shake=0;this.open=0;this.fl={};this.acc={coin:0,star:0};
+    this.rocks=Array.from({length:20},()=>{
+      const ox=rnd(-1,1)*74,h=(1-Math.abs(ox)/84)*30,oy=-rnd(.05,1)*h+rnd(-2,4);
+      return{ox,oy,r:rnd(10,20)*(1-Math.abs(ox)/190),rot:rnd(0,TAU),shade:Math.random(),pts:rockPts(5),back:oy<-12&&Math.abs(ox)<44};
+    }).sort((a,b)=>a.oy-b.oy);
+    this.rays=Array.from({length:13},(_,i)=>({a:(i/12-.5)*2.7+rnd(-.08,.08),w:rnd(10,26),l:rnd(.4,1),ph:rnd(0,TAU)}));
+  }
+  get stage(){let i=0;S.forEach((s,k)=>{if(this.t>=s.t0)i=k});return i}
+  prog(k){return clamp((this.t-S[k].t0)/S[k].d)}
+  get light(){const t=this.t;return t<S[1].t0?lerp(.04,.15,this.prog(0)):t<S[2].t0?lerp(.2,.45,this.prog(1)):t<S[3].t0?lerp(.5,.85,this.prog(2)):1}
+  chestY(){return this.t<S[4].t0?100:lerp(100,-8,easeBack(this.prog(4)))}
+  mouthY(){return Math.min(0,this.chestY()-CH.B)}
+  lid(){return easeBack((this.t-S[5].t0-.1)/.45)}
+  seek(i){const T=S[i].t0+S[i].d*.6;this.reset();while(this.t<T)this.update(1/60)}
+
+  /* spawners (counts kept low on purpose) */
+  spawnRock(st){const k=1+st*.25;this.parts.push({x:rnd(-38,38),y:rnd(-10,-2),vx:rnd(-1,1)*140*k,vy:-rnd(320,640)*k,r:rnd(4,8+st),shade:Math.random()})}
+  spawnSparks(n,k=1){for(let i=0;i<n;i++)this.sparks.push({x:rnd(-30,30),y:rnd(-10,0),vx:rnd(-200,200)*k,vy:-rnd(200,600)*k,r:rnd(3,5),age:0,life:rnd(.4,.9)})}
+  spawnCoin(p=1){const a=rnd(-1,1),sp=rnd(380,760)*p;this.coins.push({x:rnd(-28,28),y:this.mouthY()-4,vx:Math.sin(a)*sp*.7,vy:-Math.cos(a)*sp,ph:rnd(0,TAU),sp:rnd(7,16),r:rnd(8,11),b:0,age:0,life:rnd(2.2,3.2)})}
+  spawnDust(r){this.dust.push({x:rnd(-45,45),y:rnd(-8,0),r,vx:rnd(-30,30),vy:-rnd(20,50),age:0,life:rnd(.5,.8)})}
+  dig(st){
+    this.pulse=1;this.shake=Math.max(this.shake,[1.5,2.5,4][st]);
+    for(let i=0;i<[2,3,4][st];i++)this.spawnRock(st);
+    this.spawnDust(rnd(9,15));
+    if(st)this.spawnSparks(st*2,.8);
+  }
+
+  update(dt){
+    dt*=SPEED;this.t+=dt;const t=this.t,st=this.stage;
+    // stages 1-3: rhythmic dig beats, faster and bigger each stage
+    if(st<3){this.beat-=dt;if(this.beat<=0){this.beat=[.42,.3,.2][st];this.dig(st)}}
+    // one-shot events
+    if(!this.fl.a&&t>=S[3].t0){this.fl.a=1;this.flash=1;this.shake=10;this.spawnSparks(24,1.3);for(let i=0;i<7;i++)this.spawnRock(2);for(let i=0;i<2;i++)this.spawnDust(rnd(14,20))}
+    if(!this.fl.b&&t>=S[4].t0){this.fl.b=1;this.shake=4;for(let i=0;i<6;i++)this.spawnRock(2);for(let i=0;i<2;i++)this.spawnDust(rnd(12,18))}
+    if(!this.fl.c&&t>=S[5].t0+.3){this.fl.c=1;this.flash=.6;this.shake=5;for(let i=0;i<18;i++)this.spawnCoin(1.15);this.spawnSparks(12,1)}
+    // coin trickle
+    const cr=t<S[4].t0+.3?0:t<S[5].t0?6:t<S[5].t0+1.8?8:0;
+    this.acc.coin+=cr*dt;while(this.acc.coin>=1){this.acc.coin--;this.spawnCoin(.7)}
+    // sparkle dots
+    const sr=st<3?0:st===3?12:st===4?9:t<TOTAL-.8?14:0,wide=st===3?60:140,tall=st===3?380:200;
+    this.acc.star+=sr*dt;while(this.acc.star>=1){this.acc.star--;this.stars.push({x:rnd(-wide,wide),y:this.mouthY()-rnd(-10,tall),r:rnd(4,8),age:0,life:rnd(.5,1)})}
+    // decays
+    this.open=easeInOut((t-S[3].t0)/(S[3].d+S[4].d*.6));
+    this.pulse*=Math.exp(-dt*12);this.shake*=Math.exp(-dt*9);this.flash*=Math.exp(-dt*5);
+    // particles
+    for(const p of this.parts){p.vy+=1300*dt;p.x+=p.vx*dt;p.y+=p.vy*dt}
+    this.parts=this.parts.filter(p=>p.y<6);
+    for(const p of this.sparks){p.vy+=600*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.age+=dt}
+    this.sparks=this.sparks.filter(p=>p.age<p.life);
+    for(const p of this.dust){p.x+=p.vx*dt;p.y+=p.vy*dt;p.age+=dt}
+    this.dust=this.dust.filter(p=>p.age<p.life);
+    for(const c of this.coins){
+      c.vy+=1100*dt;c.x+=c.vx*dt;c.y+=c.vy*dt;c.ph+=c.sp*dt;c.age+=dt;
+      if(c.y>8&&c.vy>0){if(c.b<2){c.y=8;c.vy*=-.38;c.vx*=.7;c.b++}else{c.y=8;c.vy=0;c.vx=0;c.life=Math.min(c.life,c.age+.4)}}
+    }
+    this.coins=this.coins.filter(c=>c.age<c.life);
+    for(const s of this.stars)s.age+=dt;
+    this.stars=this.stars.filter(s=>s.age<s.life);
+  }
+
+  /* ---------- drawing ---------- */
+  draw(c,x,y,s=1){
+    const g=this.light,o=this.open,sh=this.shake;
+    c.save();c.translate(x+rnd(-sh,sh)*s,y+rnd(-sh,sh)*s);c.scale(s,s);c.lineJoin='round';
+    // ground + pit
+    c.fillStyle='rgba(15,7,3,.55)';ell(c,0,8,125,22);c.fill();
+    c.fillStyle='#6a4226';ell(c,0,2,94,17);c.fill();c.lineWidth=3;c.strokeStyle=OUT;c.stroke();
+    const prx=lerp(34,62,o),pry=lerp(7,12,o);
+    c.fillStyle='#1a0c05';ell(c,0,0,prx,pry);c.fill();
+    glow(c,0,-4,70+g*110,g*.9,.55);
+    c.globalAlpha=g*.8;c.strokeStyle='#ffc43a';c.lineWidth=3;ell(c,0,0,prx,pry);c.stroke();c.globalAlpha=1;
+    this.drawRocks(c,false);
+    const bp=this.beamParams();if(bp&&bp.a>.01)this.drawBeam(c,bp.a,bp.h);
+    this.drawShock(c);
+    this.drawChest(c);
+    this.drawRocks(c,true);
+    // dust: tan circles that pop in then shrink away
+    for(const d of this.dust){const u=d.age/d.life;dot(c,d.x,d.y,d.r*easeBack(u/.3)*(1-clamp((u-.45)/.55)),'#ecd2a8')}
+    // debris: brown circles, gold-tinted by the glow
+    const lit=g*.6;for(const p of this.parts)dot(c,p.x,p.y,p.r,rockFill(p.shade,lit));
+    // coins
+    for(const k of this.coins)this.drawCoin(c,k);
+    // sparks: small yellow circles shrinking out
+    for(const p of this.sparks){const u=p.age/p.life;dot(c,p.x,p.y,p.r*(1-u*u),'#fff27a',2)}
+    // sparkle dots: pale circles that pop in, shrink out
+    for(const q of this.stars){const u=q.age/q.life,sc=u<.3?easeBack(u/.3):1-(u-.3)/.7;dot(c,q.x,q.y,q.r*sc,'#fffbe0')}
+    c.restore();
+  }
+  drawRocks(c,front){
+    const g=this.light,o=this.open,dg=clamp(this.t/S[3].t0);
+    for(const k of this.rocks){
+      if(k.back===front)continue;
+      const sd=Math.sign(k.ox)||1,near=Math.abs(k.ox)<40;
+      const x=k.ox*(1+.25*o)+sd*o*(near?30:12);
+      const y=k.oy*(1-.35*o)*(1-.25*dg)-this.pulse*6*(1-Math.abs(k.ox)/90);
+      drawRock(c,k.pts,x,y,k.r*(1-.12*o),k.rot,rockFill(k.shade,g*clamp(1-Math.abs(k.ox)/90)*.7));
+    }
+  }
+  beamParams(){
+    const t=this.t,fade=1-clamp((t-(TOTAL-.7))/.7);if(t<S[3].t0)return null;
+    let a,h;
+    if(t<S[4].t0){const p=this.prog(3);a=easeOut(p*3);h=560*easeOut(p*2.2)}
+    else if(t<S[5].t0){const p=this.prog(4);a=lerp(1,.75,p);h=lerp(560,400,p)}
+    else{const p=this.prog(5);a=lerp(.75,.55,p)*(.9+.1*Math.sin(t*9));h=lerp(400,320,p)}
+    return{a:a*fade,h};
+  }
+  drawBeam(c,a,h){
+    const t=this.t,fl=.9+.1*Math.sin(t*37)*Math.sin(t*23),w=lerp(26,64,a);
+    c.save();c.translate(0,this.mouthY());
+    // flat hard-edged rays: pale gold + white inner, length pulses
+    const ray=(rw,L)=>{c.beginPath();c.moveTo(-rw/2,0);c.lineTo(0,-L);c.lineTo(rw/2,0);c.closePath();c.fill()};
+    for(const r of this.rays){
+      const L=h*r.l*(1-.55*Math.abs(r.a)/1.35)*(.8+.2*Math.sin(t*9+r.ph));
+      c.save();c.rotate(r.a);
+      c.fillStyle=`rgba(255,214,70,${.5*a})`;ray(r.w,L);
+      c.fillStyle=`rgba(255,247,190,${.8*a})`;ray(r.w*.45,L*.8);
+      c.restore();
+    }
+    // 3-layer cel-shaded spike
+    const spike=(ww,hh,col)=>{c.fillStyle=col;c.beginPath();c.moveTo(-ww,0);c.lineTo(-ww*.12,-hh);c.lineTo(ww*.12,-hh);c.lineTo(ww,0);c.closePath();c.fill()};
+    spike(w,h,`rgba(255,200,40,${.5*a*fl})`);
+    spike(w*.62,h*.92,`rgba(255,235,120,${.7*a*fl})`);
+    spike(w*.3,h*.8,`rgba(255,255,235,${.95*a})`);
+    glow(c,0,-6,90+160*a,a);
+    c.fillStyle=`rgba(255,214,70,${.4*a})`;ell(c,0,-6,150*a+40,14*a+6);c.fill(); // horizontal flare
+    c.fillStyle=`rgba(255,250,210,${.9*a})`;ell(c,0,-6,90*a+20,7*a+3);c.fill();
+    c.restore();
+  }
+  drawShock(c){
+    for(const[t0,R]of[[S[3].t0,250],[S[5].t0+.3,200]]){
+      const u=(this.t-t0)/.6;if(u<0||u>1)continue;const rx=lerp(20,R,easeOut(u));
+      c.save();c.globalAlpha=1-u*u;
+      c.strokeStyle='#c4600a';c.lineWidth=9*(1-u)+3;ell(c,0,2,rx,rx*.2);c.stroke();
+      c.strokeStyle='#fff2a0';c.lineWidth=4.5*(1-u)+1.5;c.stroke();c.restore();
+    }
+  }
+  drawChest(c){
+    const cy=this.chestY();if(cy>=98)return;
+    const{W,B,L}=CH,p=this.lid(),f=Math.min(p,1),t=this.t,rise=this.prog(4);
+    const sy=(f<.5?1-1.4*f:.3+1.4*(f-.5))*Math.max(1,p);
+    c.save();c.beginPath();c.rect(-500,-1500,1000,1504);c.clip(); // hide the part still buried
+    c.translate(0,cy);c.rotate(t<S[5].t0?Math.sin(t*16)*.04*(1-rise):0);
+    c.lineJoin='round';c.lineWidth=3;c.strokeStyle=OUT;
+    const bands=[-W/2+12,W/2-26];
+    const band=(bx,y0,h)=>{c.fillStyle=GOLD;c.fillRect(bx,y0,14,h);c.fillStyle=GOLD_HI;c.fillRect(bx+2,y0,4,h);c.strokeStyle=OUT;c.lineWidth=2;c.strokeRect(bx,y0,14,h)};
+
+    const lidDraw=()=>{
+      c.save();c.translate(0,-B);c.scale(1,sy);lidPath(c,W,L);
+      if(f<.5){ // outer wood, flat 3-tone
+        c.fillStyle='#a9622c';c.fill();
+        c.save();c.clip();
+        c.fillStyle='#c98446';c.fillRect(-W/2,-L,W,L*.3);
+        c.fillStyle='#7e4420';c.fillRect(-W/2,-L*.3,W,L*.3);
+        for(const bx of bands)band(bx,-L,L);
+        c.fillStyle=GOLD;c.fillRect(-W/2,-7,W,7);c.restore();
+        lidPath(c,W,L);c.lineWidth=3;c.stroke();
+        rr(c,-9,-10,18,12,3);c.fillStyle=GOLD;c.fill();c.stroke();
+      }else{ // inner lining
+        c.fillStyle='#a52c1c';c.fill();
+        c.save();c.clip();c.fillStyle='#c23a26';c.fillRect(-W/2,-L,W,L*.25);c.fillStyle='#7a1d12';c.fillRect(-W/2,-L*.4,W,L*.4);c.restore();
+        lidPath(c,W,L);c.lineWidth=3;c.stroke();
+        c.save();c.translate(0,-3);c.scale(.86,.8);lidPath(c,W,L);c.strokeStyle=GOLD;c.lineWidth=3.5;c.stroke();c.restore();
+      }
+      c.restore();
+    };
+
+    if(f>=.5)lidDraw(); // opened lid sits behind the body
+    // body
+    rr(c,-W/2,-B,W,B,7);c.fillStyle='#8c5028';c.fill();
+    c.save();c.clip();
+    c.fillStyle='#a8693a';c.fillRect(-W/2,-B,W,9);
+    c.fillStyle='#6e3b1b';c.fillRect(-W/2,-B*.38,W,B*.38);
+    c.strokeStyle='rgba(25,10,3,.5)';c.lineWidth=2;for(const yy of[-B*.66,-B*.33]){c.beginPath();c.moveTo(-W/2,yy);c.lineTo(W/2,yy);c.stroke()}
+    for(const bx of bands)band(bx,-B,B);
+    c.fillStyle='#3a1b0a';c.fillRect(-W/2,-9,W,9);c.restore();
+    rr(c,-W/2,-B,W,B,7);c.strokeStyle=OUT;c.lineWidth=3;c.stroke();
+    // glowing interior + coin pile
+    if(f>.05){
+      c.save();c.translate(0,-B);
+      c.fillStyle='#ffe36a';c.beginPath();c.ellipse(0,0,W/2-7,10,0,Math.PI,TAU);c.fill();
+      c.fillStyle='#fffbd0';c.beginPath();c.ellipse(0,0,W/2-20,6,0,Math.PI,TAU);c.fill();
+      if(f>.3)for(let i=-3;i<=3;i++){c.beginPath();c.arc(i*14,-3-(3-Math.abs(i))*1.6+(1-f)*10,8,Math.PI,TAU);c.fillStyle=GOLD;c.fill();c.lineWidth=2;c.strokeStyle=GOLD_DK;c.stroke()}
+      c.restore();
+    }
+    if(f<.5)lidDraw(); // closed lid sits in front
+    // lock plate
+    c.strokeStyle=OUT;c.lineWidth=3;rr(c,-11,-B+3,22,26,4);c.fillStyle=GOLD;c.fill();c.stroke();
+    c.fillStyle=OUT;c.beginPath();c.arc(0,-B+13,3.2,0,TAU);c.fill();c.fillRect(-1.5,-B+13,3,7);
+    // mouth glow
+    if(f>.05)glow(c,0,-B-4,70*f+20,.55*f,.7);
+    c.restore();
+  }
+  drawCoin(c,k){ // solid gold circle, spins by squashing sideways
+    const a=clamp((k.life-k.age)/.3),r=k.r*easeBack(k.age/.15),sx=Math.max(.14,Math.abs(Math.cos(k.ph)));
+    c.save();c.translate(k.x,k.y);c.globalAlpha=a;c.scale(sx,1);dot(c,0,0,r,GOLD,3);c.restore();
+  }
+}
+
+/* ---------- demo harness ---------- */
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),fx=new TreasureDig();
+let W,H,DPR,paused=false,last=performance.now();
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR}
+addEventListener('resize',resize);resize();
+const restart=()=>{fx.reset();paused=false};
+addEventListener('pointerdown',restart);
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){restart();e.preventDefault()}
+  else if(e.key==='p'||e.key==='P')paused=!paused;
+  else if(/^[1-6]$/.test(e.key)){fx.seek(+e.key-1);paused=true}
+});
+function hud(){
+  const n=6,pw=Math.min(150,(W-24)/n-6),y=H-44,x0=W/2-(pw+6)*n/2+3,cur=fx.stage;
+  ctx.font=`600 ${Math.max(9,Math.min(11,pw/12))}px system-ui,sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+  for(let i=0;i<n;i++){
+    const x=x0+i*(pw+6);rr(ctx,x,y,pw,24,12);ctx.fillStyle=i===cur?'#ffcf30':'rgba(255,255,255,.08)';ctx.fill();
+    ctx.fillStyle=i===cur?'#2a1206':'rgba(255,240,210,.7)';ctx.fillText(pw<100?S[i].name.split('.')[0]:S[i].name,x+pw/2,y+12.5);
+  }
+  ctx.fillStyle='rgba(255,240,210,.45)';ctx.font='11px system-ui,sans-serif';
+  ctx.fillText('click / space = replay, 1-6 = jump to stage, P = pause',W/2,H-12);
+}
+function frame(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;
+  if(!paused){fx.update(dt);if(fx.t>TOTAL+1.2)fx.reset()}
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  const gy=H*.74,s=Math.min(W/760,H/620);
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#2b1b12');g.addColorStop(gy/H,'#1d1109');g.addColorStop(1,'#120a06');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  fx.draw(ctx,W/2,gy,s);
+  if(fx.flash>.01){ctx.fillStyle=`rgba(255,238,190,${fx.flash*.5})`;ctx.fillRect(0,0,W,H)}
+  const fo=Math.max(clamp((fx.t-TOTAL-.4)/.8),1-clamp(fx.t/.25));
+  if(fo>.01){ctx.fillStyle=`rgba(18,10,6,${fo})`;ctx.fillRect(0,0,W,H)}
+  hud();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

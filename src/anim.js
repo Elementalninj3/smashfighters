@@ -432,6 +432,37 @@ const DEFAULT_WEAPONS = [
       center: ANCHOR(5, -3), custom: [],
     },
   },
+  // Pirate hand cannon (GA sprite): landscape 1536x1024, authored as a
+  // side-view barrel pointing right, like the rifle family.
+  // Fitted into an 84x56 box (scale min(84/1536, 56/1024) = 0.0547): the
+  // grip sits back-left of centre where the hand holds the breech and the
+  // tip at the muzzle lip, so the cannonball (projectileSpawn reads the
+  // weapon's tip anchor) leaves the barrel mouth. Anchors are starter
+  // values in the fitted draw space — fine-tune per weapon in the editor
+  // (weapon guides overlay) like every other sprite weapon.
+  {
+    id: 'pirateCannon', name: 'Pirate Cannon', type: 'gun', w: 84, h: 56,
+    color: '#3a2f28', accent: '#c8a24a', mirror: true,
+    sprite: '/GA/weapons/piratecannon.png',
+    pivot: { x: -16, y: 8 },
+    anchors: {
+      grip: ANCHOR(-16, 8), tip: ANCHOR(38, -2),
+      center: ANCHOR(8, 2), custom: [],
+    },
+  },
+  // Pirate flintlock (GA sprite): landscape 1536x1024 side-view pistol
+  // pointing right. Fitted into a 64x36 box; grip at the handle, tip at the
+  // muzzle. Same starter-anchor caveat as the cannon above.
+  {
+    id: 'pirateFlintlock', name: 'Pirate Flintlock', type: 'gun', w: 64, h: 36,
+    color: '#3a2f28', accent: '#c8a24a', mirror: true,
+    sprite: '/GA/weapons/pirateflintknock.png',
+    pivot: { x: -12, y: 6 },
+    anchors: {
+      grip: ANCHOR(-12, 6), tip: ANCHOR(26, -3),
+      center: ANCHOR(6, 1), custom: [],
+    },
+  },
 ];
 
 let weaponLib = new Map();
@@ -1402,6 +1433,15 @@ for (const [id, srcId, name] of PIRATE_ANIM_SOURCES) {
   const derived = deriveArmed(_baseAnimById.get(srcId), id, name, 'saber');
   if (!derived) console.warn(`[animlib] pirate move "${id}" has no source animation "${srcId}"`);
   else _pirateAnims.push(derived);
+}
+// Cannon Blast shoulders the hand cannon instead of the saber: the pirate
+// aims the piece during the windup and the ball leaves its muzzle (the
+// projectile spawn reads the weapon's tip anchor, so the round, the muzzle
+// star and the trail all originate at the barrel mouth with no extra math).
+for (const a of _pirateAnims) {
+  if (a.id === 'pirateFsmash') {
+    a.weapons.right = { ...emptyWeaponCfg(), id: 'pirateCannon', mountX: 0, mountY: -2, gripOffsetX: -14, gripOffsetY: 0, gripRot: 0 };
+  }
 }
 
 // Default timeline VFX for the pirate's ability art (same rule as the
