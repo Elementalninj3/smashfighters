@@ -1743,6 +1743,59 @@ export const ABILITIES = {
       try { SFX.cannonShot(0.7 * WHIFF_VOLUME_MULT); } catch (_) {}
     },
   },
+
+  // Down Blast (pirate Aerial Heavy, PIRATE_ATTACKS.aerialHeavy): the pirate
+  // aims the cannon down and fires, blasting himself upward. The shot is a
+  // real downward hitbox (this row, via strikeHitbox, glued to the fighter
+  // for the active window like every other strike box); the launch is a
+  // self-recoil boost that spends the shared aerial-recovery resource (the
+  // same one the aerial light uses, recharged on ground touch), so one blast
+  // per airtime — no infinite flight.
+  pirateDownBlast: {
+    name: 'Down Blast',
+    // startup 10 + active 8 + recovery 20 from PIRATE_ATTACKS.aerialHeavy.
+    frames: 38,
+    castFrame: 10,
+    strikeHitbox: true,
+    run(fighter, atk, cfg) {
+      const dir = atk.facing || (fighter.facingRight ? 1 : -1);
+      const r = fighter.radius || 22;
+      // Muzzle + blast art pinned BELOW the pirate, where the shot leaves.
+      const bx = fighter.x, by = fighter.y + r * 0.9;
+      try {
+        spawnAbilityVfx(fighter, 'pirateCannonMuzzle', 0.2, 1, 0, 0, 0, {
+          anchor: 'character',
+          pinnedX: bx,
+          pinnedY: by,
+          mirrorX: dir,
+          params: { unit: r / 22 },
+        });
+      } catch (_) {}
+      try {
+        const style = fxStyleFor(fighter);
+        emitFlash(bx, by, { style, radius: r * 0.8, life: 0.09, alpha: 0.9, color: '#fff3c4' });
+        emitSparks(bx, by, 7, {
+          style, dir: Math.PI / 2, spread: 0.7, speed: 430, life: 0.16, size: 2, gravity: 320,
+        });
+        emitDustPuff(bx, by, 5, {
+          style, dir: Math.PI / 2, spread: 0.9, speed: 150, size: r * 0.16,
+          life: 0.36, gravity: 260, alpha: 0.45,
+        });
+      } catch (_) {}
+      atk.fxX = bx;
+      atk.fxY = by;
+      try { SFX.cannonShot(0.7 * WHIFF_VOLUME_MULT); } catch (_) {}
+      // Recoil launch. Grounded (shouldn't happen — air move) or resource
+      // spent: just hold altitude like every other aerial heavy.
+      if (!fighter.grounded && fighter.canUseAerialLightRecovery) {
+        fighter.vy = -PIRATE_DOWNBLAST_LIFT;
+        fighter.fastFalling = false;
+        fighter.canUseAerialLightRecovery = false;
+      } else if (fighter.vy > -AERIAL_LIFT.other) {
+        fighter.vy = -AERIAL_LIFT.other;
+      }
+    },
+  },
 };
 
 // The one opponent the Grab considers: a live opponent, in play, in reach.
@@ -2077,12 +2130,12 @@ const KNIGHT_ATTACKS = {
 
 // Pirate attacks — rope mobility, cutlass reach and cannon pressure. Midweight
 // numbers: honest damage and honest launch, with the character identity living
-// OUTSIDE the table — the four ability moves
+// OUTSIDE the table — the five ability moves
 // (ABILITIES.pirateRopeSwing / pirateAnchorDrop / pirateCannonBlast /
-// pirateBroadside) — so every blow resolves through the same deliverHit as the
-// rest of the roster.
+// pirateBroadside / pirateDownBlast) — so every blow resolves through the same
+// deliverHit as the rest of the roster.
 //
-// Five of the rows are the character's signature moves and are declared as
+// Six of the rows are the character's signature moves and are declared as
 // nonHitbox abilities, the same designation pattern the cowboy/ninja/knight
 // tables use (repeated HERE rather than only on the animation, so a saved
 // animation store can never strip a signature move back to a plain swing —
@@ -2091,6 +2144,7 @@ const KNIGHT_ATTACKS = {
 //   dsmash = the Anchor Drop (heavy downward slam + ground impact)
 //   fsmash = the Cannon Blast (travelling cannonball projectile)
 //   nsmash = the Broadside Burst (wide, short close-range blast)
+//   aerialHeavy = the Down Blast (downward cannon shot + self-recoil launch)
 const PIRATE_ATTACKS = {
   jab:    { name: 'Cutlass Jab', anim: 'pirateJab', category: 'jab', direction: 'neutral', state: 'ground', startup: 3, active: 4, recovery: 8, dmg: 4.5, kbBase: 70, kbGrowth: 0.55, angle: 18, launchAngle: 18, w: 64, h: 30, ox: 44, oy: -2 },
   // Forward Light is the Cutlass Lunge: a short step-in (owned by the ability)
@@ -2116,7 +2170,7 @@ const PIRATE_ATTACKS = {
   // art, not a persistent environmental object).
   dsmash: { name: 'Anchor Drop', anim: 'pirateDsmash', category: 'special', direction: 'down', state: 'ground', startup: 15, active: 5, recovery: 25, dmg: 13.0, kbBase: 175, kbGrowth: 0.90, angle: 78, launchAngle: 78, w: 66, h: 44, ox: 38, oy: 6, abilityType: 'nonHitbox', abilityId: 'pirateAnchorDrop', abilityCfg: {}, hitFx: 'pirateHitBurst' },
   aerialLight:  { name: 'Air Slash', anim: 'pirateAerialLight', category: 'aerial', direction: 'neutral', state: 'air', startup: 5, active: 7, recovery: 13, dmg: 6.5, kbBase: 76, kbGrowth: 0.70, angle: 70, launchAngle: 70, w: 60, h: 62, ox: 6, oy: -44, air: true, usableInAir: true },
-  aerialHeavy:  { name: 'Air Cleave', anim: 'pirateAerialHeavy', category: 'aerial', direction: 'forward', state: 'air', startup: 10, active: 8, recovery: 20, dmg: 13.0, kbBase: 145, kbGrowth: 1.45, angle: -55, launchAngle: -55, spike: true, w: 66, h: 58, ox: 48, oy: -6, air: true, usableInAir: true, recoveryX: -5, recoveryY: -8, recoveryDuration: 5 },
+  aerialHeavy:  { name: 'Down Blast', anim: 'pirateAerialHeavy', category: 'aerial', direction: 'forward', state: 'air', startup: 10, active: 8, recovery: 20, dmg: 13.0, kbBase: 145, kbGrowth: 1.45, angle: -70, launchAngle: -70, spike: true, w: 58, h: 52, ox: 8, oy: 42, air: true, usableInAir: true, abilityType: 'nonHitbox', abilityId: 'pirateDownBlast', abilityCfg: {}, recoveryX: -5, recoveryY: -8, recoveryDuration: 5 },
   dash:   { name: 'Saber Dash', anim: 'pirateDash', category: 'dash', direction: 'forward', state: 'ground', startup: 4, active: 6, recovery: 12, dmg: 7.0, kbBase: 84, kbGrowth: 0.75, angle: 22, launchAngle: 22, w: 96, h: 46, ox: 48, oy: 0 },
 };
 
@@ -4480,6 +4534,10 @@ export function knockbackGrowthTerm(base, growth, damage) {
 // for typical durations) instead of the full force re-added every frame.
 export const AERIAL_LIFT = { other: 250, boxer: 120 };
 export const AERIAL_RECOIL = { entryShare: 0.5, sustainShare: 0.5 };
+// Down Blast self-launch (px/s upward snap on the cast): well above the
+// aerial-light recovery hop (220) so the cannon shot reads as a real launch,
+// below a full jump (jumpForce ~706) so it stays a boost, not a flight.
+const PIRATE_DOWNBLAST_LIFT = 430;
 // Pure per-frame sustain step (px/frame) for tests and the attack machine:
 // linearly fades to zero across the duration - no stacking, no bursts.
 export function computeRecoilSustain(recX, recY, framesLeft, total) {

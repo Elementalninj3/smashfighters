@@ -1412,7 +1412,7 @@ const PIRATE_ANIM_SOURCES = [
   ['pirateDtilt',       'ninjaDtilt',     'Rope Swing'],
   ['pirateDsmash',      'ninjaDsmash',    'Anchor Drop'],
   ['pirateAerialLight', 'nair',           'Air Slash'],
-  ['pirateAerialHeavy', 'fair',           'Air Cleave'],
+  ['pirateAerialHeavy', 'fair',           'Down Blast'],
   ['pirateDash',        'dash',           'Saber Dash'],
   ['pirateVictory',     'cowboyVictory',  'Victory Dance'],
 ];
@@ -1441,6 +1441,12 @@ for (const [id, srcId, name] of PIRATE_ANIM_SOURCES) {
 for (const a of _pirateAnims) {
   if (a.id === 'pirateFsmash') {
     a.weapons.right = { ...emptyWeaponCfg(), id: 'pirateCannon', mountX: 0, mountY: -2, gripOffsetX: -14, gripOffsetY: 0, gripRot: 0 };
+  }
+  // Down Blast (aerial heavy) shoulders the same hand cannon, rotated to aim
+  // down (+90 canvas degrees; the animator mirrors it per facing, and it is
+  // tunable per move in the Hand Animator's GRIPROT row).
+  if (a.id === 'pirateAerialHeavy') {
+    a.weapons.right = { ...emptyWeaponCfg(), id: 'pirateCannon', mountX: 0, mountY: -2, gripOffsetX: -14, gripOffsetY: 0, gripRot: 90 };
   }
 }
 
@@ -1484,6 +1490,11 @@ const _PIRATE_ABILITY_VFX = {
   // Cannon Blast: muzzle starburst on the cannon (frame 19), 0.2s of life.
   pirateFsmash: [
     { effect: 'pirateCannonMuzzle', anchor: 'character', startFrame: 19, duration: 12, scale: 1, rotation: 0, offsetX: 0, offsetY: 0, loop: false, ability: true },
+  ],
+  // Down Blast: muzzle starburst below the pirate at the shot (frame 10),
+  // 0.2s of life (the code spawn pins it under the body).
+  pirateAerialHeavy: [
+    { effect: 'pirateCannonMuzzle', anchor: 'character', startFrame: 10, duration: 12, scale: 1, rotation: 0, offsetX: 0, offsetY: 0, loop: false, ability: true },
   ],
 };
 for (const a of _pirateAnims) {
@@ -1722,9 +1733,9 @@ function migrateKnightVfxTopUp() {
 // ── Pirate ability-VFX top-up ───────────────────────────────────────────
 // Same rule as the knight/boxer top-up above, for the pirate's ability rows
 // (_PIRATE_ABILITY_VFX): stored animations replace built-ins wholesale, so a
-// pirateDtilt / pirateFtilt / pirateDsmash / pirateFsmash saved before those
-// rows were seeded keeps shadowing the default with an empty vfx list — the
-// animator shows nothing editable. Top up stored entries that carry NO vfx
+// pirateDtilt / pirateFtilt / pirateDsmash / pirateFsmash / pirateAerialHeavy
+// saved before those rows were seeded keeps shadowing the default with an
+// empty vfx list — the animator shows nothing editable. Top up stored entries that carry NO vfx
 // at all with the current defaults (tracks and everything else untouched).
 // Entries the user customized are left alone; and resurrecting a deleted row
 // is harmless, because with no row the ability spawn falls back to the same
@@ -1734,8 +1745,10 @@ function migrateKnightVfxTopUp() {
 // stored rope row matching the v1 seed EXACTLY was never touched by the user
 // (any edit breaks the match), so refresh just that fingerprint to the new
 // timing; anything customized keeps the user's numbers.
-const PIRATE_VFX_TOPUP_KEY = 'smashfighters.animlib.pirateVfxTopUp.v2';
-const _PIRATE_TOPUP_IDS = new Set(['pirateDtilt', 'pirateFtilt', 'pirateDsmash', 'pirateFsmash']);
+// v3: the aerial heavy became the Down Blast, so its row is seeded too. The
+// re-run is safe (same rules: only empty vfx lists are topped up).
+const PIRATE_VFX_TOPUP_KEY = 'smashfighters.animlib.pirateVfxTopUp.v3';
+const _PIRATE_TOPUP_IDS = new Set(['pirateDtilt', 'pirateFtilt', 'pirateDsmash', 'pirateFsmash', 'pirateAerialHeavy']);
 // The v1 rope seed, field for field. Only an exact match refreshes — a row
 // the user edited anywhere (timing, scale, offsets, anchor, effect) stays.
 const _PIRATE_ROPE_SEED_V1 = {

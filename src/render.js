@@ -867,7 +867,7 @@ export const ACCESSORIES = [
   { id: 'none', name: 'NONE' },
   { id: 'cowboyhat', name: 'COWBOY HAT', img: '/GA/accesories/cowboyhat.png', draw: drawCowboyHat },
   { id: 'ninjaheadband', name: 'NINJA HEADBAND', img: '/GA/accesories/ninjaheadband.png', draw: drawNinjaHeadband },
-  { id: 'knighthelmet', name: 'KNIGHT HELMET', img: '/GA/accesories/knighthelmet.png' },
+  { id: 'knighthelmet', name: 'KNIGHT HELMET', img: '/GA/accesories/knight helmet.png' },
   { id: 'piratehat', name: 'PIRATE HAT', img: '/GA/accesories/pirate hat.png' },
   { id: 'tophat', name: 'TOP HAT', draw: drawTopHat },
   { id: 'baseballcap', name: 'BASEBALL CAP', draw: drawBaseballCap },
@@ -941,7 +941,10 @@ function drawImageAccessory(ctx, entry) {
 }
 
 // Draw an accessory seated on a fighter ball. R = ball radius, conf as above.
-export function drawAccessory(ctx, cx, cy, R, conf) {
+// `mirror` is the facing snap sign (same mid-turn signal the skin uses): -1
+// mirrors the art, anything else draws it as-is. It composes with the
+// editor's FLIP toggle, so an authored flip keeps its meaning in both facings.
+export function drawAccessory(ctx, cx, cy, R, conf, mirror) {
   if (!conf || !conf.type || conf.type === 'none') return;
   const entry = _accessoryMap.get(conf.type);
   if (!entry) return;
@@ -952,7 +955,7 @@ export function drawAccessory(ctx, cx, cy, R, conf) {
     cy + (conf.shiftY || 0) * R
   );
   ctx.rotate(-((conf.angle || 0) * Math.PI) / 180);
-  ctx.scale(conf.flip ? -s : s, s);
+  ctx.scale((conf.flip ? -s : s) * (mirror === -1 ? -1 : 1), s);
   let drew = false;
   if (entry.img) drew = drawImageAccessory(ctx, entry);
   if (!drew && entry.draw) {
@@ -2955,21 +2958,22 @@ function drawBody(ctx, fighter, skin, vr) {
     const spr = _bodySprite(skin.img, radius, ss, ccx, ccy);
     // Blit to the clip CIRCLE's bounding box, not the image size — the circle
     // is what the outline below strokes, so the two must match exactly.
-    // Faces the fighter: mirrored when heading left. The bake stays canonical
-    // (no second cache entry — the flip is one transform on the blit), and the
-    // baked centre offset mirrors with it, so art drawn toward the front stays
-    // toward the front in both facings.
+    // Faces the fighter with a SNAP, not a roll: the same mid-turn signal the
+    // weapons use (orbitGripDir flips once at the snap point), so the skin
+    // swaps sides together with the grip instead of squash-stretching through
+    // the turn. The bake stays canonical (no second cache entry).
+    const mirror = orbitGripDir(orbitPhi(fighter), fighter._fighterDef);
     const d = radius * 2;
     const prevQuality = ctx.imageSmoothingQuality;
     ctx.imageSmoothingQuality = 'high';
-    if (!fighter.facingRight) {
+    if (mirror === 1) {
+      ctx.drawImage(spr, x - radius, y - radius, d, d);
+    } else {
       ctx.save();
       ctx.translate(x, y);
       ctx.scale(-1, 1);
       ctx.drawImage(spr, -radius, -radius, d, d);
       ctx.restore();
-    } else {
-      ctx.drawImage(spr, x - radius, y - radius, d, d);
     }
     if (prevQuality) ctx.imageSmoothingQuality = prevQuality;
   }
@@ -3127,12 +3131,17 @@ export function holdCoversSide(fighter, bodySide) {
 // gripping hand). Safe to call with any fighter: missing config, missing
 // eased hands, or an unknown weapon id all skip silently with no state
 // touched.
-export function drawHeldLayer(ctx, fighter, x, y, layer, over = false, vr) {
+export function drawHeldLayer(ctx, fighter, x, y, layer, over = false, vr, frontSide) {
   const def = fighter && fighter._fighterDef;
   const cfg = resolveHeld(def);
   if (!cfg || !cfg.length) return;
   const facingRight = !!fighter.facingRight;
   const dir = facingRight ? 1 : -1;
+  // Weapons follow their hand's depth: a weapon gripped by the back hand
+  // draws behind the body even when its row says 'front'. An explicit 'back'
+  // row always stays behind. Defaults to the fixed anatomical rule (left hand
+  // front — see drawFighter) so previews without a side still match the game.
+  const front = frontSide || 'left';
   // Rendered body radius (skin body-size multiplier included) — offsets and
   // weapon scale ride it so equipment stays glued to the visual body.
   const radius = (typeof vr === 'number' && vr > 0) ? vr : (fighter.radius || 31);
@@ -3140,7 +3149,14 @@ export function drawHeldLayer(ctx, fighter, x, y, layer, over = false, vr) {
   const gs = resolveSkinMeta(def).gripScale || 1;
   for (let i = 0; i < cfg.length; i++) {
     const e = cfg[i];
-    if (!e || (e.layer || 'front') !== layer) continue;
+    if (!e) continue;
+    // Depth group by gripping hand, not by row alone: exactly one of the two
+    // layer passes claims each entry, so nothing is ever lost or doubled.
+    const side = e.hands === 'both'
+      ? resolveHoldSlot(e.primary || 'lead', fighter)
+      : resolveHoldSlot(e.hand || 'right', fighter);
+    const behind = (e.layer || 'front') === 'back' || side !== front;
+    if ((layer === 'back') !== behind) continue;
     // overHand defaults to TRUE: a weapon normally renders in front of the
     // fist. Set overHand:false to tuck one behind the fist instead.
     if ((e.overHand !== false) !== over) continue;
@@ -3410,7 +3426,8 @@ function _drawHandState(ctx, st, handR, handFill, gear, mirrorFacing) {
 // draw earlier, underneath the body.
 function drawFrontAccessory(ctx, fighter, x, y, radius) {
   if (fighter.accessory && fighter.accessory.type && fighter.accessory.layer !== 'behind') {
-    drawAccessory(ctx, x, y, radius, fighter.accessory);
+    drawAccessory(ctx, x, y, radius, fighter.accessory,
+      orbitGripDir(orbitPhi(fighter), fighter._fighterDef));
   }
 }
 
@@ -3464,7 +3481,8 @@ export function drawFighter(ctx, fighter, time) {
 
   // Behind-the-player accessories (hides behind the body).
   if (fighter.accessory && fighter.accessory.type && fighter.accessory.layer === 'behind') {
-    drawAccessory(ctx, x, y, vradius, fighter.accessory);
+    drawAccessory(ctx, x, y, vradius, fighter.accessory,
+      orbitGripDir(orbitPhi(fighter), fighter._fighterDef));
   }
 
   // Look up live skin status from the cache (skin.path is set by resolveSkin)
@@ -3520,8 +3538,12 @@ export function drawFighter(ctx, fighter, time) {
     // the body, the rear-arc hand behind it; at rest the facing side leads).
     // These roles are never used to place hands, so the moment a turn swaps
     // them the hands do not move.
-    const frontAnat = orbitFrontSide(phi, fighter.facingRight, orbiting);
-    const backAnat = frontAnat === 'right' ? 'left' : 'right';
+    // Fixed anatomical layering: the LEFT hand always draws in front of the
+    // body, the RIGHT hand always behind it, in every facing. (Positions still
+    // travel the orbit arc — only the draw order is pinned; depth still reads
+    // through the per-hand size swell.)
+    const frontAnat = 'left';
+    const backAnat = 'right';
     const frontZ = (frontAnat === 'right' ? oR : oL).z;
     const backZ = (backAnat === 'right' ? oR : oL).z;
 
@@ -3540,6 +3562,9 @@ export function drawFighter(ctx, fighter, time) {
 
     const baseR = _hb(fighter, 'baseR', oR.x * vradius, oR.y * vradius);
     const baseL = _hb(fighter, 'baseL', oL.x * vradius, oL.y * vradius);
+    // Idle rest: fists stay out on the full ring (~1 body radius from centre),
+    // the right fist overlapping the front edge, the left fist at the rear
+    // edge (drawn behind the body below).
     const neutralR = _hb(fighter, 'neutralR', baseR.x, baseR.y);
     const neutralL = _hb(fighter, 'neutralL', baseL.x, baseL.y);
     neutralR.x = baseR.x; neutralR.y = baseR.y;
@@ -3630,37 +3655,44 @@ export function drawFighter(ctx, fighter, time) {
       // while the front hand stays in front, so the turn reads with depth —
       // one fist over the body, one behind it — instead of both sliding over
       // the top. Each hand keeps its own weapon entries on its own side of
-      // the body, so nothing swaps mid-turn.
-      drawOrbitEntries(ctx, fighter, x, y, backAnat, _orbHands, gripDir, false, vradius);
+      // the body, so nothing swaps mid-turn. Weapons always draw over their
+      // fist: each hand's entries paint right after the fist, still inside
+      // that hand's depth group (behind the body for the rear hand).
       _drawHandState(ctx, backSt, handR, handFill, backGearShown, mirrorGear);
+      drawOrbitEntries(ctx, fighter, x, y, backAnat, _orbHands, gripDir, false, vradius);
       drawOrbitEntries(ctx, fighter, x, y, backAnat, _orbHands, gripDir, true, vradius);
       drawBody(ctx, fighter, skinLive, vradius);
       drawFrontAccessory(ctx, fighter, x, y, vradius);
-      drawOrbitEntries(ctx, fighter, x, y, frontAnat, _orbHands, gripDir, false, vradius);
       _drawHandState(ctx, frontSt, handR, handFill, frontGearShown, mirrorGear);
+      drawOrbitEntries(ctx, fighter, x, y, frontAnat, _orbHands, gripDir, false, vradius);
       drawOrbitEntries(ctx, fighter, x, y, frontAnat, _orbHands, gripDir, true, vradius);
     } else if (backSt.layer === 'front') {
-      drawHeldLayer(ctx, fighter, x, y, 'back', false, vradius);
-      drawHeldLayer(ctx, fighter, x, y, 'back', true, vradius);
+      drawHeldLayer(ctx, fighter, x, y, 'back', false, vradius, frontAnat);
+      drawHeldLayer(ctx, fighter, x, y, 'back', true, vradius, frontAnat);
       drawBody(ctx, fighter, skinLive, vradius);
       drawFrontAccessory(ctx, fighter, x, y, vradius);
       _drawHandState(ctx, backSt, handR, handFill, backGearShown, mirrorGear);
-      drawHeldLayer(ctx, fighter, x, y, 'front', false, vradius);
+      drawHeldLayer(ctx, fighter, x, y, 'front', false, vradius, frontAnat);
       _drawHandState(ctx, frontSt, handR, handFill, frontGearShown, mirrorGear);
-      drawHeldLayer(ctx, fighter, x, y, 'front', true, vradius);
+      drawHeldLayer(ctx, fighter, x, y, 'front', true, vradius, frontAnat);
     } else {
+      // Idle rest layering: the right fist draws BEFORE the body, so the body
+      // occludes its inner half (behind), while the left fist draws OVER the
+      // body (in front) — left in front, right at the back, in both facings.
+      // Weapons always draw over their own fist: each hand's entries paint
+      // right after the fist, still inside that hand's depth group (under the
+      // body for the rear hand, over it for the front hand). The order never
+      // flips, so starting to move or turning can never pop a fist; the eased
+      // positions above glide them out smoothly.
       // Explicit layer:'back' weapons stay behind the body (the WPN LAYER row).
-      drawHeldLayer(ctx, fighter, x, y, 'back', false, vradius);
-      drawHeldLayer(ctx, fighter, x, y, 'back', true, vradius);
+      _drawHandState(ctx, backSt, handR, handFill, backGearShown, mirrorGear);
+      drawHeldLayer(ctx, fighter, x, y, 'back', false, vradius, frontAnat);
+      drawHeldLayer(ctx, fighter, x, y, 'back', true, vradius, frontAnat);
       drawBody(ctx, fighter, skinLive, vradius);
       drawFrontAccessory(ctx, fighter, x, y, vradius);
-      // Both fists draw over the body (rear group then front group), weapons
-      // over their fist by default. No hand is occluded by the body, so close
-      // hands and the facing turn can never pop one.
-      _drawHandState(ctx, backSt, handR, handFill, backGearShown, mirrorGear);
-      drawHeldLayer(ctx, fighter, x, y, 'front', false, vradius);
       _drawHandState(ctx, frontSt, handR, handFill, frontGearShown, mirrorGear);
-      drawHeldLayer(ctx, fighter, x, y, 'front', true, vradius);
+      drawHeldLayer(ctx, fighter, x, y, 'front', false, vradius, frontAnat);
+      drawHeldLayer(ctx, fighter, x, y, 'front', true, vradius, frontAnat);
     }
   }
 

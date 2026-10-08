@@ -3823,7 +3823,7 @@ function drawAccyMinifig(ctx, x, y, R, f, conf, gear, opts) {
 
   // Behind-layer accessory sits behind the body
   if (conf && conf.type && conf.type !== 'none' && conf.layer === 'behind') {
-    drawAccessory(ctx, x, y, vR, conf);
+    drawAccessory(ctx, x, y, vR, conf, facing ? 1 : -1);
   }
 
   // Orbit base hands at the preview facing (settled orbit angle, no travel):
@@ -3937,7 +3937,7 @@ function drawAccyMinifig(ctx, x, y, R, f, conf, gear, opts) {
 
   // Front-layer accessory on top
   if (conf && conf.type && conf.type !== 'none' && conf.layer !== 'behind') {
-    drawAccessory(ctx, x, y, vR, conf);
+    drawAccessory(ctx, x, y, vR, conf, facing ? 1 : -1);
   }
 }
 
